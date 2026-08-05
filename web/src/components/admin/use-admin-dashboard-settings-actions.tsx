@@ -338,13 +338,11 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const deleteFriendLink = (id: string) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                friendLinks: (current.site.friendLinks || []).filter((link) => link.id !== id),
-            },
-        }));
+        const site = {
+            ...settings.site,
+            friendLinks: (settings.site.friendLinks || []).filter((link) => link.id !== id),
+        };
+        return saveSettings({ site }, "友情链接已删除");
     };
 
     const addHomeShowcaseItem = () => {

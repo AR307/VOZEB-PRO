@@ -1,33 +1,18 @@
 import { cn } from "@/lib/utils";
-import type { CSSProperties } from "react";
+import { memo } from "react";
 import styles from "./workbench-generation-placeholder.module.css";
 
-export const GENERATION_PLACEHOLDER_TILE_COUNT = 96;
-const GPT_IMAGE_TILE_PALETTE = [
-    ["#d9f4ee", "#4dc8ae"],
-    ["#dbeafe", "#5b9cf5"],
-    ["#e9e3ff", "#9b82ee"],
-    ["#fde8f1", "#ee7caf"],
-    ["#ffe5da", "#f58a6d"],
-    ["#fff1c9", "#eeb84b"],
-    ["#dff3fb", "#56b8df"],
-    ["#e2f4df", "#69be70"],
-] as const;
-
-export function WorkbenchGenerationPlaceholder({ kind, className }: { kind: "image" | "video"; className?: string }) {
+export const WorkbenchGenerationPlaceholder = memo(function WorkbenchGenerationPlaceholder({ kind, className }: { kind: "image" | "video"; className?: string }) {
     const label = kind === "image" ? "图片正在生成" : "视频正在生成";
     return (
-        <div role="status" aria-label={label} aria-busy="true" className={cn(styles.placeholder, "relative isolate overflow-hidden rounded-lg border border-border bg-muted", className)}>
-            <span className={styles.cube} aria-hidden="true">
-                {Array.from({ length: GENERATION_PLACEHOLDER_TILE_COUNT }, (_, index) => {
-                    const colors = GPT_IMAGE_TILE_PALETTE[(index * 5 + Math.floor(index / 12) * 3) % GPT_IMAGE_TILE_PALETTE.length];
-                    return <span key={index} style={{ "--cube-index": index, "--cube-base": colors[0], "--cube-peak": colors[1] } as CSSProperties} />;
-                })}
+        <div role="status" aria-label={label} aria-busy="true" data-kind={kind} className={cn(styles.placeholder, "relative isolate overflow-hidden rounded-lg border border-border", className)}>
+            <span className={styles.smoke} aria-hidden="true">
+                <span className={styles.smokeTexture} data-smoke-layer />
+                <span className={styles.smokeTextureMirror} data-smoke-layer />
             </span>
-            <span className={styles.sheen} aria-hidden="true" />
         </div>
     );
-}
+});
 
 export function WorkbenchGenerationActivity({ kind, count }: { kind: "image" | "video"; count: number }) {
     const label = `${count} 个${kind === "image" ? "图片" : "视频"}任务正在生成`;

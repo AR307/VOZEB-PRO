@@ -9,6 +9,81 @@ test.beforeEach(async ({ request }) => {
     await resetProtocolFixture(request);
 });
 
+test("site footer deletions remain deleted after settings and public-session reloads", async ({ request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { site: Record<string, unknown> } }).settings.site;
+    const socials = before.socials as Record<string, { enabled: boolean; label: string; url: string }>;
+    try {
+        const site = {
+            ...before,
+            friendLinks: [],
+            socials: { ...socials, email: { enabled: false, label: "", url: "" } },
+        };
+        const savedResponse = await request.patch("/api/admin/settings", { data: { site } });
+        expect(savedResponse.ok(), await savedResponse.text()).toBe(true);
+
+        const persistedResponse = await request.get("/api/admin/settings");
+        const persisted = ((await persistedResponse.json()) as { settings: { site: { friendLinks: unknown[]; socials: typeof socials } } }).settings.site;
+        expect(persisted.friendLinks).toEqual([]);
+        expect(persisted.socials.email).toEqual({ enabled: false, label: "", url: "" });
+
+        const publicResponse = await request.get("/api/auth/session");
+        const publicSite = ((await publicResponse.json()) as { settings: { site: { friendLinks: unknown[]; socials: typeof socials } } }).settings.site;
+        expect(publicSite.friendLinks).toEqual([]);
+        expect(publicSite.socials.email).toEqual({ enabled: false, label: "", url: "" });
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { site: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
+test("admin site form persists a plain contact email and the friend-link delete action", async ({ page, request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { site: Record<string, unknown> } }).settings.site;
+    const socials = before.socials as Record<string, { enabled: boolean; label: string; url: string }>;
+    const testLink = { id: "e2e-footer-link", label: "E2E Footer Link", url: "https://example.com/footer", enabled: true };
+    try {
+        const seededResponse = await request.patch("/api/admin/settings", {
+            data: {
+                site: {
+                    ...before,
+                    friendLinks: [testLink],
+                    socials: { ...socials, email: { enabled: true, label: "邮箱联系", url: "mailto:before@example.com" } },
+                },
+            },
+        });
+        expect(seededResponse.ok(), await seededResponse.text()).toBe(true);
+
+        await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
+        const emailInput = page.locator('input[value="mailto:before@example.com"]');
+        await expect(emailInput).toBeVisible();
+        await emailInput.fill("owner@example.com");
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        await expect(page.getByText("网站信息已保存")).toBeVisible();
+        await expect(page.locator('input[value="mailto:owner@example.com"]')).toBeVisible();
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator('input[value="mailto:owner@example.com"]')).toBeVisible();
+        await page.getByRole("button", { name: "删除友情链接" }).click();
+        await expect(page.getByText("友情链接已删除")).toBeVisible();
+        await expect(page.getByText("暂无友情链接。")).toBeVisible();
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.getByText("暂无友情链接。")).toBeVisible();
+        await expect(page.getByText(testLink.label, { exact: true })).toHaveCount(0);
+
+        const persistedResponse = await request.get("/api/admin/settings");
+        const persisted = ((await persistedResponse.json()) as { settings: { site: { friendLinks: unknown[]; socials: typeof socials } } }).settings.site;
+        expect(persisted.friendLinks).toEqual([]);
+        expect(persisted.socials.email.url).toBe("mailto:owner@example.com");
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { site: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
 test("text tasks return content, fail over automatically, and surface terminal failures", async ({ request }) => {
     const fallback = await request.post("/api/text-tasks", { data: { config: { model: "e2e-text-fallback" }, messages: [{ role: "user", content: "protocol fallback" }] } });
     expect(fallback.ok(), await fallback.text()).toBe(true);
@@ -80,6 +155,22 @@ test("image workbench keeps both consecutive generation results after refresh", 
     await expect(page.getByTestId("workbench-history-card").filter({ hasText: firstPrompt })).toHaveCount(1);
 });
 
+test("image workbench uses the lightweight smoke placeholder while generation is pending", async ({ page }) => {
+    await page.route("**/api/image-tasks", async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        const response = await route.fetch();
+        await new Promise((resolve) => setTimeout(resolve, 1800));
+        await route.fulfill({ response });
+    });
+
+    await page.goto("/image", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "新建对话", exact: true }).click();
+    await page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或图片").fill("检查图片烟雾加载占位");
+    await page.getByRole("button", { name: /开始生成/ }).click();
+    await expectSmokePlaceholder(page, "图片正在生成");
+    await page.screenshot({ path: ".tmp/smoke-image-workbench.png", fullPage: true });
+});
+
 test("video request replay and cancellation keep one upstream task", async ({ request }) => {
     const clientRequestId = `e2e-video:${randomUUID()}`;
     const body = { config: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 }, prompt: "slow video", source: "video-workbench", context: { clientRequestId } };
@@ -97,6 +188,35 @@ test("video request replay and cancellation keep one upstream task", async ({ re
     expect(await pollTask(request, `/api/video-tasks/${firstTask.id}`)).toMatchObject({ status: "cancelled" });
     const state = await protocolFixtureState(request);
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos"))).toHaveLength(1);
+});
+
+test("video workbench uses the lightweight smoke placeholder while generation is pending", async ({ page }) => {
+    await page.route("**/api/agent/workbench", async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                code: 0,
+                data: {
+                    intent: "generation",
+                    parameterPatch: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 },
+                    resolvedPrompt: "slow video",
+                    shouldGenerate: true,
+                    reply: "开始生成。",
+                    choices: [],
+                    deliverables: [],
+                },
+                msg: "OK",
+            }),
+        });
+    });
+
+    await page.goto("/video", { waitUntil: "domcontentloaded" });
+    await page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或素材").fill("检查视频烟雾加载占位");
+    await page.getByRole("button", { name: /开始生成/ }).click();
+    await expectSmokePlaceholder(page, "视频正在生成");
+    await page.screenshot({ path: ".tmp/smoke-video-workbench.png", fullPage: true });
+    await page.getByRole("button", { name: "取消任务" }).first().click();
 });
 
 test("video workbench prevents rapid duplicate submissions and restores cancellation after refresh", async ({ page, request }) => {
@@ -155,6 +275,25 @@ test("video workbench prevents rapid duplicate submissions and restores cancella
     await expect(page.getByRole("button", { name: "取消任务" }).first()).toBeVisible();
     await page.getByRole("button", { name: "取消任务" }).first().click();
 });
+
+async function expectSmokePlaceholder(page: import("@playwright/test").Page, accessibleName: string) {
+    const placeholder = page.getByRole("status", { name: accessibleName }).first();
+    await expect(placeholder).toBeVisible();
+    await expect(placeholder.locator("[data-smoke-layer]")).toHaveCount(2);
+    const rendering = await placeholder.evaluate((element) => {
+        const layer = element.querySelector<HTMLElement>("[data-smoke-layer]");
+        return {
+            contain: getComputedStyle(element).contain,
+            filter: layer ? getComputedStyle(layer).filter : "missing",
+            backdropFilter: layer ? getComputedStyle(layer).backdropFilter : "missing",
+            overflow: [document.documentElement.clientWidth, document.documentElement.scrollWidth],
+        };
+    });
+    expect(rendering.contain).toContain("paint");
+    expect(rendering.filter).toBe("none");
+    expect(rendering.backdropFilter).toBe("none");
+    expect(rendering.overflow[1]).toBeLessThanOrEqual(rendering.overflow[0] + 1);
+}
 
 test("video workbench restores a successful result after refresh", async ({ page }) => {
     await page.goto("/video", { waitUntil: "domcontentloaded" });

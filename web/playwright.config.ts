@@ -26,9 +26,9 @@ export default defineConfig({
     },
     projects: [
         { name: "setup", testMatch: /installation\.spec\.ts/ },
-        { name: "chromium", testMatch: [/(?:core|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
-        { name: "mobile-390", testMatch: /responsive\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState } },
-        { name: "mobile-430", testMatch: /responsive\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 14 Pro Max"], browserName: "chromium", viewport: { width: 430, height: 932 }, storageState } },
+        { name: "chromium", testMatch: [/(?:core|home|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
+        { name: "mobile-390", testMatch: /(?:home|responsive)\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState } },
+        { name: "mobile-430", testMatch: /(?:home|responsive)\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 14 Pro Max"], browserName: "chromium", viewport: { width: 430, height: 932 }, storageState } },
     ],
     webServer: [
         {

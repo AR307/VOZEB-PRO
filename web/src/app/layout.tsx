@@ -1,11 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
+import { appStorageKey } from "@/lib/storage-keys";
 import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { buildWebsiteStructuredData, serializeStructuredData } from "@/lib/structured-data";
 import "antd/dist/reset.css";
 import "./globals.css";
 import React from "react";
+
+const themeBootstrapScript = `try{const value=JSON.parse(localStorage.getItem(${JSON.stringify(appStorageKey("theme_store"))})||"{}");const theme=value?.state?.theme==="dark"?"dark":"light";document.documentElement.classList.toggle("dark",theme==="dark");document.documentElement.style.colorScheme=theme}catch{}`;
 
 export const viewport: Viewport = {
     width: "device-width",
@@ -21,18 +24,12 @@ export async function generateMetadata(): Promise<Metadata> {
     const site = await getPublicSiteSettings();
     const base = siteMetadataBase();
     const logoUrl = absoluteSiteUrl(site.logoUrl || "/logo.svg", base);
-    const iconUrl = absoluteSiteUrl("/favicon.ico", base);
     const title = site.seoTitle || site.title;
     return {
         metadataBase: base,
         title,
         description: site.seoDescription,
         alternates: { canonical: "/" },
-        icons: {
-            icon: iconUrl,
-            shortcut: iconUrl,
-            apple: iconUrl,
-        },
         keywords: site.seoKeywords
             .split(/[,，]/)
             .map((keyword) => keyword.trim())
@@ -72,6 +69,7 @@ export default async function RootLayout({
     return (
         <html lang="zh-CN" suppressHydrationWarning className="font-sans">
             <head>
+                <script id="theme-bootstrap" dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
                 <link rel="icon" href="/favicon.ico" />
                 <link rel="shortcut icon" href="/favicon.ico" />
                 <link rel="apple-touch-icon" href="/favicon.ico" />

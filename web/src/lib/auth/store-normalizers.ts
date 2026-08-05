@@ -471,7 +471,7 @@ export function normalizeShowcaseTags(value: unknown): string[] {
 
 export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
     const links = Array.isArray(settings) ? settings : DEFAULT_SITE_FRIEND_LINKS;
-    const normalized = links
+    return links
         .map((link, index) => {
             const value = link as Partial<SiteFriendLink>;
             return {
@@ -483,18 +483,6 @@ export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
         })
         .filter((link) => link.url)
         .slice(0, 12);
-    for (const link of DEFAULT_SITE_FRIEND_LINKS) {
-        if (normalized.some((item) => item.id === link.id || item.url.replace(/\/$/, "") === link.url.replace(/\/$/, ""))) continue;
-        normalized.push(link);
-    }
-    const defaultOrdered = DEFAULT_SITE_FRIEND_LINKS.flatMap((link) => {
-        const normalizedUrl = link.url.replace(/\/$/, "");
-        const matched = normalized.find((item) => item.id === link.id || item.url.replace(/\/$/, "") === normalizedUrl);
-        return matched ? [matched] : [];
-    });
-    const defaultKeys = new Set(DEFAULT_SITE_FRIEND_LINKS.flatMap((link) => [link.id, link.url.replace(/\/$/, "")]));
-    const others = normalized.filter((link) => !defaultKeys.has(link.id) && !defaultKeys.has(link.url.replace(/\/$/, "")));
-    return [...defaultOrdered, ...others].slice(0, 12);
 }
 
 export function normalizeSiteSocials(settings: Partial<SiteSocialSettings> | undefined): SiteSocialSettings {
@@ -508,11 +496,20 @@ export function normalizeSiteSocials(settings: Partial<SiteSocialSettings> | und
 
 export function normalizeSiteSocial(key: SiteSocialKey, setting: Partial<SiteSocialSettings[SiteSocialKey]> | undefined) {
     const fallback = DEFAULT_SITE_SOCIALS[key];
+    if (!setting) return { ...fallback };
     return {
-        enabled: typeof setting?.enabled === "boolean" ? setting.enabled : fallback.enabled,
-        label: normalizeText(setting?.label, fallback.label, 32),
-        url: normalizeLinkUrl(setting?.url, fallback.url),
+        enabled: typeof setting.enabled === "boolean" ? setting.enabled : fallback.enabled,
+        label: setting.label === undefined ? fallback.label : normalizeText(setting.label, "", 32),
+        url: setting.url === undefined ? fallback.url : normalizeSiteSocialUrl(key, setting.url),
     };
+}
+
+function normalizeSiteSocialUrl(key: SiteSocialKey, value: unknown) {
+    const url = typeof value === "string" ? value.trim() : "";
+    if (!url) return "";
+    if (url.startsWith("mailto:")) return normalizeLinkUrl(url, "");
+    if (key === "email" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(url)) return `mailto:${url}`;
+    return normalizeLinkUrl(url, "");
 }
 
 export function normalizeMailSettings(settings: Partial<MailSettings> | undefined): MailSettings {

@@ -292,7 +292,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                 <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                         <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">友情链接</div>
-                                        <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">启用后会显示在首页顶部导航和底部链接区。</div>
+                                        <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">启用后会显示在首页底部友情链接区。</div>
                                     </div>
                                     <Button icon={<Plus className="size-4" />} onClick={addFriendLink}>
                                         添加链接
