@@ -3,23 +3,17 @@
 import { ChevronRight, CircleHelp } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
-import { userAvatarFallback } from "@/lib/user-avatar";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: NavigationToolSlug; expanded: boolean }) {
     const pathname = usePathname();
     const router = useRouter();
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
-    const user = usePublicSessionStore((state) => state.payload?.user || null);
-    const [workspaceUrl, setWorkspaceUrl] = useState("");
     const helpActive = pathname.startsWith("/help");
-
-    useEffect(() => setWorkspaceUrl(`${window.location.host}/canvas`), []);
 
     return (
         <aside className={cn("hidden h-full shrink-0 flex-col border-r border-[#eaecf0] bg-white text-[#111827] transition-[width] duration-200 lg:flex dark:border-[#292d33] dark:bg-[#111316] dark:text-[#f3f5f7]", expanded ? "w-[236px]" : "w-[72px]")}>
@@ -84,22 +78,17 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                     )}
                     aria-current={helpActive ? "page" : undefined}
                 >
+                    <CircleHelp className="size-[18px] shrink-0" />
                     {expanded ? (
                         <>
-                            <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-full bg-[#17191d] text-xs font-semibold text-white dark:bg-[#e2e7ee] dark:text-[#20242a]">
-                                {user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="size-full object-cover" referrerPolicy="no-referrer" /> : userAvatarFallback(user?.displayName || user?.username || "N")}
-                            </span>
                             <span className="min-w-0 flex-1">
                                 <span className="block truncate">帮助中心</span>
                             </span>
                             <ChevronRight className="size-4 shrink-0 text-[#7f8995]" />
                         </>
-                    ) : (
-                        <CircleHelp className="size-[18px] shrink-0" />
-                    )}
+                    ) : null}
                     {helpActive ? <span className="absolute right-0 h-4 w-0.5 rounded-full bg-[#5965ff]" /> : null}
                 </Link>
-                {expanded && workspaceUrl ? <div className="mt-1 truncate px-2 text-[11px] leading-4 text-[#8b95a2] dark:text-[#737d89]">{workspaceUrl}</div> : null}
             </div>
         </aside>
     );

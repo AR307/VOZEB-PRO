@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Bot, History, PanelRightClose, Pause, Play, Plus, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowRight, Bot, Files, History, ImagePlus, Layers3, LayoutPanelTop, PanelRightClose, Pause, PenLine, Play, Plus, Sparkles, Square, WandSparkles } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
@@ -11,25 +11,24 @@ import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { DiaTextReveal } from "@/components/ui/dia-text-reveal";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { watchCanvasAgentRun } from "./canvas-agent-run-client";
 import { withCanvasAgentRunWatch } from "./canvas-agent-run-watch-guard";
 import type { CanvasAgentRunStage } from "./canvas-agent-progress";
-import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
-import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
+import { friendlyAgentError } from "@/components/agent/agent-message-format";
+import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessage } from "./canvas-agent-chat-ui";
 import { useCanvasAgentAttachments } from "./use-canvas-agent-attachments";
 import { useCanvasAgentMessageScroll } from "./use-canvas-agent-message-scroll";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "./canvas-agent-panel-motion";
-import { CanvasNodeType, type CanvasAssistantMessage, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "../types";
+import type { CanvasAssistantMessage, CanvasAssistantReference, CanvasAssistantSession, CanvasNodeData } from "../types";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
-const DEFAULT_PANEL_WIDTH = 470;
-const MIN_PANEL_WIDTH = 320;
-const MAX_PANEL_WIDTH = 760;
+const DEFAULT_PANEL_WIDTH = 404;
+const MIN_PANEL_WIDTH = 348;
+const MAX_PANEL_WIDTH = 640;
 type OnlineAgentTab = "chat" | "history";
 
 type CanvasAssistantPanelProps = {
@@ -53,13 +52,9 @@ import {
     AssistantHistory,
     AssistantReferenceChip,
     assistantMessageToChatMessage,
-    formatSessionTime,
-    sessionPreview,
-    nodeToReference,
     buildAssistantReferences,
     compactSnapshot,
     canvasRunSelectedNodeIds,
-    compactMetadata,
     createSession,
     removeCanvasAssistantSessions,
 } from "./canvas-assistant-elements";
@@ -121,7 +116,6 @@ export function CanvasAssistantPanel({
     const activeSession = useMemo(() => localSessions.find((session) => session.id === localActiveSessionId) || localSessions[0] || null, [localActiveSessionId, localSessions]);
     const historySessions = localSessions.filter((session) => session.messages.length > 0);
     const messages = activeSession?.messages || [];
-    const hasMessages = messages.length > 0;
     const selectedNodeKey = useMemo(() => Array.from(selectedNodeIds).sort().join(","), [selectedNodeIds]);
     const allSelectedReferences = useMemo(() => buildAssistantReferences(nodes, selectedNodeIds), [nodes, selectedNodeIds]);
     const selectedReferences = useMemo(() => allSelectedReferences.filter((item) => !removedReferenceIds.has(item.id)), [allSelectedReferences, removedReferenceIds]);
@@ -134,7 +128,7 @@ export function CanvasAssistantPanel({
         ...uploads.filter((item) => !item.nodeId || !readyReferenceIds.includes(item.nodeId)),
     ];
     const messageScrollKey = messages.map((item) => `${item.id}:${item.text.length}`).join("|") + `:${isRunning}:${runStage.key}`;
-    const { scrollRef, showLatestButton, requestLatest, scrollToLatest, handleScroll } = useCanvasAgentMessageScroll(view === "chat", messageScrollKey);
+    const { scrollRef, showLatestButton, requestLatest, scrollToLatest, handleScroll } = useCanvasAgentMessageScroll(view === "chat", messageScrollKey, messages.length ? "latest" : "top");
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
     const selectedModels = models.filter((model) => selectedModelIds.includes(model.id));
     const iconButtonStyle = { color: theme.node.muted };
@@ -383,6 +377,15 @@ export function CanvasAssistantPanel({
         onCollapse();
     };
 
+    const suggestionItems = [
+        { icon: <ImagePlus className="size-4" />, title: "生成一套新品发布海报", description: "营造促销氛围，突出产品亮点", prompt: "生成一套新品发布海报，突出产品亮点并保持统一视觉。" },
+        { icon: <LayoutPanelTop className="size-4" />, title: "优化当前画布布局", description: "提升对齐与信息效率", prompt: "优化当前画布布局，让层级、间距和信息关系更清晰。" },
+        { icon: <PenLine className="size-4" />, title: "撰写一段产品宣传文案", description: "突出卖点，吸引用户", prompt: "为当前画布撰写一段简洁有力的产品宣传文案。" },
+        { icon: <WandSparkles className="size-4" />, title: "增强画面质感", description: "提升细节与光影表现", prompt: "增强当前画面的质感、光影和细节表现。" },
+        { icon: <Files className="size-4" />, title: "批量替换文案与图片", description: "保持风格一致，批量应用", prompt: "批量替换当前画布中的文案与图片，同时保持整体风格一致。" },
+        { icon: <Layers3 className="size-4" />, title: "生成多套设计方案", description: "提供多种风格供选择", prompt: "基于当前画布生成多套设计方案，提供不同风格供我选择。" },
+    ];
+
     const onlineContent = (
         <>
             <AgentPanelTabs
@@ -394,42 +397,23 @@ export function CanvasAssistantPanel({
                 ]}
                 onChange={setView}
                 right={
-                    <>
-                        {view === "history" ? (
-                            <Tooltip title="删除全部">
-                                <Button
-                                    type="text"
-                                    shape="circle"
-                                    className="!h-8 !w-8 !min-w-8"
-                                    style={iconButtonStyle}
-                                    icon={<X className="size-4" />}
-                                    disabled={!historySessions.length}
-                                    onClick={() => setDeleteChatIds(historySessions.map((session) => session.id))}
-                                    aria-label="删除全部对话"
-                                />
-                            </Tooltip>
-                        ) : null}
-                        <Tooltip title="新对话">
-                            <Button
-                                type="text"
-                                shape="circle"
-                                className="!h-8 !w-8 !min-w-8"
-                                style={iconButtonStyle}
-                                icon={<Plus className="size-4" />}
-                                disabled={!hasMessages}
-                                onClick={() => {
-                                    startChatSession();
-                                    setView("chat");
-                                }}
-                                aria-label="新建对话"
-                            />
-                        </Tooltip>
-                    </>
+                    <Button
+                        type="primary"
+                        className="!h-9 !rounded-lg !px-3 !text-xs !font-medium"
+                        icon={<Plus className="size-3.5" />}
+                        onClick={() => {
+                            startChatSession();
+                            setView("chat");
+                        }}
+                        aria-label="新建对话"
+                    >
+                        新建对话
+                    </Button>
                 }
             />
 
             <div className="relative h-0 min-h-0 w-full flex-1 overflow-hidden">
-                <div ref={scrollRef} className="thin-scrollbar h-full space-y-4 overflow-y-auto px-4 pb-16 pt-4" onScroll={handleScroll}>
+                <div ref={scrollRef} data-canvas-agent-scroll className="thin-scrollbar h-full space-y-4 overflow-y-auto px-4 pb-16 pt-4" onScroll={handleScroll}>
                     {view === "history" ? (
                         <AssistantHistory
                             sessions={historySessions}
@@ -439,7 +423,8 @@ export function CanvasAssistantPanel({
                                 setLocalActiveSessionId(id);
                                 setView("chat");
                             }}
-                            onDelete={(id) => setDeleteChatIds([id])}
+                            onDelete={(ids) => setDeleteChatIds(ids)}
+                            onRename={(id, title) => updateSession(id, (session) => ({ ...session, title, updatedAt: new Date().toISOString() }))}
                         />
                     ) : messages.length ? (
                         <>
@@ -474,12 +459,32 @@ export function CanvasAssistantPanel({
                             ) : null}
                         </>
                     ) : (
-                        <div className="flex h-full flex-col items-center justify-center px-1 text-center">
-                            <div className="relative font-serif text-4xl font-bold italic tracking-normal" style={{ color: theme.node.text }}>
-                                <span>VOZEB PRO Canvas</span>
-                                <DiaTextReveal className="absolute inset-0" colors={["#A97CF8", "#F38CB8", "#FDCC92"]} textColor="transparent" duration={1.8} startOnView={false} text="VOZEB PRO Canvas" />
-                            </div>
-                            <div className="mt-3 font-serif text-base italic tracking-wide opacity-60">One canvas, many ideas</div>
+                        <div className="canvas-agent-empty space-y-5 pb-4">
+                            <section data-canvas-agent-welcome className="grid min-w-0 grid-cols-[minmax(0,1fr)_64px] items-center gap-3 rounded-2xl border px-4 py-4" style={{ borderColor: theme.node.stroke, background: theme.node.fill }}>
+                                <div className="min-w-0">
+                                    <h2 className="text-base font-semibold leading-6" style={{ color: theme.node.text }}>你好，我是你的画布助手</h2>
+                                    <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>我可以帮你生成图像、优化布局、撰写文案、梳理思路、提取关键信息，让创意更高效实现。</p>
+                                    <button type="button" className="mt-3 inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition hover:opacity-90" style={{ background: theme.node.action, color: theme.node.actionText }} onClick={() => setPrompt("请介绍一下你能如何协助我完成当前画布。")}>了解 Agent 能做什么 <ArrowRight className="size-3.5 shrink-0" /></button>
+                                </div>
+                                <div className="pointer-events-none grid size-16 place-items-center rounded-2xl border" style={{ borderColor: theme.node.stroke, color: theme.node.muted }} aria-hidden="true">
+                                    <Sparkles className="size-8" />
+                                </div>
+                            </section>
+                            <section data-canvas-agent-suggestions>
+                                <div className="mb-2.5 flex items-center justify-between">
+                                    <h3 className="text-xs font-semibold" style={{ color: theme.node.text }}>你可以试试</h3>
+                                    <span className="grid size-7 place-items-center" style={{ color: theme.node.muted }} aria-hidden="true"><Sparkles className="size-3.5" /></span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {suggestionItems.map((item) => (
+                                        <button key={item.title} type="button" className="group min-w-0 rounded-xl border px-3 py-3 text-left transition hover:-translate-y-px hover:shadow-sm" style={{ borderColor: theme.node.stroke, background: theme.toolbar.panel }} onClick={() => setPrompt(item.prompt)}>
+                                            <span className="grid size-7 place-items-center rounded-lg border" style={{ color: theme.node.muted, borderColor: theme.node.stroke }}>{item.icon}</span>
+                                            <span className="mt-2 block truncate text-[11px] font-medium" style={{ color: theme.node.text }}>{item.title}</span>
+                                            <span className="mt-1 block truncate text-[10px]" style={{ color: theme.node.muted }}>{item.description}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </section>
                         </div>
                     )}
                 </div>
@@ -566,7 +571,8 @@ export function CanvasAssistantPanel({
                             danger
                             type="primary"
                             onClick={() => {
-                                deleteChatIds.length === historySessions.length ? clearSessions() : removeSessions(deleteChatIds);
+                                if (deleteChatIds.length === historySessions.length) clearSessions();
+                                else removeSessions(deleteChatIds);
                                 setDeleteChatIds([]);
                             }}
                         >
@@ -597,15 +603,15 @@ export function CanvasAssistantPanel({
                 style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             >
                 <button type="button" className="canvas-agent-resize-handle absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onMouseDown={startResize} aria-label="调整右侧面板宽度" />
-                <header className="flex h-14 items-center justify-between border-b px-4" style={{ borderColor: theme.node.stroke }}>
+                <header className="flex h-16 items-center justify-between border-b px-4" style={{ borderColor: theme.node.stroke }}>
                     <div className="flex min-w-0 items-center gap-2">
-                        <span className="grid size-8 place-items-center rounded-lg">
+                        <span className="grid size-8 place-items-center rounded-lg" style={{ color: theme.toolbar.item, background: theme.toolbar.itemHover }}>
                             <Bot className="size-4" />
                         </span>
                         <div className="min-w-0">
                             <div className="text-base font-semibold leading-5">Agent</div>
                             <div className="truncate text-xs" style={{ color: theme.node.muted }}>
-                                画布助手
+                                画布助手 · 让创意落地更简单
                             </div>
                         </div>
                     </div>

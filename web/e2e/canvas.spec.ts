@@ -309,6 +309,20 @@ test("canvas opens the Agent rail at the intended width and keeps a fresh chat a
                 createdAt: "2026-08-06T00:00:00.000Z",
                 updatedAt: "2026-08-06T00:00:00.000Z",
             },
+            {
+                id: "agent-session-two",
+                title: "第二条对话",
+                messages: [{ id: "agent-message-two", role: "user", text: "用于批量删除" }],
+                createdAt: "2026-08-05T00:00:00.000Z",
+                updatedAt: "2026-08-05T00:00:00.000Z",
+            },
+            {
+                id: "agent-session-three",
+                title: "第三条对话",
+                messages: [{ id: "agent-message-three", role: "user", text: "用于批量删除" }],
+                createdAt: "2026-08-04T00:00:00.000Z",
+                updatedAt: "2026-08-04T00:00:00.000Z",
+            },
         ],
         activeChatId: "agent-session",
     });
@@ -320,21 +334,37 @@ test("canvas opens the Agent rail at the intended width and keeps a fresh chat a
 
         const panel = page.getByLabel("Canvas Agent 对话面板");
         await expect(panel).toBeVisible({ timeout: 20_000 });
-        await expect.poll(async () => Math.round((await panel.boundingBox())?.width || 0)).toBe(470);
-        await expect(page.getByRole("button", { name: "Agent 对话", exact: true })).toHaveCount(0);
+        await expect.poll(async () => Math.round((await panel.boundingBox())?.width || 0)).toBe(404);
+        await expect(page.getByRole("button", { name: "打开 Agent", exact: true })).toHaveCount(0);
 
         await page.getByRole("tab", { name: /历史/ }).click();
-        await page.getByRole("button", { name: "删除对话：待删除对话" }).click();
-        const deleteDialog = page.getByRole("dialog", { name: "删除对话记录？" });
+        await page.getByRole("button", { name: "修改标题：待删除对话" }).click();
+        await page.getByRole("textbox", { name: "编辑对话标题" }).fill("已修改标题");
+        await page.getByRole("textbox", { name: "编辑对话标题" }).press("Enter");
+        await expect(page.getByText("已修改标题", { exact: true })).toBeVisible();
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).chatSessions.find((session) => session.id === "agent-session")?.title).toBe("已修改标题");
+
+        await page.getByRole("checkbox", { name: "选择对话：第二条对话" }).check();
+        await page.getByRole("checkbox", { name: "选择对话：第三条对话" }).check();
+        await page.getByRole("button", { name: "删除所选 (2)" }).click();
+        let deleteDialog = page.getByRole("dialog", { name: "删除对话记录？" });
+        await deleteDialog.getByRole("button", { name: /删\s*除/ }).click();
+        await expect(page.getByText("第二条对话", { exact: true })).toHaveCount(0);
+        await expect(page.getByText("第三条对话", { exact: true })).toHaveCount(0);
+        await expect.poll(() => readCanvasChatState(request, projectPath)).toEqual({ sessions: 1, messages: 1 });
+
+        await page.getByRole("button", { name: "删除对话：已修改标题" }).click();
+        deleteDialog = page.getByRole("dialog", { name: "删除对话记录？" });
         await deleteDialog.getByRole("button", { name: /删\s*除/ }).click();
 
         await expect(page.getByRole("tab", { name: "对话", exact: true })).toHaveAttribute("aria-selected", "true");
         await expect(page.getByPlaceholder("描述你想让 Agent 如何操作画布")).toBeVisible();
-        await expect(page.getByText("VOZEB PRO Canvas", { exact: true }).first()).toBeVisible();
+        await expect(page.getByText("你好，我是你的画布助手", { exact: true })).toBeVisible();
+        await expect.poll(() => page.locator("[data-canvas-agent-scroll]").evaluate((element) => element.scrollTop)).toBe(0);
         await expect.poll(() => readCanvasChatState(request, projectPath)).toEqual({ sessions: 1, messages: 0 });
 
         await page.getByRole("button", { name: "收起 Agent 面板" }).click();
-        await expect(page.getByRole("button", { name: "Agent 对话", exact: true })).toBeVisible();
+        await expect(page.getByRole("button", { name: "打开 Agent", exact: true })).toBeVisible();
     } finally {
         await deleteCanvasProject(request, project.id);
     }

@@ -288,9 +288,9 @@ export function AgentChatComposer({
         void onAddFiles(images);
     };
     return (
-        <div className="px-2 pb-2 pt-2" onWheelCapture={(event) => event.stopPropagation()}>
+        <div data-canvas-agent-composer className="px-3 pb-3 pt-2" onWheelCapture={(event) => event.stopPropagation()}>
             <div
-                className="rounded-[24px] border px-3 pb-3 pt-3 shadow-lg transition"
+                className="rounded-2xl border px-3.5 pb-3.5 pt-3.5 shadow-sm transition"
                 style={{ background: theme.toolbar.panel, borderColor: isDragActive ? "#22d3ee" : theme.node.stroke }}
                 onDragEnter={handleDragOver}
                 onDragOver={handleDragOver}
@@ -316,7 +316,7 @@ export function AgentChatComposer({
                                 {onRemoveAttachment && item.status !== "uploading" ? (
                                     <button
                                         type="button"
-                                        className="absolute right-1 top-1 z-10 grid size-5 place-items-center rounded-full border opacity-100 shadow-sm transition sm:opacity-0 sm:group-hover:opacity-100"
+                                        className="absolute -right-1.5 -top-1.5 z-10 grid size-7 place-items-center rounded-full border shadow-sm transition hover:scale-105"
                                         style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }}
                                         onClick={() => onRemoveAttachment(item.id)}
                                         aria-label="移除图片"

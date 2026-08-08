@@ -728,7 +728,7 @@ test("creative workspaces remain usable without horizontal overflow in light and
         if (route === canvasRoute) {
             await expect(page.locator("[data-canvas-surface]")).toHaveCSS("background-color", "rgb(255, 255, 255)");
             if ((page.viewportSize()?.width || 0) <= 768) {
-                await page.getByRole("button", { name: "Agent 对话", exact: true }).click();
+                await page.getByRole("button", { name: "打开 Agent", exact: true }).click();
                 const agentPanel = page.getByLabel("Canvas Agent 对话面板");
                 await expect(agentPanel).toBeVisible();
                 await expect.poll(async () => Math.round((await agentPanel.boundingBox())?.width || 0)).toBe(page.viewportSize()?.width || 0);
