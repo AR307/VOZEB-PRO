@@ -7,6 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 
 import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
 import { createServerVideoGenerationTask } from "@/services/api/video";
+import { createAgentPromptHref } from "@/lib/create-agent-prompt";
 import { syncUserPointsFromHeaders } from "@/services/api/points";
 import { exportDramaJianyingDraft, getDramaProjectCosts, reviewDramaEpisode } from "@/services/api/drama-projects";
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
@@ -195,9 +196,9 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             message.error(error instanceof Error ? error.message : "版本恢复失败");
         }
     };
-    const sendToVideo = (shot: DramaShot) => {
+    const sendToAgent = (shot: DramaShot) => {
         const prompt = compileDramaShotPrompts(project, episode, shot).videoPrompt;
-        router.push(`/video?source=drama&projectId=${encodeURIComponent(project.id)}&prompt=${encodeURIComponent(prompt)}&size=${encodeURIComponent(project.ratio)}`);
+        router.push(createAgentPromptHref(`${prompt}\n画幅：${project.ratio}`));
     };
 
     useEffect(() => {
@@ -347,6 +348,16 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         const prompts = compileDramaShotPrompts(project, episode, next);
         if (mode === "reference" && !references.length) {
             updateShot(project.id, episode.id, next.id, { generationStatus: "error", generationError: "参考图模式需要先为关联角色、场景、道具或项目素材配置参考图" });
+            startingShotRef.current = "";
+            return;
+        }
+        if (mode === "storyboard" && !next.storyboardImageUrl) {
+            updateShot(project.id, episode.id, next.id, { generationStatus: "error", generationError: "分镜模式需要先生成或上传起始帧" });
+            startingShotRef.current = "";
+            return;
+        }
+        if (mode === "storyboard" && next.storyboardFrameMode === "first_last" && !next.storyboardEndImageUrl) {
+            updateShot(project.id, episode.id, next.id, { generationStatus: "error", generationError: "首尾帧模式需要先生成或上传结束帧" });
             startingShotRef.current = "";
             return;
         }
@@ -511,7 +522,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                     ))}
                                 </div>
                                 <div>
-                                    <SectionTitle className="!mb-4 sm:!mb-5" title="镜头生成队列" description="项目内串行创建后台视频任务，避免超过用户并发上限；也可继续把单镜头送入视频工作台精调。" />
+                                    <SectionTitle className="!mb-4 sm:!mb-5" title="镜头生成队列" description="项目内串行创建后台视频任务，避免超过用户并发上限；也可继续把单镜头交给创作 Agent 精调。" />
                                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                                             <Button
@@ -749,9 +760,9 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                                         disabled={!shot.videoPrompt}
                                                         className={`${shot.subtitle || shot.dialogue ? "col-span-2" : ""} !bg-muted/60 hover:!bg-muted sm:col-span-1 ${generationActionButtonClass}`}
                                                         icon={<Send className="size-4" />}
-                                                        onClick={() => sendToVideo(shot)}
+                                                        onClick={() => sendToAgent(shot)}
                                                     >
-                                                        视频工作台精调
+                                                        交给创作 Agent
                                                     </Button>
                                                 </div>
                                             </article>

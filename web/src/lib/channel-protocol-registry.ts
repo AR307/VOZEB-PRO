@@ -46,16 +46,32 @@ const openAiOperations: ChannelProtocolDefinition["operations"] = {
     audio: { capability: "audio", createPath: "/audio/speech", requestTemplate: '{"model":"{{model}}","input":"{{prompt}}","voice":"alloy","response_format":"mp3"}', resultField: "binary" },
 };
 
+const geminiVideoOperation: ProtocolOperation = {
+    capability: "video",
+    createPath: "/models/:model:predictLongRunning",
+    imageToVideoPath: "/models/:model:predictLongRunning",
+    queryPath: "/models/:model/operations/:task_id",
+    requestTemplate:
+        '{"instances":[{"prompt":"{{prompt}}","image":"{{image}}","lastFrame":"{{last_frame}}","referenceImages":"{{references}}"}],"parameters":{"durationSeconds":"{{duration}}","aspectRatio":"{{ratio}}","resolution":"{{resolution}}","generateAudio":"{{generate_audio}}"}}',
+    resultField: "response.generateVideoResponse.generatedSamples[0].video.uri",
+    statusField: "done",
+    durationRange: "4、6、8 秒",
+    referenceRule: "服务端将参考图片转为 inlineData；支持普通参考图、首帧和尾帧，不支持参考视频或参考音频。",
+    supportsReferenceImage: true,
+    supportsReferenceVideo: false,
+    supportsReferenceAudio: false,
+};
+
 const seedanceOperation: ProtocolOperation = {
     capability: "video",
     createPath: "/contents/generations/tasks",
     imageToVideoPath: "/contents/generations/tasks",
     queryPath: "/contents/generations/tasks/:task_id",
-    requestTemplate: '{"model":"{{model}}","content":[{"type":"text","text":"{{prompt}}"}],"ratio":"{{ratio}}","resolution":"{{resolution}}","duration":"{{duration}}","generate_audio":true,"watermark":false}',
+    requestTemplate: '{"model":"{{model}}","content":"{{content}}","ratio":"{{ratio}}","resolution":"{{resolution}}","duration":"{{duration}}","generate_audio":true,"watermark":false}',
     resultField: "content.video_url",
     statusField: "status",
     durationRange: "4-15 秒，具体范围以模型文档为准",
-    referenceRule: "图片、视频和音频使用 content 多模态数组；媒体必须使用上游可访问的 URL 或供应商素材 ID。",
+    referenceRule: "图片、视频和音频使用 content 多模态数组；首帧与尾帧分别使用 first_frame、last_frame 角色；媒体必须使用上游可访问的 URL 或供应商素材 ID。",
     supportsReferenceImage: true,
     supportsReferenceVideo: true,
     supportsReferenceAudio: true,
@@ -112,6 +128,18 @@ const definitions: ChannelProtocolDefinition[] = [
         modelCatalogPaths: ["/v1/models"],
         capabilities: ["text", "image", "video", "audio"],
         operations: openAiOperations,
+        strict: true,
+    },
+    {
+        id: "gemini",
+        label: "Google Gemini / Veo",
+        description: "Google Gemini API 的 Veo 异步视频协议，使用 predictLongRunning 与 operation 轮询。",
+        apiFormat: "gemini",
+        authMode: "custom-header",
+        defaultBaseUrl: "https://generativelanguage.googleapis.com",
+        modelCatalogPaths: ["/v1beta/models"],
+        capabilities: ["video"],
+        operations: { video: geminiVideoOperation },
         strict: true,
     },
     {
@@ -339,6 +367,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
 }
 
 export function protocolAuthHeaders(apiKey: string, input: Pick<SystemChannelAdvancedConfig, "protocol" | "authMode" | "authHeader" | "authPrefix"> | undefined, fallback: ApiCallFormat = "openai"): Record<string, string> {
+    if (input?.protocol === "gemini") return { "x-goog-api-key": apiKey };
     const mode = resolveChannelAuthMode(input);
     if (mode === "none") return {};
     if (fallback === "gemini" && !input?.authMode) return { "x-goog-api-key": apiKey };

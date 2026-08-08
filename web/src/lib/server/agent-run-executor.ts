@@ -60,10 +60,11 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         if (!(await canContinue(run.id, executionId))) return;
         if (claimed.requestedModelIds?.length) {
             const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds);
-            const selectedModels = claimed.requestedModelIds.map((id) => allModels.find((item) => item.id === id && item.capability !== "text")).filter((item): item is ReturnType<typeof agentModelOptions>[number] => Boolean(item));
+            const directModelOptions = claimed.generationPreferences?.mode ? availableModels : allModels;
+            const selectedModels = claimed.requestedModelIds.map((id) => directModelOptions.find((item) => item.id === id && item.capability !== "text")).filter((item): item is ReturnType<typeof agentModelOptions>[number] => Boolean(item));
             if (selectedModels.length !== claimed.requestedModelIds.length) throw new Error("部分所选模型当前不可用，请重新选择");
             const plan = directAgentPlan(selectedModels, claimed.prompt, claimed.referencedAssetIds);
-            const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize);
+            const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize, claimed.generationPreferences);
             await updateAgentRunById(run.id, {}, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId);
             const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply: plan.reply } } : { type: "run.planned", data: { reply: plan.reply, tasks: tasks.map(taskPlanSummary) } };
             await updateAgentRunById(run.id, { tasks, foundation: plan.foundation, reviewed: false, timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now() } }, event, ["running"], executionId);
@@ -105,6 +106,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 );
                 plan = await parseAgentPlanCall(planCall, () => refundFunctionCall(claimed.userId, model, planCall), undefined, {
                     allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),
+                    requiredGenerationMode: claimed.generationPreferences?.mode,
                 });
                 if (plan) acceptedPlan = { userId: claimed.userId, model, call: planCall };
                 break;
@@ -143,7 +145,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             planningPersisted = true;
             return;
         }
-        const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize);
+        const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize, claimed.generationPreferences);
         const projectHandoff = normalizeAgentProjectHandoff(plan, claimed.surface, referencedAssets, claimed.prompt);
         const reply = agentPlanReply({ ...plan, projectHandoff }, tasks, claimed.surface);
         const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply } } : { type: "run.planned", data: { reply, tasks: tasks.map(taskPlanSummary), projectHandoff } };

@@ -48,7 +48,7 @@ export function HomeGallery() {
                     <GalleryState
                         icon={<RotateCw aria-hidden="true" />}
                         title="作品暂时无法加载"
-                        description={query.error instanceof Error ? query.error.message : "请稍后重试"}
+                        description="请稍后重试，或刷新页面后再试。"
                         action={
                             <button type="button" onClick={() => void query.refetch()}>
                                 重新加载

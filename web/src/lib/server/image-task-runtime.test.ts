@@ -84,7 +84,7 @@ describe("image task runtime submission safety", () => {
         expect(state.config.channelId).toBe("channel-two");
         expect(state.candidateConfigs).toEqual([]);
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
-        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ channelId: "channel-two", provider: "gemini" }));
+        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-two", channelId: "channel-two", provider: "gemini", lastUpstreamStatus: "submitted" }));
     });
 
     it("does not switch candidates when the submission outcome is unknown", async () => {
@@ -113,6 +113,7 @@ describe("image task runtime submission safety", () => {
         expect(mocks.runGemini).not.toHaveBeenCalled();
         expect(state.upstream?.id).toBe("upstream-one");
         expect(state.billing).toMatchObject({ pointsRecordId: "record-one", refunded: false });
+        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "needs_review", upstreamTaskId: "upstream-one", channelId: "channel-one", nextPollAt: undefined }));
         expect(mocks.refund).not.toHaveBeenCalled();
     });
 
@@ -125,6 +126,7 @@ describe("image task runtime submission safety", () => {
 
         const step = await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
         expect(step).toMatchObject({ state: "result_ready", resultUrl: "inline://image-task-result" });
+        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "result_ready", resultPayload: { url: "inline://image-task-result" }, lastUpstreamStatus: "completed" }));
         if (step.state !== "result_ready") throw new Error("image result was not ready");
         await expect(persistImageTaskResult(state, "http://internal", step.resultUrl)).rejects.toThrow("pngload_buffer");
         expect(mocks.refund).not.toHaveBeenCalled();

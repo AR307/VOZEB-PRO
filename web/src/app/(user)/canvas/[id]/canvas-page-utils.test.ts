@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasNodeData } from "../types";
+import { CANVAS_CONFIG_NODE_HEIGHT } from "../constants";
 
 const mocks = vi.hoisted(() => ({
     readImageMeta: vi.fn(),
@@ -15,7 +16,7 @@ vi.mock("@/services/image-storage", async (importOriginal) => ({
     uploadImage: mocks.uploadImage,
 }));
 
-import { hydrateAssistantImages, hydrateCanvasImages } from "./canvas-page-utils";
+import { applyNodeConfigPatch, hydrateAssistantImages, hydrateCanvasImages, normalizeCanvasConfigNodeLayout } from "./canvas-page-utils";
 
 describe("Canvas project hydration", () => {
     beforeEach(() => {
@@ -69,6 +70,16 @@ describe("Canvas project hydration", () => {
     });
 });
 
+describe("Canvas config node layout", () => {
+    it("keeps the persisted details state and node hit box in sync", () => {
+        const collapsed = normalizeCanvasConfigNodeLayout(configNode(320));
+        const expanded = applyNodeConfigPatch(collapsed, { configDetailsOpen: true });
+
+        expect(collapsed).toMatchObject({ height: CANVAS_CONFIG_NODE_HEIGHT.collapsed, metadata: { configDetailsOpen: false } });
+        expect(expanded).toMatchObject({ height: CANVAS_CONFIG_NODE_HEIGHT.expanded, metadata: { configDetailsOpen: true } });
+    });
+});
+
 function imageNode(id: string, storageKey: string): CanvasNodeData {
     return {
         id,
@@ -83,4 +94,8 @@ function imageNode(id: string, storageKey: string): CanvasNodeData {
 
 function textNode(): CanvasNodeData {
     return { id: "text", type: CanvasNodeType.Text, title: "文本", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { content: "内容" } };
+}
+
+function configNode(height: number): CanvasNodeData {
+    return { id: "config", type: CanvasNodeType.Config, title: "生成配置", position: { x: 0, y: 0 }, width: 340, height, metadata: { generationMode: "image" } };
 }

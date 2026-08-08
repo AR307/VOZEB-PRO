@@ -1,5 +1,6 @@
 import type { CreativeFoundation } from "@/lib/creative-agent-contract";
-import type { CreativeProjectHandoffPlan } from "@/lib/creative-runtime-contract";
+import type { CreativeGenerationMode, CreativeProjectHandoffPlan } from "@/lib/creative-runtime-contract";
+import { agentTaskResultItems } from "@/lib/server/agent-run-result-items";
 
 export type AgentPlan = {
     intent?: "conversation" | "generation";
@@ -61,16 +62,16 @@ export function validateAgentPlan(value: unknown): asserts value is AgentPlan {
     if (ids.size !== plan.deliverables.length || plan.deliverables.some((item) => item.dependencies?.some((dependency) => !ids.has(dependency)))) throw new Error("模型返回的任务依赖无效");
 }
 
+export function validateAgentPlanGenerationMode(plan: AgentPlan, mode?: CreativeGenerationMode) {
+    if (!mode) return;
+    if (plan.intent === "conversation" || plan.projectHandoff || !plan.deliverables.length || plan.deliverables.some((item) => item.type !== mode)) throw new Error("模型返回的创作类型与用户选择不一致");
+}
+
 export function validateAgentTaskResult(type: AgentPlan["deliverables"][number]["type"], value: unknown) {
     if (!value || typeof value !== "object") throw new Error("生成任务完成但没有返回有效产物");
-    const record = value as Record<string, unknown>;
-    const list = [record.results, record.images, record.outputs, record.items].find((item) => Array.isArray(item) && item.length > 0) as unknown[] | undefined;
-    if (list) {
-        if (list.some((item) => !validMediaRecord(item))) throw new Error("图片任务包含无效产物");
-        return;
-    }
-    if (type === "text" && !(typeof record.content === "string" && record.content.trim())) throw new Error("文本任务没有返回有效内容");
-    if (type !== "text" && !validMediaRecord(record)) throw new Error(`${type === "image" ? "图片" : type === "video" ? "视频" : "音频"}任务没有返回有效媒体地址`);
+    const items = agentTaskResultItems(value);
+    if (type === "text" && !items.some((item) => typeof item.content === "string" && item.content.trim())) throw new Error("文本任务没有返回有效内容");
+    if (type !== "text" && !items.some(validMediaRecord)) throw new Error(`${type === "image" ? "图片" : type === "video" ? "视频" : "音频"}任务没有返回有效产物`);
 }
 
 export function agentTaskCopies(type: AgentPlan["deliverables"][number]["type"], count: number) {

@@ -112,6 +112,25 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     }
     if (request.method === "POST" && path === "/planner/run") return sendJson(response, 200, { data: { plan: JSON.stringify({}) } });
 
+    const geminiCreate = path.match(/^\/models\/([^/]+):predictLongRunning$/);
+    if (request.method === "POST" && geminiCreate) {
+        const id = nextTaskId("gemini-operation");
+        tasks.set(id, { kind: "gemini-video", status: "completed", model: decodeURIComponent(geminiCreate[1]) });
+        return sendJson(response, 200, { name: `models/${decodeURIComponent(geminiCreate[1])}/operations/${id}`, done: false });
+    }
+    const geminiOperation = path.match(/^\/models\/([^/]+)\/operations\/([^/]+)$/);
+    if (request.method === "GET" && geminiOperation) {
+        const id = decodeURIComponent(geminiOperation[2]);
+        const model = decodeURIComponent(geminiOperation[1]);
+        const task = tasks.get(id);
+        if (!task || task.kind !== "gemini-video") return sendJson(response, 404, { error: { message: "Gemini operation not found" } });
+        return sendJson(response, 200, {
+            name: `models/${model}/operations/${id}`,
+            done: task.status === "completed",
+            ...(task.status === "completed" ? { response: { generateVideoResponse: { generatedSamples: [{ video: { uri: `${url.origin}/media/fixture.mp4` } }] } } } : {}),
+        });
+    }
+
     if (request.method === "POST" && GLOBAL_AIOPC_IMAGE_PATHS.has(path)) {
         const id = nextTaskId("image");
         tasks.set(id, { kind: "image", status: "completed" });

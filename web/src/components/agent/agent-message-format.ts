@@ -5,7 +5,9 @@ export function friendlyAgentError(value: unknown, fallback = "Agent 暂时无�
     const message = value instanceof Error ? value.message : typeof value === "string" ? value : "";
     const actionable = actionableErrorMessage(message);
     if (actionable) return actionable;
-    if (!message || TECHNICAL_ERROR_PATTERN.test(message)) return fallback;
+    const classified = classifiedTechnicalError(message);
+    if (classified) return classified;
+    if (!message) return fallback;
     if (/任务依赖无法继续执行/.test(message)) return "部分创作任务未能完成，请调整需求后重试。";
     return message;
 }
@@ -13,7 +15,8 @@ export function friendlyAgentError(value: unknown, fallback = "Agent 暂时无�
 export function formatAgentMessageText(text: string) {
     const actionable = actionableErrorMessage(text);
     if (actionable) return actionable;
-    if (TECHNICAL_ERROR_PATTERN.test(text)) return "当前模型暂不可用，请切换模型或稍后重试。";
+    const classified = classifiedTechnicalError(text);
+    if (classified) return classified;
     const legacyTextResult = text.match(/^已完成 1 个创作任务。\s*「[^」]+」已完成：\s*\*\*(.+?)\*\*/s);
     if (legacyTextResult?.[1]) return legacyTextResult[1].trim();
     if (/^正在执行任务 task-[^（]+（第 \d+ 次）…?$/.test(text.trim())) return "正在执行创作任务…";
@@ -45,6 +48,36 @@ function actionableErrorMessage(value: string) {
         return candidates.map((candidate) => (typeof candidate === "string" ? normalizeActionableError(candidate.trim()) : "")).find(Boolean) || normalizeActionableError(text);
     } catch {
         return "";
+    }
+}
+
+function classifiedTechnicalError(value: string) {
+    const message = extractErrorMessage(value);
+    if (!message) return "";
+    if (/积分不足|余额不足/.test(message)) return "积分不足";
+    if (/status\s*[=:]\s*(401|403)|unauthorized|forbidden|鉴权失败|api\s*key|密钥/i.test(message)) return "当前渠道鉴权失败，请管理员检查 API Key 和模型权限。";
+    if (/status\s*[=:]\s*429|rate.?limit|限流|请求过于频繁/i.test(message)) return "请求过于频繁，请稍后重试。";
+    if (/timeout|timed\s*out|超时|响应超时/i.test(message)) return "模型响应超时，请稍后重试。";
+    if (/network|fetch failed|econn|enotfound|dns|证书|连接失败|无法连接|服务器网络/i.test(message)) return "模型服务连接失败，请稍后重试。";
+    if (/status\s*[=:]\s*4\d{2}|invalid|unsupported|参数(?:错误|无效|不支持)|请求参数/i.test(message)) return "当前请求参数不被模型支持，请检查模型与生成参数。";
+    if (/status\s*[=:]\s*5\d{2}|not available|convert_request_failed|backend-(?:anon|api)\/conversation failed|<!doctype\s+html|<html\b|\bnginx\b|request id|new_api_error/i.test(message)) {
+        return "当前模型暂不可用，请切换模型或稍后重试。";
+    }
+    return TECHNICAL_ERROR_PATTERN.test(value) ? "当前模型暂不可用，请切换模型或稍后重试。" : "";
+}
+
+function extractErrorMessage(value: string) {
+    const text = value.trim();
+    if (!text) return "";
+    if (!text.startsWith("{")) return text;
+    try {
+        const payload = JSON.parse(text) as Record<string, unknown>;
+        const error = payload.error;
+        const response = payload.response && typeof payload.response === "object" ? (payload.response as Record<string, unknown>) : undefined;
+        const responseError = response?.error;
+        return [payload.msg, payload.message, error, objectMessage(error), response?.msg, responseError, objectMessage(responseError)].map((candidate) => (typeof candidate === "string" ? candidate.trim() : "")).find(Boolean) || text;
+    } catch {
+        return text;
     }
 }
 

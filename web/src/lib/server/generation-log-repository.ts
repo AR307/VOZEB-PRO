@@ -26,8 +26,8 @@ let mutationQueue = Promise.resolve();
 
 export function sourceLabel(source: string) {
     if (source === "agent") return "Agent 工作台";
-    if (source === "image-workbench") return "生图工作台";
-    if (source === "video-workbench") return "视频创作台";
+    if (source === "image-workbench") return "图片生成";
+    if (source === "video-workbench") return "视频生成";
     if (source === "canvas") return "画布";
     if (source === "drama") return "短剧";
     return "未知入口";

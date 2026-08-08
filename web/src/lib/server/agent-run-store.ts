@@ -1,8 +1,9 @@
 import { nanoid } from "nanoid";
 import type { CreativeFoundation, CreativeReview } from "@/lib/creative-agent-contract";
-import type { CreativeProjectHandoffPlan, CreativeRunRequest, CreativeSurface } from "@/lib/creative-runtime-contract";
+import { CreativeRuntimeInputError, type CreativeGenerationPreferences, type CreativeProjectHandoffPlan, type CreativeRunRequest, type CreativeSurface } from "@/lib/creative-runtime-contract";
 import { extractImageSizeFromPrompt } from "@/lib/image-size";
-import { createCreativeRunBundle, getCreativeRunByClientRequestId, mutateCreativeRun } from "./creative-runtime-store";
+import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-reference-contract";
+import { createCreativeRunBundle, getCreativeAssetsByIds, getCreativeRunByClientRequestId, mutateCreativeRun } from "./creative-runtime-store";
 import { getStoredGenerationTask, listStoredGenerationTasks } from "./generation-task-store";
 import { cancelledRunCanvasOps, taskCanvasEventOps } from "./agent-run-canvas-ops";
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
@@ -15,6 +16,7 @@ export type AgentRunReference = {
     sourceTaskId?: string;
     url: string;
     type: "image" | "video" | "audio";
+    role?: VideoReferenceRole;
 };
 export type AgentRunChildTask = {
     id: string;
@@ -65,6 +67,7 @@ export type AgentRun = {
     selectedSkillIds?: string[];
     requestedModelIds?: string[];
     requestedImageSize?: string;
+    generationPreferences?: CreativeGenerationPreferences;
     assetIds: string[];
     status: AgentRunStatus;
     executionId?: string;
@@ -93,6 +96,7 @@ export type AgentRunTimings = {
 const TTL = 365 * 24 * 60 * 60 * 1000;
 
 export async function createAgentRun(userId: string, input: CreativeRunRequest) {
+    await assertVideoFrameAssets(userId, input);
     const now = Date.now();
     const conversationId = input.conversationId || `conversation-${nanoid()}`;
     const run: AgentRun = {
@@ -110,6 +114,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         selectedSkillIds: input.skillIds,
         ...(input.modelIds.length ? { requestedModelIds: input.modelIds } : {}),
         requestedImageSize: extractImageSizeFromPrompt(input.prompt) || undefined,
+        ...(input.preferences ? { generationPreferences: input.preferences } : {}),
         assetIds: [],
         status: "planning",
         tasks: [],
@@ -127,6 +132,18 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         acknowledgement: agentRequirementAcknowledgement(input.prompt, input.surface, input.assetIds.length > 0 || selectedCanvasNodeIds(input.snapshot).length > 0),
         ttlMs: TTL,
     });
+}
+
+async function assertVideoFrameAssets(userId: string, input: CreativeRunRequest) {
+    const frameIds = videoFrameAssetIds(input.preferences?.video);
+    if (!frameIds.length) return;
+    const assets = await getCreativeAssetsByIds(frameIds);
+    const byId = new Map(assets.map((asset) => [asset.id, asset]));
+    for (const id of frameIds) {
+        const asset = byId.get(id);
+        if (!asset || asset.userId !== userId || asset.status !== "ready") throw new CreativeRuntimeInputError("视频首尾帧图片不存在或已失效");
+        if (asset.type !== "image") throw new CreativeRuntimeInputError("视频首尾帧只能使用图片素材");
+    }
 }
 
 function selectedCanvasNodeIds(snapshot: unknown) {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
     assertReferenceCapabilities,
     assertReferenceUrls,
+    assertVideoReferenceRoles,
     buildProviderRequest,
     buildVideoProviderRequest,
     isProviderBusinessError,
@@ -10,6 +11,7 @@ import {
     providerTaskPath,
     readProviderError,
     readProviderString,
+    templateVideoReferenceRoles,
     videoPollingPolicy,
 } from "./provider-task-config";
 
@@ -70,6 +72,24 @@ describe("provider task config", () => {
         expect(() => assertReferenceCapabilities(config, [{ type: "image" }])).not.toThrow();
         expect(() => assertReferenceCapabilities(config, [{ type: "video" }])).toThrow("当前渠道未启用参考视频能力");
         expect(() => assertReferenceCapabilities(config, [{ type: "audio" }])).toThrow("当前渠道未启用参考音频能力");
+    });
+
+    it("enforces protocol-specific first and last frame support before submission", () => {
+        const frames = [
+            { type: "image" as const, url: "https://cdn.example.com/first.png", role: "first_frame" as const },
+            { type: "image" as const, url: "https://cdn.example.com/last.png", role: "last_frame" as const },
+        ];
+
+        expect(() => assertVideoReferenceRoles({ protocol: "seedance" } as never, frames)).not.toThrow();
+        expect(() => assertVideoReferenceRoles({ protocol: "openai" } as never, frames)).toThrow("当前视频模型不支持尾帧输入");
+        expect(() => assertVideoReferenceRoles({ protocol: "custom", requestTemplate: '{"first":"{{first_frame_url}}","last":"{{last_frame_url}}"}' } as never, frames)).not.toThrow();
+        expect(() => assertVideoReferenceRoles({ protocol: "custom", requestTemplate: '{"first":"{{first_frame_url}}"}' } as never, frames)).toThrow("当前视频模型不支持尾帧输入");
+    });
+
+    it("derives custom template frame roles only from explicit variables or structured references", () => {
+        expect(templateVideoReferenceRoles('{"first":"{{first_frame}}","last":"{{last_frame_url}}"}')).toEqual(["reference", "first_frame", "last_frame"]);
+        expect(templateVideoReferenceRoles('{"references":"{{references}}"}')).toEqual(["reference", "first_frame", "last_frame"]);
+        expect(templateVideoReferenceRoles('{"images":"{{images}}"}')).toEqual(["reference"]);
     });
 
     it("rejects loopback assets when the provider requires public reference URLs", () => {

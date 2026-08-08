@@ -14,6 +14,81 @@ describe("normalizeCreativeRunRequest", () => {
         });
     });
 
+    it("normalizes explicit media mode, size and quality preferences", () => {
+        expect(
+            normalizeCreativeRunRequest({
+                clientRequestId: "req-2",
+                surface: "chat",
+                prompt: "生成一条产品视频",
+                assetIds: [],
+                skillIds: [],
+                modelIds: [],
+                preferences: {
+                    mode: "video",
+                    image: { size: " 1024 × 1536 ", quality: "high", count: 12 },
+                    video: { size: " 9：16 ", quality: "1080P", seconds: 10 },
+                    audio: { voice: " nova ", format: " wav " },
+                },
+            }),
+        ).toMatchObject({
+            preferences: {
+                mode: "video",
+                image: { size: "1024x1536", quality: "high", count: 10 },
+                video: { size: "9:16", quality: "1080", seconds: 10 },
+                audio: { voice: "nova", format: "wav" },
+            },
+        });
+    });
+
+    it("normalizes explicit video first and last frame preferences", () => {
+        expect(
+            normalizeCreativeRunRequest({
+                clientRequestId: "req-frames",
+                surface: "chat",
+                prompt: "让首尾画面自然衔接",
+                assetIds: ["first-image", "last-image"],
+                skillIds: [],
+                modelIds: [],
+                preferences: {
+                    mode: "video",
+                    video: {
+                        referenceMode: "first_last",
+                        firstFrameAssetId: "first-image",
+                        lastFrameAssetId: "last-image",
+                    },
+                },
+            }),
+        ).toMatchObject({
+            preferences: {
+                mode: "video",
+                video: {
+                    referenceMode: "first_last",
+                    firstFrameAssetId: "first-image",
+                    lastFrameAssetId: "last-image",
+                },
+            },
+        });
+    });
+
+    it.each([
+        [{ referenceMode: "first_frame" }, ["first-image"], "首帧模式需要选择首帧图片"],
+        [{ referenceMode: "first_last", firstFrameAssetId: "first-image" }, ["first-image"], "首尾帧模式需要同时选择首帧和尾帧图片"],
+        [{ referenceMode: "first_last", firstFrameAssetId: "same-image", lastFrameAssetId: "same-image" }, ["same-image"], "首帧和尾帧不能使用同一张图片"],
+        [{ referenceMode: "first_frame", firstFrameAssetId: "missing-image" }, ["other-image"], "视频首尾帧必须来自本轮已选择的图片素材"],
+    ])("rejects invalid video frame preferences", (video, assetIds, message) => {
+        expect(() =>
+            normalizeCreativeRunRequest({
+                clientRequestId: "req-invalid-frames",
+                surface: "chat",
+                prompt: "生成视频",
+                assetIds,
+                skillIds: [],
+                modelIds: [],
+                preferences: { mode: "video", video },
+            }),
+        ).toThrow(message);
+    });
+
     it("requires projects for canvas and drama", () => {
         expect(() => normalizeCreativeRunRequest({ clientRequestId: "x", surface: "canvas", prompt: "draw" })).toThrow("画布标识不能为空");
         expect(() => normalizeCreativeRunRequest({ clientRequestId: "x", surface: "drama", prompt: "write" })).toThrow("短剧项目标识不能为空");

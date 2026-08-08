@@ -74,10 +74,6 @@ function mergeSettings(current: AuthSettings, imported: AuthSettings): AuthSetti
         generationDefaults: {
             ...current.generationDefaults,
             ...imported.generationDefaults,
-            workbenchSmartPlanning: {
-                ...current.generationDefaults.workbenchSmartPlanning,
-                ...imported.generationDefaults.workbenchSmartPlanning,
-            },
         },
         systemChannels: mergeRecords(current.systemChannels, imported.systemChannels, (channel) => channel.id, mergeSystemChannel),
         logicalModels: mergeRecords(current.logicalModels, imported.logicalModels, (model) => model.id, mergeLogicalModel),

@@ -5,6 +5,7 @@ import { Modal } from "antd";
 import { useRouter } from "next/navigation";
 
 import { AuthForm } from "@/components/auth/auth-form";
+import { SiteLogo } from "@/components/layout/site-logo";
 import { createAgentPromptHref } from "@/lib/create-agent-prompt";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -55,14 +56,31 @@ export function HomeActionsProvider({ initialSite, children }: { initialSite: Ho
     return (
         <HomeActionsContext.Provider value={{ authenticated, sessionReady, site, openLogin, openProtectedPath, startCreating }}>
             {children}
-            <Modal centered open={authOpen} width="min(94vw, 520px)" footer={null} title={null} destroyOnHidden onCancel={() => setAuthOpen(false)} styles={{ container: { padding: 0, overflow: "hidden" }, body: { padding: 0 } }}>
-                <AuthForm
-                    mode="login"
-                    variant="embedded"
-                    nextPath={authNextPath}
-                    className="min-h-0 bg-transparent p-0 shadow-none"
-                    headerSlot={<div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-100">登录后将继续刚才的创作操作，输入内容不会丢失。</div>}
-                />
+            <Modal centered open={authOpen} width={740} footer={null} title={null} destroyOnHidden onCancel={() => setAuthOpen(false)} className="landing-auth-modal">
+                <div className="landing-auth-modal-shell">
+                    <section className="landing-auth-modal-brand">
+                        <div className="inline-flex items-center gap-3 text-stone-950 dark:text-white">
+                            <SiteLogo logoUrl={site.logoUrl} className="landing-auth-brand-logo bg-stone-950 dark:bg-white" />
+                            <span className="text-xl font-semibold">{site.title}</span>
+                        </div>
+                        <div className="landing-auth-modal-copy">
+                            <p className="text-sm font-medium text-cyan-700 dark:text-cyan-200">继续创作</p>
+                            <h2 className="mt-3 text-3xl font-semibold leading-tight text-stone-950 dark:text-white">登录后回到刚才的位置</h2>
+                            <p className="mt-4 text-sm leading-7 text-stone-500 dark:text-stone-300">已输入的内容会保留，登录成功后直接进入当前创作。</p>
+                        </div>
+                        <div className="landing-auth-modal-bullets grid gap-2 text-sm text-stone-600 dark:text-stone-300">
+                            {["创作会话持续保存", "图片、视频与音频统一创作", "画布与短剧项目随时继续"].map((item) => (
+                                <div key={item} className="flex items-center gap-2">
+                                    <span className="size-1.5 rounded-full bg-cyan-400" />
+                                    <span>{item}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                    <div className="landing-auth-modal-form">
+                        <AuthForm mode="login" variant="embedded" nextPath={authNextPath} className="min-h-0 bg-transparent p-0 shadow-none" />
+                    </div>
+                </div>
             </Modal>
         </HomeActionsContext.Provider>
     );

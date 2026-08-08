@@ -137,7 +137,6 @@ export function serializePublicSettings(settings: AuthSettings) {
             videoSeconds: settings.generationDefaults.videoSeconds,
             audioVoice: settings.generationDefaults.audioVoice,
             audioFormat: settings.generationDefaults.audioFormat,
-            workbenchSmartPlanning: { ...settings.generationDefaults.workbenchSmartPlanning },
         },
         defaultModels: { ...settings.defaultModels },
         logicalModels: settings.logicalModels

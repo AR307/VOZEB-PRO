@@ -4,18 +4,21 @@ const mocks = vi.hoisted(() => ({ refreshUserPointsIfSystem: vi.fn(async () => u
 
 vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: mocks.refreshUserPointsIfSystem }));
 
-import { controlCreativeAgentRun, listCreativeConversationPage, watchCreativeAgentRun } from "./creative";
+import { controlCreativeAgentRun, createCreativeAgentRun, listCreativeConversationPage, watchCreativeAgentRun } from "./creative";
 import type { CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
 
 class FakeEventSource extends EventTarget {
     static instance: FakeEventSource;
     onopen: (() => void) | null = null;
     onerror: (() => void) | null = null;
+    closed = false;
     constructor(public readonly url: string) {
         super();
         FakeEventSource.instance = this;
     }
-    close() {}
+    close() {
+        this.closed = true;
+    }
     emit(type: string, data: unknown) {
         this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
     }
@@ -29,7 +32,7 @@ describe("统一创作 Agent 事件流", () => {
         const progress: string[] = [];
         const terminal: unknown[] = [];
         const completed: unknown[] = [];
-        watchCreativeAgentRun("run-one", {
+        const stop = watchCreativeAgentRun("run-one", {
             onProgress: (text) => progress.push(text),
             onTerminal: (status, text) => terminal.push({ status, text }),
             onConnectionError: () => undefined,
@@ -47,7 +50,11 @@ describe("统一创作 Agent 事件流", () => {
         expect(progress).toEqual(["已选择图片模型和 1:1 画幅", "正在处理「角色图」", "「角色图」已完成 1/4", "「角色图」已完成 1/4，失败 1", "角色图已经生成"]);
         expect(completed).toEqual([{ taskId: "images", title: "角色图", completedCount: 1, failedCount: 0, totalCount: 4 }, undefined]);
         expect(terminal).toEqual([{ status: "completed", text: "四张角色图已经完成" }]);
+        expect(FakeEventSource.instance.closed).toBe(true);
+        FakeEventSource.instance.emit("run.failed", { data: { message: "迟到失败事件" } });
+        expect(terminal).toEqual([{ status: "completed", text: "四张角色图已经完成" }]);
         expect(mocks.refreshUserPointsIfSystem).toHaveBeenCalledWith("system");
+        stop();
     });
 
     it("reports terminal failure without asking the user to choose a target", () => {
@@ -103,6 +110,22 @@ describe("统一创作 Agent 事件流", () => {
 
         expect(handoffs).toEqual([handoff]);
     });
+
+    it("closes the stream when the caller leaves the conversation", () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const terminal: unknown[] = [];
+        const stop = watchCreativeAgentRun("run-dispose", {
+            onProgress: () => undefined,
+            onTerminal: (status) => terminal.push(status),
+            onConnectionError: () => undefined,
+        });
+
+        stop();
+        FakeEventSource.instance.emit("run.completed", { data: { reply: "迟到结果" } });
+
+        expect(FakeEventSource.instance.closed).toBe(true);
+        expect(terminal).toEqual([]);
+    });
 });
 
 describe("创作会话来源", () => {
@@ -125,5 +148,18 @@ describe("创作会话来源", () => {
 
         await expect(controlCreativeAgentRun("run-one", "retry")).resolves.toEqual({ run });
         expect(fetchMock).toHaveBeenCalledWith("/api/agent/runs/run-one/retry", expect.objectContaining({ method: "POST", cache: "no-store" }));
+    });
+
+    it.each([
+        [400, "生成参数无效"],
+        [429, "Agent 请求过于频繁，请稍后重试"],
+        [503, "当前模型暂无健康渠道"],
+    ])("preserves the backend error message for HTTP %i", async (status, message) => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => Response.json({ code: status, data: null, msg: message }, { status })),
+        );
+
+        await expect(createCreativeAgentRun({ clientRequestId: `request-${status}`, surface: "chat", prompt: "生成一张图片", assetIds: [], skillIds: [], modelIds: [] })).rejects.toThrow(message);
     });
 });

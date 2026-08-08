@@ -116,6 +116,51 @@ describe("directAgentPlan", () => {
         ).toBe("1824x1024");
     });
 
+    it("统一 Agent 将用户选择的图片尺寸和画质写入真实任务", () => {
+        const plan = {
+            intent: "generation",
+            objective: "生成主视觉",
+            reply: "开始生成",
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: "生成主视觉" }, direction: { summary: "横版构图" } },
+            deliverables: [{ id: "hero", title: "主视觉", type: "image", model: "image-pro", prompt: "产品海报", count: 1, ratio: "1:1", quality: "low", dependencies: [] }],
+        };
+
+        const [task] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, "产品海报", "chat", [], undefined, { mode: "image", image: { size: "16:9", quality: "high", count: 4 } });
+
+        expect(task).toMatchObject({ type: "image", ratio: "16:9", quality: "high", count: 4 });
+    });
+
+    it("即使 Planner 漏掉资产也会把用户明确选择的首尾帧注入视频任务", () => {
+        const plan = {
+            intent: "generation",
+            objective: "生成首尾衔接视频",
+            reply: "开始生成",
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: "生成首尾衔接视频" }, direction: { summary: "镜头连续" } },
+            deliverables: [{ id: "video", title: "首尾衔接视频", type: "video", model: "video-pro", prompt: "自然运镜", count: 1, dependencies: [], assetIds: [] }],
+        };
+        const assets = [
+            { id: "first-image", userId: "user", conversationId: "conversation", type: "image", title: "首帧", status: "ready", serverUrl: "/api/reference-assets/first.png", createdAt: 1, updatedAt: 1 },
+            { id: "last-image", userId: "user", conversationId: "conversation", type: "image", title: "尾帧", status: "ready", serverUrl: "/api/reference-assets/last.png", createdAt: 1, updatedAt: 1 },
+        ];
+
+        const [task] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, "让首尾画面自然衔接", "chat", assets as never, undefined, {
+            mode: "video",
+            video: { referenceMode: "first_last", firstFrameAssetId: "first-image", lastFrameAssetId: "last-image" },
+        });
+
+        expect(task).toMatchObject({
+            type: "video",
+            model: "video-pro",
+            referenceAssetId: "first-image",
+            references: [
+                { assetId: "first-image", type: "image", role: "first_frame", url: "/api/reference-assets/first.png" },
+                { assetId: "last-image", type: "image", role: "last_frame", url: "/api/reference-assets/last.png" },
+            ],
+        });
+    });
+
     it("短剧 Agent 使用项目自定义画幅覆盖规划画幅", () => {
         const plan = {
             intent: "generation",
@@ -218,14 +263,16 @@ describe("directAgentPlan", () => {
 
 function generationSettings() {
     return {
-        defaultModels: { textModel: "text-pro", imageModel: "image-pro", videoModel: "", audioModel: "" },
+        defaultModels: { textModel: "text-pro", imageModel: "image-pro", videoModel: "video-pro", audioModel: "" },
         systemChannels: [
             { id: "image-channel", name: "图片", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", models: ["vendor/image-pro"] },
             { id: "text-channel", name: "文本", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", models: ["vendor/text-pro"] },
+            { id: "video-channel", name: "视频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", models: ["vendor/video-pro"] },
         ],
         logicalModels: [
             { id: "image-pro", name: "专业图片模型", capability: "image", enabled: true, bindings: [{ id: "binding-image", channelId: "image-channel", upstreamModel: "vendor/image-pro", enabled: true, priority: 1 }] },
             { id: "text-pro", name: "文本模型", capability: "text", enabled: true, bindings: [{ id: "binding-text", channelId: "text-channel", upstreamModel: "vendor/text-pro", enabled: true, priority: 1 }] },
+            { id: "video-pro", name: "专业视频模型", capability: "video", enabled: true, bindings: [{ id: "binding-video", channelId: "video-channel", upstreamModel: "vendor/video-pro", enabled: true, priority: 1 }] },
         ],
         generationDefaults: { canvasImageCount: 1, imageSize: "1:1", imageQuality: "high", videoSeconds: 5, videoQuality: "720p", audioVoice: "alloy", audioFormat: "mp3" },
     };

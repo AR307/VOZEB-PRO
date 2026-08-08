@@ -152,6 +152,19 @@ import type { AdminDashboardDataActions } from "./use-admin-dashboard-data-actio
 export function useAdminDashboardSettingsActions({ state, data }: { state: AdminDashboardState; data: AdminDashboardDataActions }) {
     const { message, settings, setSettings, setMailTestLoading, mailTestTo, setFetchingModelId, customPointModel, setCustomPointModel } = state;
     const { saveSettings } = data;
+    const latestSettingsRef = useRef(settings);
+
+    useEffect(() => {
+        latestSettingsRef.current = settings;
+    }, [settings]);
+
+    const updateSite = (update: (site: AuthSettings["site"]) => AuthSettings["site"]) => {
+        const current = latestSettingsRef.current;
+        const next = { ...current, site: update(current.site) };
+        latestSettingsRef.current = next;
+        setSettings(next);
+    };
+    const getLatestSiteSettings = () => latestSettingsRef.current.site;
 
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
         setSettings((current) => {
@@ -278,7 +291,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const updateSiteSetting = <K extends keyof Omit<AuthSettings["site"], "socials">>(key: K, value: AuthSettings["site"][K]) => {
-        setSettings((current) => ({ ...current, site: { ...current.site, [key]: value } }));
+        updateSite((site) => ({ ...site, [key]: value }));
     };
 
     const uploadSiteImage = (file: File | undefined, key: "logoUrl" | "iconUrl", label: string) => {
@@ -305,84 +318,66 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     const uploadSiteIcon = (file?: File) => uploadSiteImage(file, "iconUrl", "浏览器图标");
 
     const updateSiteSocialSetting = (key: SiteSocialKey, patch: Partial<AuthSettings["site"]["socials"][SiteSocialKey]>) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                socials: {
-                    ...current.site.socials,
-                    [key]: { ...current.site.socials[key], ...patch },
-                },
+        updateSite((site) => ({
+            ...site,
+            socials: {
+                ...site.socials,
+                [key]: { ...site.socials[key], ...patch },
             },
         }));
     };
 
     const addFriendLink = () => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                friendLinks: [...(current.site.friendLinks || []), { id: nanoid(), label: "友情链接", url: "https://", enabled: true }],
-            },
+        updateSite((site) => ({
+            ...site,
+            friendLinks: [...(site.friendLinks || []), { id: nanoid(), label: "友情链接", url: "https://", enabled: true }],
         }));
     };
 
     const updateFriendLink = (id: string, patch: Partial<SiteFriendLink>) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                friendLinks: (current.site.friendLinks || []).map((link) => (link.id === id ? { ...link, ...patch } : link)),
-            },
+        updateSite((site) => ({
+            ...site,
+            friendLinks: (site.friendLinks || []).map((link) => (link.id === id ? { ...link, ...patch } : link)),
         }));
     };
 
     const deleteFriendLink = (id: string) => {
         const site = {
-            ...settings.site,
-            friendLinks: (settings.site.friendLinks || []).filter((link) => link.id !== id),
+            ...getLatestSiteSettings(),
+            friendLinks: (getLatestSiteSettings().friendLinks || []).filter((link) => link.id !== id),
         };
         return saveSettings({ site }, "友情链接已删除");
     };
 
     const addHomeShowcaseItem = () => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                homeShowcaseMode: "custom",
-                homeShowcaseItems: [
-                    ...(current.site.homeShowcaseItems || []),
-                    {
-                        id: nanoid(),
-                        title: "首页展示提示词",
-                        coverUrl: "",
-                        prompt: "",
-                        tags: ["精选提示词"],
-                        category: "首页展示",
-                    },
-                ].slice(0, 8),
-            },
+        updateSite((site) => ({
+            ...site,
+            homeShowcaseMode: "custom",
+            homeShowcaseItems: [
+                ...(site.homeShowcaseItems || []),
+                {
+                    id: nanoid(),
+                    title: "首页展示提示词",
+                    coverUrl: "",
+                    prompt: "",
+                    tags: ["精选提示词"],
+                    category: "首页展示",
+                },
+            ].slice(0, 8),
         }));
     };
 
     const updateHomeShowcaseItem = (id: string, patch: Partial<SiteShowcaseItem>) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                homeShowcaseItems: (current.site.homeShowcaseItems || []).map((item) => (item.id === id ? { ...item, ...patch } : item)),
-            },
+        updateSite((site) => ({
+            ...site,
+            homeShowcaseItems: (site.homeShowcaseItems || []).map((item) => (item.id === id ? { ...item, ...patch } : item)),
         }));
     };
 
     const deleteHomeShowcaseItem = (id: string) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                homeShowcaseItems: (current.site.homeShowcaseItems || []).filter((item) => item.id !== id),
-            },
+        updateSite((site) => ({
+            ...site,
+            homeShowcaseItems: (site.homeShowcaseItems || []).filter((item) => item.id !== id),
         }));
     };
 
@@ -450,6 +445,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         updateMailSetting,
         testMailSettings,
         updateSiteSetting,
+        getLatestSiteSettings,
         uploadSiteLogo,
         uploadSiteIcon,
         updateSiteSocialSetting,

@@ -312,6 +312,7 @@ function isChannelProtocol(value: unknown): value is SystemChannelProtocol {
     return (
         value === "auto" ||
         value === "openai" ||
+        value === "gemini" ||
         value === "sub2api" ||
         value === "newapi" ||
         value === "vozeb-recommended" ||

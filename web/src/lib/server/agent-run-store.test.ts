@@ -2,16 +2,47 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRun } from "./agent-run-store";
 
-const mocks = vi.hoisted(() => ({ mutateCreativeRun: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createCreativeRunBundle: vi.fn(), getCreativeAssetsByIds: vi.fn(), mutateCreativeRun: vi.fn() }));
 
 vi.mock("./creative-runtime-store", () => ({
-    createCreativeRunBundle: vi.fn(),
+    createCreativeRunBundle: mocks.createCreativeRunBundle,
+    getCreativeAssetsByIds: mocks.getCreativeAssetsByIds,
     getCreativeRunByClientRequestId: vi.fn(),
     mutateCreativeRun: mocks.mutateCreativeRun,
 }));
 vi.mock("./generation-task-store", () => ({ getStoredGenerationTask: vi.fn(), listStoredGenerationTasks: vi.fn() }));
 
-import { setAgentRunStatus, updateAgentRunById, updateAgentRunTaskById } from "./agent-run-store";
+import { createAgentRun, setAgentRunStatus, updateAgentRunById, updateAgentRunTaskById } from "./agent-run-store";
+
+describe("createAgentRun video frames", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.createCreativeRunBundle.mockImplementation(async (_userId, input) => input.run);
+    });
+
+    it("accepts ready image frames owned by the current user", async () => {
+        mocks.getCreativeAssetsByIds.mockResolvedValue([
+            { id: "first-image", userId: "user", type: "image", status: "ready" },
+            { id: "last-image", userId: "user", type: "image", status: "ready" },
+        ]);
+
+        await expect(createAgentRun("user", frameRunRequest())).resolves.toMatchObject({
+            referencedAssetIds: ["first-image", "last-image"],
+            generationPreferences: { video: { referenceMode: "first_last", firstFrameAssetId: "first-image", lastFrameAssetId: "last-image" } },
+        });
+    });
+
+    it.each([
+        [[{ id: "first-image", userId: "other-user", type: "image", status: "ready" }], "视频首尾帧图片不存在或已失效"],
+        [[{ id: "first-image", userId: "user", type: "video", status: "ready" }], "视频首尾帧只能使用图片素材"],
+        [[{ id: "first-image", userId: "user", type: "image", status: "deleted" }], "视频首尾帧图片不存在或已失效"],
+    ])("rejects invalid frame assets", async (assets, message) => {
+        mocks.getCreativeAssetsByIds.mockResolvedValue(assets);
+
+        await expect(createAgentRun("user", frameRunRequest({ lastFrameAssetId: undefined, referenceMode: "first_frame", assetIds: ["first-image"] }))).rejects.toThrow(message);
+        expect(mocks.createCreativeRunBundle).not.toHaveBeenCalled();
+    });
+});
 
 describe("setAgentRunStatus", () => {
     beforeEach(() => vi.clearAllMocks());
@@ -165,5 +196,24 @@ function canvasRun(): AgentRun {
         reviewed: false,
         createdAt: 1,
         updatedAt: 2,
+    };
+}
+
+function frameRunRequest(overrides: { referenceMode?: "first_frame" | "first_last"; firstFrameAssetId?: string; lastFrameAssetId?: string; assetIds?: string[] } = {}) {
+    return {
+        clientRequestId: "request-frames",
+        surface: "chat" as const,
+        prompt: "让首尾画面自然衔接",
+        assetIds: overrides.assetIds || ["first-image", "last-image"],
+        skillIds: [],
+        modelIds: [],
+        preferences: {
+            mode: "video" as const,
+            video: {
+                referenceMode: overrides.referenceMode || "first_last",
+                firstFrameAssetId: overrides.firstFrameAssetId || "first-image",
+                ...(overrides.lastFrameAssetId === undefined && overrides.referenceMode === "first_frame" ? {} : { lastFrameAssetId: overrides.lastFrameAssetId || "last-image" }),
+            },
+        },
     };
 }

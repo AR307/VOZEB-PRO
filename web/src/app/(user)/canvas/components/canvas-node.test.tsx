@@ -109,4 +109,14 @@ describe("CanvasNode error content", () => {
         expect(markup).toContain("任务已取消");
         expect(markup).not.toContain("重试");
     });
+
+    it("pauses tasks that need review without offering a new generation retry", () => {
+        const reviewNode: CanvasNodeData = { ...imageNode, metadata: { status: "needs_review", errorDetails: "上游创建状态待确认" } };
+
+        const markup = renderImageNode({ data: reviewNode, onRetry: noop });
+
+        expect(markup).toContain("上游创建状态待确认");
+        expect(markup).toContain("检查状态");
+        expect(markup).not.toContain(">重试<");
+    });
 });

@@ -143,11 +143,33 @@ async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunRe
     const billing = result.pointsRecordId ? { pointsCost: result.pointsCost ?? 0, pointsRecordId: result.pointsRecordId, refunded: false } : undefined;
     if (billing) await updateImageTask(task.id, { billing });
     if (result.needsReview) {
+        const submittedAt = Date.now();
         await updateImageTask(task.id, { upstream: result.needsReview.upstream, billing });
+        await scheduleGenerationTask("image", task.id, {
+            executionPhase: "needs_review",
+            upstreamTaskId: result.needsReview.upstream.id,
+            channelId: task.config.channelId,
+            provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+            queryPath: result.needsReview.upstream.explicitPollUrl || task.config.advancedConfig?.queryPath,
+            submittedAt,
+            nextPollAt: undefined,
+            lastUpstreamStatus: "query_contract_missing",
+        });
         return { state: "needs_review", reason: result.needsReview.reason, status: "query_contract_missing" };
     }
     if (result.pending) {
+        const submittedAt = Date.now();
         await updateImageTask(task.id, { upstream: result.pending, billing });
+        await scheduleGenerationTask("image", task.id, {
+            executionPhase: "submitted",
+            upstreamTaskId: result.pending.id,
+            channelId: task.config.channelId,
+            provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+            queryPath: result.pending.explicitPollUrl || task.config.advancedConfig?.queryPath,
+            submittedAt,
+            nextPollAt: submittedAt,
+            lastUpstreamStatus: "submitted",
+        });
         return { state: "pending", upstream: result.pending, status: "submitted" };
     }
     const results = imageTaskMediaResults(result);
@@ -155,11 +177,29 @@ async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunRe
     if (!first) return { state: "failed", error: "上游返回的图片文件无效或保存失败", status: "failed" };
     await updateImageTask(task.id, { result: { ...first, results } });
     if (first.dataUrl?.startsWith("data:") || first.dataUrl?.startsWith("/api/")) {
-        return { state: "result_ready", resultUrl: INLINE_IMAGE_RESULT_REFERENCE, status: "completed" };
+        const resultUrl = INLINE_IMAGE_RESULT_REFERENCE;
+        await persistReadyImageSchedule(task, resultUrl);
+        return { state: "result_ready", resultUrl, status: "completed" };
     }
     const resultUrl = stableMediaUrl(first.remoteUrl || first.dataUrl);
-    if (resultUrl) return { state: "result_ready", resultUrl, status: "completed" };
+    if (resultUrl) {
+        await persistReadyImageSchedule(task, resultUrl);
+        return { state: "result_ready", resultUrl, status: "completed" };
+    }
     return { state: "failed", error: "上游返回的图片文件无效或保存失败", status: "failed" };
+}
+
+function persistReadyImageSchedule(task: ImageTask, resultUrl: string) {
+    const submittedAt = Date.now();
+    return scheduleGenerationTask("image", task.id, {
+        executionPhase: "result_ready",
+        channelId: task.config.channelId,
+        provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+        submittedAt,
+        nextPollAt: submittedAt,
+        lastUpstreamStatus: "completed",
+        resultPayload: { url: resultUrl },
+    });
 }
 
 async function refundImageCandidate(task: ImageTask) {

@@ -16,7 +16,7 @@ export function HomeCta() {
             <span className={`${styles.ctaCrystal} ${styles.ctaCrystalLeft}`} aria-hidden="true" />
             <span className={`${styles.ctaCrystal} ${styles.ctaCrystalRight}`} aria-hidden="true" />
             <div>
-                <h2 id="home-cta-title">立即开启你的 AI 创作工作流</h2>
+                <h2 id="home-cta-title">开启你的 AI 创作工作流</h2>
                 <p>加入 VOZEB PRO，释放你的创作潜力，让 AI 成为你最强的创作伙伴。</p>
             </div>
             <button type="button" onClick={() => startCreating()}>
@@ -89,7 +89,7 @@ export function HomeFooter() {
                 </div>
             </div>
             {copyright || policies.length ? (
-                <div className={styles.footerBottom}>
+                <div className={styles.footerBottom} data-testid="home-footer-bottom">
                     {copyright ? <span>{copyright}</span> : null}
                     {policies.length ? (
                         <div>

@@ -143,7 +143,17 @@ async function cancelledTaskTarget(lease: GenerationTaskLease): Promise<Generati
     }
     if (lease.type === "video") {
         const task = await getVideoTask(lease.id);
-        return task ? { type: "video", taskId: task.id, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
+        return task
+            ? {
+                  type: "video",
+                  taskId: task.id,
+                  userId: task.userId,
+                  executionPhase: submissionPhase,
+                  upstreamTaskId: task.upstream.id || lease.upstreamTaskId,
+                  queryPath: task.upstream.queryPath || task.config.advancedConfig?.queryPath,
+                  config: task.config,
+              }
+            : null;
     }
     if (lease.type === "audio") {
         const task = await getAudioTask(lease.id);
@@ -378,6 +388,20 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId && task.status === "running") {
+        if (task.upstream?.id) {
+            const submittedAt = lease.submittedAt || Date.now();
+            await releaseGenerationTaskLease("image", lease.id, workerId, {
+                executionPhase: "submitted",
+                upstreamTaskId: task.upstream.id,
+                channelId: task.config.channelId,
+                provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+                queryPath: task.upstream.explicitPollUrl || task.config.advancedConfig?.queryPath,
+                submittedAt,
+                nextPollAt: submittedAt,
+                lastUpstreamStatus: "recovered_submitted",
+            });
+            return "pending";
+        }
         await releaseGenerationTaskLease("image", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
         return "needs_review";
     }
@@ -428,9 +452,14 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
     } catch (error) {
         const latest = await getImageTask(task.id);
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        const submitted = Boolean(latest?.upstream?.id || lease.upstreamTaskId);
+        const upstreamTaskId = latest?.upstream?.id || lease.upstreamTaskId;
+        const submitted = Boolean(upstreamTaskId);
         await releaseGenerationTaskLease("image", task.id, workerId, {
             executionPhase: submitted ? "polling" : "needs_review",
+            upstreamTaskId,
+            channelId: latest?.config.channelId,
+            provider: latest ? latest.config.advancedConfig?.protocol || latest.config.apiFormat : undefined,
+            queryPath: latest?.upstream?.explicitPollUrl || latest?.config.advancedConfig?.queryPath,
             nextPollAt: submitted ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
             lastUpstreamStatus: submitted ? `query_error:${count}` : "submission_outcome_unknown",
@@ -468,6 +497,20 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId && task.status === "running") {
+        if (task.upstream?.id) {
+            const submittedAt = lease.submittedAt || Date.now();
+            await releaseGenerationTaskLease("audio", lease.id, workerId, {
+                executionPhase: "submitted",
+                upstreamTaskId: task.upstream.id,
+                channelId: task.config.channelId,
+                provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+                queryPath: task.config.advancedConfig?.queryPath,
+                submittedAt,
+                nextPollAt: submittedAt,
+                lastUpstreamStatus: "recovered_submitted",
+            });
+            return "pending";
+        }
         await releaseGenerationTaskLease("audio", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
         return "needs_review";
     }
@@ -502,14 +545,20 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
         });
         return "pending";
     } catch (error) {
+        const latest = await getAudioTask(task.id);
+        const upstreamTaskId = latest?.upstream?.id || lease.upstreamTaskId;
         const count = errorCount(lease.lastUpstreamStatus) + 1;
         await releaseGenerationTaskLease("audio", task.id, workerId, {
-            executionPhase: task.upstream?.id ? "polling" : "needs_review",
-            nextPollAt: task.upstream?.id ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
+            executionPhase: upstreamTaskId ? "polling" : "needs_review",
+            upstreamTaskId,
+            channelId: latest?.config.channelId,
+            provider: latest ? latest.config.advancedConfig?.protocol || latest.config.apiFormat : undefined,
+            queryPath: latest?.config.advancedConfig?.queryPath,
+            nextPollAt: upstreamTaskId ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
-            lastUpstreamStatus: task.upstream?.id ? `query_error:${count}` : "submission_outcome_unknown",
+            lastUpstreamStatus: upstreamTaskId ? `query_error:${count}` : "submission_outcome_unknown",
         });
-        return task.upstream?.id ? "deferred" : "needs_review";
+        return upstreamTaskId ? "deferred" : "needs_review";
     }
 }
 
@@ -541,6 +590,20 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId) {
+        if (task.upstream.id) {
+            const submittedAt = lease.submittedAt || Date.now();
+            await releaseGenerationTaskLease("video", lease.id, workerId, {
+                executionPhase: "submitted",
+                upstreamTaskId: task.upstream.id,
+                channelId: task.config.channelId,
+                provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+                queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
+                submittedAt,
+                nextPollAt: submittedAt,
+                lastUpstreamStatus: "recovered_submitted",
+            });
+            return "pending";
+        }
         await releaseGenerationTaskLease("video", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
         return "needs_review";
     }
@@ -560,12 +623,15 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
                 nextPollAt: now,
                 lastPollAt: now,
                 lastUpstreamStatus: step.status,
+                queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
                 resultPayload: { url: step.resultUrl },
             });
             return "result_ready";
         }
         await releaseGenerationTaskLease("video", task.id, workerId, {
             executionPhase: "polling",
+            upstreamTaskId: task.upstream.id || lease.upstreamTaskId,
+            queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
             nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt, now }),
             lastPollAt: now,
             lastUpstreamStatus: step.status,
@@ -575,6 +641,8 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
         const count = errorCount(lease.lastUpstreamStatus) + 1;
         await releaseGenerationTaskLease("video", task.id, workerId, {
             executionPhase: "polling",
+            upstreamTaskId: task.upstream.id || lease.upstreamTaskId,
+            queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
             nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt, consecutiveErrors: count }),
             lastPollAt: Date.now(),
             lastUpstreamStatus: `query_error:${count}`,

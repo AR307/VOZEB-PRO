@@ -349,10 +349,6 @@ export function normalizeGenerationDefaults(settings: Partial<GenerationDefaultS
         videoSeconds: Math.max(1, Math.min(20, Math.floor(Number(settings?.videoSeconds) || DEFAULT_SETTINGS.generationDefaults.videoSeconds))),
         audioVoice: normalizeText(settings?.audioVoice, DEFAULT_SETTINGS.generationDefaults.audioVoice, 80),
         audioFormat: allowedText(settings?.audioFormat, ["mp3", "wav", "opus", "aac", "flac"], DEFAULT_SETTINGS.generationDefaults.audioFormat),
-        workbenchSmartPlanning: {
-            image: settings?.workbenchSmartPlanning?.image !== false,
-            video: settings?.workbenchSmartPlanning?.video !== false,
-        },
     };
 }
 

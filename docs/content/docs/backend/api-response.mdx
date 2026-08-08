@@ -113,6 +113,8 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/projects/{id}`；素材库使用 `GET/POST /api/library-assets` 与 `PATCH/DELETE /api/library-assets/{id}`。两组接口均按当前登录用户隔离，响应采用 `{ code, data, msg }`。
 
+Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutation：请求携带稳定 `mutationId`、最后确认的 `baseUpdatedAt`，以及节点、连线、助手会话的 upsert/delete 和发生变化的项目字段。成功响应 `data.ack` 返回 `projectId`、新 `updatedAt` 与原 `mutationId`；同一 mutation 重放返回原确认且不重复应用，版本落后返回 409 并保留服务器快照。旧的完整项目 PATCH 只供现有非交互调用路径使用，仍要求 `expectedUpdatedAt`。
+
 `POST /api/agent/runs` 接收：
 
 ```ts

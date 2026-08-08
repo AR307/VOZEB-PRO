@@ -1,9 +1,9 @@
 "use client";
 
 import { nanoid } from "nanoid";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeMessage, type CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
+import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeGenerationPreferences, type CreativeMessage, type CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
 import {
     deleteCreativeConversations,
     controlCreativeAgentRun,
@@ -25,6 +25,7 @@ import { getMaterializedCreativeProject, materializeCreativeProjectHandoff, type
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 
 import { createConversationIdFromSearch, latestResumableAgentRun } from "./create-conversation-navigation";
+import { getCreateDraftAttachment, useCreateDraftAttachmentsStore } from "./use-create-draft-attachments-store";
 
 type PendingCreateSubmission = {
     clientRequestId: string;
@@ -34,8 +35,16 @@ type PendingCreateSubmission = {
     assetIds: string[];
     skillIds: string[];
     modelIds: string[];
+    preferences?: CreativeGenerationPreferences;
     temporaryUserId: string;
     temporaryAssistantId: string;
+};
+
+type CreateSubmitOptions = {
+    assetIds?: string[];
+    skillIds?: string[];
+    modelIds?: string[];
+    preferences?: CreativeGenerationPreferences;
 };
 
 export function useCreateAgent() {
@@ -64,6 +73,12 @@ export function useCreateAgent() {
     const [materializingProjectId, setMaterializingProjectId] = useState<string>();
     const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
     const [uploading, setUploading] = useState(false);
+    const draftAttachments = useCreateDraftAttachmentsStore((state) => state.attachments);
+    const addDraftAttachments = useCreateDraftAttachmentsStore((state) => state.add);
+    const removeDraftAttachments = useCreateDraftAttachmentsStore((state) => state.remove);
+    const clearDraftAttachments = useCreateDraftAttachmentsStore((state) => state.clear);
+    const allAssets = useMemo(() => [...assets, ...draftAttachments.map((item) => item.asset)], [assets, draftAttachments]);
+    const selectedAssetIdsWithDrafts = useMemo(() => Array.from(new Set([...selectedAssetIds, ...draftAttachments.map((item) => item.asset.id)])).slice(-20), [draftAttachments, selectedAssetIds]);
 
     const stopWatching = useCallback(() => {
         streamRef.current?.();
@@ -148,6 +163,7 @@ export function useCreateAgent() {
 
     const newConversation = useCallback(() => {
         stopWatching();
+        clearDraftAttachments();
         conversationGenerationRef.current += 1;
         activeConversationRef.current = undefined;
         refreshRequestRef.current += 1;
@@ -161,11 +177,12 @@ export function useCreateAgent() {
         setAssets([]);
         setSelectedAssetIds([]);
         setSending(false);
-    }, [stopWatching]);
+    }, [clearDraftAttachments, stopWatching]);
 
     const openConversation = useCallback(
         async (id: string) => {
             stopWatching();
+            clearDraftAttachments();
             const generation = ++conversationGenerationRef.current;
             activeConversationRef.current = id;
             setSending(false);
@@ -186,7 +203,7 @@ export function useCreateAgent() {
                 if (generation === conversationGenerationRef.current && activeConversationRef.current === id) setConversationLoading(false);
             }
         },
-        [newConversation, refreshConversation, stopWatching],
+        [clearDraftAttachments, newConversation, refreshConversation, stopWatching],
     );
 
     useEffect(() => {
@@ -241,20 +258,36 @@ export function useCreateAgent() {
 
     const uploadAttachments = useCallback(
         async (files: File[]) => {
-            if (!files.length || uploading) return [];
+            if (!files.length) return [];
+            return addDraftAttachments(files, activeConversationRef.current || "");
+        },
+        [addDraftAttachments],
+    );
+
+    const materializeDraftAttachments = useCallback(
+        async (assetIds: string[]) => {
+            const draftIds = assetIds.filter((id) => getCreateDraftAttachment(id));
+            if (!draftIds.length) return { conversationId: activeConversationRef.current, assetIds, replacements: new Map<string, CreativeAsset>() };
+            const replacements = new Map<string, CreativeAsset>();
             setUploading(true);
             try {
                 const id = await ensureConversation();
-                const uploaded: CreativeAsset[] = [];
-                for (const file of files.slice(0, 6)) uploaded.push(await uploadCreativeAsset(id, file));
-                setAssets((current) => [...current, ...uploaded.filter((asset) => !current.some((item) => item.id === asset.id))]);
-                setSelectedAssetIds((current) => Array.from(new Set([...current, ...uploaded.map((asset) => asset.id)])).slice(-20));
-                return uploaded;
+                for (const draftId of draftIds) {
+                    const draft = getCreateDraftAttachment(draftId);
+                    if (draft) replacements.set(draftId, await uploadCreativeAsset(id, draft.file));
+                }
+                return { conversationId: id, assetIds: assetIds.map((assetId) => replacements.get(assetId)?.id || assetId), replacements };
             } finally {
+                if (replacements.size) {
+                    const uploadedAssets = Array.from(replacements.values());
+                    setAssets((current) => [...current, ...uploadedAssets.filter((asset) => !current.some((item) => item.id === asset.id))]);
+                    setSelectedAssetIds((current) => Array.from(new Set([...current, ...uploadedAssets.map((asset) => asset.id)])).slice(-20));
+                    removeDraftAttachments(replacements.keys());
+                }
                 setUploading(false);
             }
         },
-        [ensureConversation, uploading],
+        [ensureConversation, removeDraftAttachments],
     );
 
     const watchRun = useCallback(
@@ -324,6 +357,7 @@ export function useCreateAgent() {
                     assetIds: snapshot.assetIds,
                     skillIds: snapshot.skillIds,
                     modelIds: snapshot.modelIds,
+                    preferences: snapshot.preferences,
                 });
                 const run = created.run;
                 failedSubmissionsRef.current.delete(snapshot.temporaryAssistantId);
@@ -334,6 +368,7 @@ export function useCreateAgent() {
                 activeConversationRef.current = run.conversationId;
                 setConversationId(run.conversationId);
                 setActiveRunId(run.id);
+                setRunDetails((current) => ({ ...current, [run.id]: run }));
                 setMessages((current) =>
                     current.map((item) => {
                         if (item.id === snapshot.temporaryUserId) return { ...item, id: run.inputMessageId, conversationId: run.conversationId, runId: run.id };
@@ -356,27 +391,39 @@ export function useCreateAgent() {
     );
 
     const submit = useCallback(
-        async (prompt: string, options?: { skillIds?: string[]; modelIds?: string[] }) => {
+        async (prompt: string, options?: CreateSubmitOptions) => {
             const content = prompt.trim();
             if (!content || sending || submittingRef.current) return false;
             submittingRef.current = true;
             const generation = conversationGenerationRef.current;
             stopWatching();
             setSending(true);
+            const selectedIds = (options?.assetIds || selectedAssetIdsWithDrafts).slice(-20);
+            let prepared: Awaited<ReturnType<typeof materializeDraftAttachments>>;
+            try {
+                prepared = await materializeDraftAttachments(selectedIds);
+            } catch (error) {
+                setSending(false);
+                submittingRef.current = false;
+                throw error;
+            }
             const now = Date.now();
             const sequence = messages.reduce((max, item) => Math.max(max, item.sequence), 0) + 1;
             const temporaryUserId = `message-${nanoid()}`;
             const temporaryAssistantId = `message-${nanoid()}`;
-            const optimisticConversationId = conversationId || "pending";
-            const assetIds = selectedAssetIds.slice(-20);
+            const submittedConversationId = prepared.conversationId || conversationId;
+            const optimisticConversationId = submittedConversationId || "pending";
+            const assetIds = prepared.assetIds;
+            const preferences = remapDraftAssetIds(options?.preferences, prepared.replacements);
             const snapshot: PendingCreateSubmission = {
                 clientRequestId: `create-${nanoid()}`,
                 generation,
-                conversationId,
+                conversationId: submittedConversationId,
                 content,
                 assetIds,
                 skillIds: options?.skillIds || [],
                 modelIds: options?.modelIds || [],
+                preferences,
                 temporaryUserId,
                 temporaryAssistantId,
             };
@@ -395,10 +442,11 @@ export function useCreateAgent() {
                     updatedAt: now,
                 },
             ]);
-            setSelectedAssetIds((current) => current.filter((id) => !assetIds.includes(id)));
+            const consumedIds = new Set([...selectedIds, ...assetIds]);
+            setSelectedAssetIds((current) => current.filter((id) => !consumedIds.has(id)));
             return executeSubmission(snapshot);
         },
-        [conversationId, executeSubmission, messages, selectedAssetIds, sending, stopWatching],
+        [conversationId, executeSubmission, materializeDraftAttachments, messages, selectedAssetIdsWithDrafts, sending, stopWatching],
     );
 
     const retrySubmission = useCallback(
@@ -513,16 +561,32 @@ export function useCreateAgent() {
         projectErrors,
         materializingProjectId,
         materializeProject,
-        selectedAssetIds,
-        selectedAssets: assets.filter((asset) => selectedAssetIds.includes(asset.id)),
+        selectedAssetIds: selectedAssetIdsWithDrafts,
+        selectedAssets: allAssets.filter((asset) => selectedAssetIdsWithDrafts.includes(asset.id)),
         toggleAsset: (id: string) => setSelectedAssetIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id].slice(-20))),
         uploading,
         uploadAttachments,
-        removeAttachment: (id: string) => setSelectedAssetIds((current) => current.filter((item) => item !== id)),
-        restoreAttachments: (ids: string[]) => setSelectedAssetIds(Array.from(new Set(ids.filter((id) => assets.some((asset) => asset.id === id)))).slice(-20)),
+        removeAttachment: (id: string) => {
+            if (getCreateDraftAttachment(id)) removeDraftAttachments([id]);
+            setSelectedAssetIds((current) => current.filter((item) => item !== id));
+        },
+        restoreAttachments: (ids: string[]) => setSelectedAssetIds(Array.from(new Set(ids.filter((id) => allAssets.some((asset) => asset.id === id)))).slice(-20)),
     };
 }
 
 function uniqueMessages(messages: CreativeMessage[]) {
     return Array.from(new Map(messages.map((item) => [item.id, item])).values()).sort((a, b) => a.sequence - b.sequence);
+}
+
+function remapDraftAssetIds(preferences: CreativeGenerationPreferences | undefined, replacements: Map<string, CreativeAsset>) {
+    if (!preferences?.video || !replacements.size) return preferences;
+    const remap = (id?: string) => (id ? replacements.get(id)?.id || id : undefined);
+    return {
+        ...preferences,
+        video: {
+            ...preferences.video,
+            firstFrameAssetId: remap(preferences.video.firstFrameAssetId),
+            lastFrameAssetId: remap(preferences.video.lastFrameAssetId),
+        },
+    };
 }

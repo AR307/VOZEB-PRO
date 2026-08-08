@@ -151,6 +151,42 @@ describe("generation task recovery service", () => {
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
     });
 
+    it("recovers a Gemini operation already persisted while submission was in flight", async () => {
+        const task = {
+            id: "video-gemini",
+            userId: "user-one",
+            status: "running",
+            upstream: {
+                id: "operation-one",
+                queryPath: "/models/veo-3.1-generate-preview/operations/operation-one",
+            },
+            config: {
+                channelId: "channel-gemini",
+                apiFormat: "gemini",
+                model: "veo-3.1-generate-preview",
+                advancedConfig: { protocol: "gemini", queryPath: "" },
+            },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "video", status: "running", executionPhase: "submitting", upstreamTaskId: undefined }]);
+        mocks.getVideoTask.mockResolvedValue(task);
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.queryVideoTaskUpstream).not.toHaveBeenCalled();
+        expect(mocks.release).toHaveBeenCalledWith(
+            "video",
+            task.id,
+            "worker-one",
+            expect.objectContaining({
+                executionPhase: "submitted",
+                upstreamTaskId: "operation-one",
+                queryPath: "/models/veo-3.1-generate-preview/operations/operation-one",
+                lastUpstreamStatus: "recovered_submitted",
+            }),
+        );
+        expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
+    });
+
     it("moves an image with an invalid OpenAI query contract to manual review", async () => {
         const task = {
             id: "image-one",
@@ -173,6 +209,52 @@ describe("generation task recovery service", () => {
         );
         expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
         expect(mocks.refundImageTask).not.toHaveBeenCalled();
+    });
+
+    it("recovers an image upstream identity already saved in the task payload", async () => {
+        const task = {
+            id: "image-one",
+            userId: "user-one",
+            status: "running",
+            upstream: { id: "upstream-one", explicitPollUrl: "/images/upstream-one" },
+            config: { channelId: "channel-one", apiFormat: "openai", advancedConfig: { protocol: "openai", queryPath: "/images/:task_id" } },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "running", executionPhase: "submitting", upstreamTaskId: undefined }]);
+        mocks.getImageTask.mockResolvedValue(task);
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.queryImageTaskUpstreamStep).not.toHaveBeenCalled();
+        expect(mocks.release).toHaveBeenCalledWith(
+            "image",
+            task.id,
+            "worker-one",
+            expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-one", channelId: "channel-one", queryPath: "/images/upstream-one", lastUpstreamStatus: "recovered_submitted" }),
+        );
+        expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
+    });
+
+    it("recovers an audio upstream identity already saved in the task payload", async () => {
+        const task = {
+            id: "audio-one",
+            userId: "user-one",
+            status: "running",
+            upstream: { id: "upstream-audio-one", createPath: "/audio/speech" },
+            config: { channelId: "channel-audio", apiFormat: "openai", advancedConfig: { protocol: "custom", queryPath: "/audio/:task_id" } },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "audio", status: "running", executionPhase: "submitting", upstreamTaskId: undefined }]);
+        mocks.getAudioTask.mockResolvedValue(task);
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.queryAudioTaskUpstreamStep).not.toHaveBeenCalled();
+        expect(mocks.release).toHaveBeenCalledWith(
+            "audio",
+            task.id,
+            "worker-one",
+            expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-audio-one", channelId: "channel-audio", queryPath: "/audio/:task_id", lastUpstreamStatus: "recovered_submitted" }),
+        );
+        expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
     });
 
     it("persists the selected text channel before the next upstream query", async () => {

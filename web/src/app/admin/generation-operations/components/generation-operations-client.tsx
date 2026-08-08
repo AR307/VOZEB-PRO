@@ -117,8 +117,7 @@ export function GenerationOperationsClient() {
                     <div className="min-w-0">
                         <div className="flex items-center gap-2">
                             <TaskTypeTag type={task.type} />
-                            <StatusTag status={task.status} />
-                            {task.canReview ? <ReviewTag /> : null}
+                            {task.canReview ? <ReviewTag /> : <StatusTag status={task.status} />}
                         </div>
                         <Tooltip title={task.id}>
                             <div className="mt-2 truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">{task.id}</div>
@@ -436,8 +435,7 @@ function TaskCard({ task, actingId, onAction, onReview }: { task: AdminGeneratio
             <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-wrap gap-1.5">
                     <TaskTypeTag type={task.type} />
-                    <StatusTag status={task.status} />
-                    {task.canReview ? <ReviewTag /> : null}
+                    {task.canReview ? <ReviewTag /> : <StatusTag status={task.status} />}
                 </div>
                 <div className="flex shrink-0 gap-0.5">
                     {task.canCancel ? (

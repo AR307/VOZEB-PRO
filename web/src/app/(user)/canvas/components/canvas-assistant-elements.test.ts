@@ -3,7 +3,42 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { CanvasNodeType } from "../types";
-import { assistantMessageToChatMessage, canvasRunSelectedNodeIds, compactMetadata, compactSnapshot } from "./canvas-assistant-elements";
+import { assistantMessageToChatMessage, canvasRunSelectedNodeIds, compactMetadata, compactSnapshot, removeCanvasAssistantSessions } from "./canvas-assistant-elements";
+
+describe("Canvas Agent session deletion", () => {
+    const sessions = [
+        { id: "active", title: "当前对话", messages: [], createdAt: "2026-08-06T00:00:00.000Z", updatedAt: "2026-08-06T00:00:00.000Z" },
+        { id: "history", title: "历史对话", messages: [], createdAt: "2026-08-05T00:00:00.000Z", updatedAt: "2026-08-05T00:00:00.000Z" },
+    ];
+
+    it("keeps the current chat when deleting another history entry", () => {
+        expect(removeCanvasAssistantSessions(sessions, "active", ["history"])).toMatchObject({ sessions: [{ id: "active" }], activeSessionId: "active" });
+    });
+
+    it("selects the next chat when deleting the active entry", () => {
+        expect(removeCanvasAssistantSessions(sessions, "active", ["active"])).toMatchObject({ sessions: [{ id: "history" }], activeSessionId: "history" });
+    });
+
+    it("keeps a fresh active chat after deleting the final conversation", () => {
+        const result = removeCanvasAssistantSessions(
+            [
+                {
+                    id: "only-session",
+                    title: "待删除对话",
+                    messages: [{ id: "message", role: "user", text: "保留输入区" }],
+                    createdAt: "2026-08-06T00:00:00.000Z",
+                    updatedAt: "2026-08-06T00:00:00.000Z",
+                },
+            ],
+            "only-session",
+            ["only-session"],
+        );
+
+        expect(result.sessions).toHaveLength(1);
+        expect(result.sessions[0]).toMatchObject({ title: "新对话", messages: [] });
+        expect(result.activeSessionId).toBe(result.sessions[0].id);
+    });
+});
 
 describe("Canvas Agent current-turn references", () => {
     it("renders the current-turn references before the user text", async () => {

@@ -101,7 +101,7 @@ export function AssistantHistory({ sessions, activeSession, onOpen, onDelete }: 
                                 进入
                             </Button>
                             <Tooltip title="删除记录">
-                                <Button size="small" danger type="text" className="!h-6 !w-6 !min-w-6" icon={<Trash2 className="size-3.5" />} onClick={() => onDelete(session.id)} />
+                                <Button size="small" danger type="text" className="!h-6 !w-6 !min-w-6" icon={<Trash2 className="size-3.5" />} onClick={() => onDelete(session.id)} aria-label={`删除对话：${session.title}`} />
                             </Tooltip>
                         </div>
                     </div>
@@ -227,4 +227,15 @@ export function compactMetadata(metadata: CanvasNodeData["metadata"]) {
 export function createSession(): CanvasAssistantSession {
     const now = new Date().toISOString();
     return { id: nanoid(), title: "新对话", messages: [], createdAt: now, updatedAt: now };
+}
+
+export function removeCanvasAssistantSessions(sessions: CanvasAssistantSession[], activeSessionId: string | null, removedIds: Iterable<string>) {
+    const removed = new Set(removedIds);
+    const remaining = sessions.filter((session) => !removed.has(session.id));
+    if (!remaining.length) {
+        const session = createSession();
+        return { sessions: [session], activeSessionId: session.id };
+    }
+    const nextActiveId = activeSessionId && !removed.has(activeSessionId) && remaining.some((session) => session.id === activeSessionId) ? activeSessionId : remaining[0].id;
+    return { sessions: remaining, activeSessionId: nextActiveId };
 }

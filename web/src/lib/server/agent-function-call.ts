@@ -1,9 +1,15 @@
 import { normalizeCreativeFoundation, normalizeCreativeReview, type CreativeReview } from "@/lib/creative-agent-contract";
-import { validateAgentPlan, type AgentPlan } from "./agent-run-validation";
+import type { CreativeGenerationMode } from "@/lib/creative-runtime-contract";
+import { validateAgentPlan, validateAgentPlanGenerationMode, type AgentPlan } from "./agent-run-validation";
 
 export type AgentFunctionCallResult = { arguments: string; pointsCost?: number; pointsRemaining?: number; pointsRecordId?: string };
 
-export async function parseAgentPlanCall(call: AgentFunctionCallResult, onInvalid: () => Promise<unknown>, conversationFallback?: { objective: string; reply?: string }, options?: { allowProjectHandoff?: boolean }): Promise<AgentPlan> {
+export async function parseAgentPlanCall(
+    call: AgentFunctionCallResult,
+    onInvalid: () => Promise<unknown>,
+    conversationFallback?: { objective: string; reply?: string },
+    options?: { allowProjectHandoff?: boolean; requiredGenerationMode?: CreativeGenerationMode },
+): Promise<AgentPlan> {
     try {
         const raw = parsePlanArguments(call.arguments, conversationFallback);
         const conversation = Boolean(conversationFallback) || raw.intent === "conversation";
@@ -24,6 +30,7 @@ export async function parseAgentPlanCall(call: AgentFunctionCallResult, onInvali
             foundation: normalizeCreativeFoundation(raw.foundation, objective),
         };
         validateAgentPlan(plan);
+        validateAgentPlanGenerationMode(plan, options?.requiredGenerationMode);
         return plan;
     } catch (error) {
         await onInvalid();

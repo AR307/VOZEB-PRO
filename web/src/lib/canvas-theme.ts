@@ -4,9 +4,8 @@ export type CanvasBackgroundMode = "dots" | "lines" | "blank";
 export const canvasThemes = {
     light: {
         canvas: {
-            background: "#f8fbff",
-            backdrop:
-                "radial-gradient(920px circle at 10% 12%, rgba(45, 212, 191, 0.20), transparent 62%), radial-gradient(980px circle at 88% 16%, rgba(99, 102, 241, 0.16), transparent 66%), radial-gradient(860px circle at 52% 88%, rgba(245, 158, 11, 0.08), transparent 64%), linear-gradient(135deg, #eafcff 0%, #eef7ff 36%, #f5f0ff 70%, #edfaff 100%)",
+            background: "#ffffff",
+            backdrop: "#ffffff",
             dot: "rgba(14,116,144,.24)",
             line: "rgba(14,116,144,.10)",
             selectionStroke: "#0f172a",
@@ -25,6 +24,9 @@ export const canvasThemes = {
             danger: "#dc2626",
             dangerSurface: "#fff1f2",
             dangerBorder: "#fecdd3",
+            action: "#0f172a",
+            actionText: "#ffffff",
+            actionDangerText: "#ffffff",
         },
         toolbar: {
             panel: "rgba(255,255,255,.96)",
@@ -37,9 +39,8 @@ export const canvasThemes = {
     },
     dark: {
         canvas: {
-            background: "#07080b",
-            backdrop:
-                "radial-gradient(920px circle at 10% 12%, rgba(20, 184, 166, 0.12), transparent 62%), radial-gradient(980px circle at 88% 16%, rgba(99, 102, 241, 0.14), transparent 66%), radial-gradient(860px circle at 52% 88%, rgba(245, 158, 11, 0.06), transparent 64%), linear-gradient(135deg, #041013 0%, #07121c 36%, #0c0916 70%, #071412 100%)",
+            background: "#090b10",
+            backdrop: "#090b10",
             dot: "rgba(248,250,252,.18)",
             line: "rgba(248,250,252,.08)",
             selectionStroke: "#ffffff",
@@ -58,6 +59,9 @@ export const canvasThemes = {
             danger: "#f87171",
             dangerSurface: "#2a1215",
             dangerBorder: "#7f1d1d",
+            action: "#f8fafc",
+            actionText: "#0f172a",
+            actionDangerText: "#ffffff",
         },
         toolbar: {
             panel: "rgba(10,12,16,.96)",

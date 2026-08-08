@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     getAgentRun: vi.fn(),
     setAgentRunStatus: vi.fn(),
     updateAgentRunById: vi.fn(),
+    fetchInternalApi: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -21,7 +22,7 @@ vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun,
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, limit, handler) => ((await mocks.countActive()) >= limit ? null : handler())) }));
-vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn(), resolveInternalOrigin: vi.fn(() => "http://localhost") }));
+vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi, resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
 import { POST } from "./route";
 
@@ -77,6 +78,64 @@ describe("Agent Run resume concurrency", () => {
 
         expect(response.status).toBe(429);
         expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
+    });
+
+    it("cancels every unfinished child task without cancelling completed outputs", async () => {
+        const run = {
+            id: "run",
+            userId: "user",
+            status: "running",
+            tasks: [
+                {
+                    id: "images",
+                    type: "image",
+                    status: "running",
+                    taskId: "image-latest",
+                    taskIds: ["image-pending", "image-completed", "image-latest"],
+                    childTasks: [
+                        { id: "image-pending", status: "pending" },
+                        { id: "image-completed", status: "completed" },
+                    ],
+                },
+                {
+                    id: "videos",
+                    type: "video",
+                    status: "running",
+                    childTasks: [
+                        { id: "video-one", status: "pending" },
+                        { id: "video-two", status: "pending" },
+                        { id: "video-failed", status: "failed" },
+                    ],
+                },
+                { id: "audio", type: "audio", status: "running", taskIds: ["audio-one", "audio-two", "audio-one"] },
+                { id: "text", type: "text", status: "running", taskId: "text-one" },
+                { id: "done", type: "image", status: "completed", taskId: "image-done" },
+            ],
+        };
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.setAgentRunStatus.mockResolvedValue({ ...run, status: "cancelled" });
+        mocks.fetchInternalApi.mockResolvedValue(new Response(null, { status: 200 }));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/cancel", { method: "POST", headers: { cookie: "session=test" } }), {
+            params: Promise.resolve({ id: "run", action: "cancel" }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(mocks.fetchInternalApi.mock.calls.map(([url]) => url).sort()).toEqual(
+            [
+                "http://localhost/api/audio-tasks/audio-one",
+                "http://localhost/api/audio-tasks/audio-two",
+                "http://localhost/api/image-tasks/image-latest",
+                "http://localhost/api/image-tasks/image-pending",
+                "http://localhost/api/text-tasks/text-one",
+                "http://localhost/api/video-tasks/video-one",
+                "http://localhost/api/video-tasks/video-two",
+            ].sort(),
+        );
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalledWith(expect.stringContaining("image-completed"), expect.anything());
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalledWith(expect.stringContaining("video-failed"), expect.anything());
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalledWith(expect.stringContaining("image-done"), expect.anything());
+        expect(mocks.fetchInternalApi).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ method: "PATCH", headers: { "Content-Type": "application/json", cookie: "session=test" }, body: JSON.stringify({ status: "cancelled" }) }));
     });
 });
 

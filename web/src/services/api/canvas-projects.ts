@@ -1,4 +1,4 @@
-import type { CanvasProject, CanvasProjectSummaryPage, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectMutation, CanvasProjectSaveAck, CanvasProjectSummaryPage, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
 
 export function listCanvasProjectSummaries(input: { page: number; pageSize: number }) {
     const query = new URLSearchParams({ page: String(input.page), pageSize: String(input.pageSize) });
@@ -21,6 +21,15 @@ export function saveCanvasProject(project: CanvasProject, expectedUpdatedAt: str
     }).then((data) => data.project);
 }
 
+export function saveCanvasProjectMutation(projectId: string, mutation: CanvasProjectMutation, options?: { keepalive?: boolean }) {
+    return request<{ ack: CanvasProjectSaveAck }>(`/api/canvas/projects/${encodeURIComponent(projectId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mutation }),
+        keepalive: options?.keepalive,
+    }).then((data) => data.ack);
+}
+
 export function deleteCanvasProjects(ids: string[]) {
     return request<{ deleted: number }>("/api/canvas/projects", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
 }
@@ -28,6 +37,15 @@ export function deleteCanvasProjects(ids: string[]) {
 async function request<T>(url: string, init?: RequestInit) {
     const response = await fetch(url, init);
     const payload = (await response.json().catch(() => ({}))) as { data?: T; msg?: string; error?: string };
-    if (!response.ok || !payload.data) throw new Error(payload.msg || payload.error || "画布项目请求失败");
+    if (!response.ok || !payload.data) throw new CanvasProjectRequestError(payload.msg || payload.error || "画布项目请求失败", response.status);
     return payload.data;
+}
+
+export class CanvasProjectRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+    ) {
+        super(message);
+    }
 }

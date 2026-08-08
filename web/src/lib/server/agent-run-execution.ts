@@ -1,6 +1,6 @@
 import { getAuthSettings, refundUserPoints, type LogicalModelCapability } from "@/lib/auth/store";
 import { withCreativeFoundation, type CreativeReview } from "@/lib/creative-agent-contract";
-import type { CreativeAsset, CreativeSurface } from "@/lib/creative-runtime-contract";
+import type { CreativeAsset, CreativeGenerationPreferences, CreativeSurface } from "@/lib/creative-runtime-contract";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveLogicalModel } from "@/lib/server/logical-model-router";
 import { reviewCreativeOutputs } from "@/lib/server/creative-review-service";
@@ -10,15 +10,15 @@ import { buildAgentProjectHandoff } from "@/lib/server/agent-run-project-handoff
 import { getAgentRun, updateAgentRunById, updateAgentRunTaskById, type AgentRun, type AgentRunChildTask, type AgentRunReference, type AgentRunTask } from "@/lib/server/agent-run-store";
 import { assetAccessUrl, creativeAssetContext, resolveTaskReferences, selectedCanvasNodeIds } from "@/lib/server/agent-run-surface-policy";
 import { agentChildTaskTerminal, agentTaskCopies, resolveAgentTaskCount, resolveAgentVideoSeconds, validateAgentTaskResult, type AgentPlan } from "@/lib/server/agent-run-validation";
-import { agentRunCompletionReply, agentRunFailureMessage, agentTaskCompletionMessage, resultSummary } from "@/lib/server/agent-run-messages";
+import { agentRunCompletionReply, agentRunFailureMessage, resultSummary } from "@/lib/server/agent-run-messages";
 import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { linkStoredGenerationTask } from "@/lib/server/generation-task-store";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-reference-contract";
 import type { AgentFunctionCallResult } from "./agent-function-call";
 import { agentSurfaceImageSize, canvasSnapshotNodes, isMediaReferenceType, resolveAgentTaskRatio, resolveCanvasTaskTargetNodeId } from "./agent-run-task-input";
-import { planToOps, taskResultOps } from "./agent-run-canvas-ops";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "./system-ai-billing";
 import { acceptsMediaReference, mergeTaskReferences, normalizeConstrainedTextResult, reviewCorrection, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
 
@@ -151,6 +151,7 @@ export function normalizeTasks(
     surface: CreativeSurface,
     referencedAssets: CreativeAsset[],
     requestedImageSize?: string,
+    generationPreferences?: CreativeGenerationPreferences,
 ): AgentRunTask[] {
     const defaults = Object.assign({}, ...skills.map((skill) => skill.defaultConfig || {})) as Record<string, unknown>;
     const skillInstructions = skills
@@ -163,14 +164,25 @@ export function normalizeTasks(
     const assets = new Map(referencedAssets.map((asset) => [asset.id, asset]));
     const configuredImageSize = agentSurfaceImageSize(surface, snapshot);
     return plan.deliverables.map((item, index) => {
+        const preferredSize = item.type === "image" ? generationPreferences?.image?.size : item.type === "video" ? generationPreferences?.video?.size : undefined;
+        const preferredQuality = item.type === "image" ? generationPreferences?.image?.quality : item.type === "video" ? generationPreferences?.video?.quality : undefined;
         const targetNodeId = surface === "canvas" ? resolveCanvasTaskTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
         const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
-        const selectedAssets = target ? [] : resolveTaskReferences(item.assetIds, assets, item.type);
+        const frameIds = item.type === "video" ? videoFrameAssetIds(generationPreferences?.video) : [];
+        const frameIdSet = new Set(frameIds);
+        const explicitFrameAssets = resolveTaskReferences(frameIds, assets, item.type);
+        const plannedAssets = target ? [] : resolveTaskReferences(item.assetIds, assets, item.type).filter((asset) => !frameIdSet.has(asset.id));
+        const selectedAssets = [...explicitFrameAssets, ...plannedAssets];
+        const frameRoles = new Map<string, VideoReferenceRole>([
+            ...(generationPreferences?.video?.firstFrameAssetId ? ([[generationPreferences.video.firstFrameAssetId, "first_frame"]] as const) : []),
+            ...(generationPreferences?.video?.lastFrameAssetId ? ([[generationPreferences.video.lastFrameAssetId, "last_frame"]] as const) : []),
+        ]);
         const references = [
             ...(target?.url && isMediaReferenceType(target.type) ? [{ url: target.url, type: target.type }] : []),
             ...selectedAssets.flatMap((asset) => {
                 const url = assetAccessUrl(asset);
-                return url && asset.type !== "text" ? [{ assetId: asset.id, url, type: asset.type }] : [];
+                const role = frameRoles.get(asset.id);
+                return url && asset.type !== "text" ? [{ assetId: asset.id, url, type: asset.type, ...(role ? { role } : {}) }] : [];
             }),
         ] satisfies AgentRunReference[];
         const primaryReference = references[0];
@@ -186,20 +198,24 @@ export function normalizeTasks(
             type: item.type,
             model: resolvePlannedModel(settings, item.type, item.model),
             prompt: `${withCreativeFoundation(item.prompt.trim(), plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
-            count: resolveAgentTaskCount(item.type, item.count, defaults.count, globalDefaults.canvasImageCount),
+            count: resolveAgentTaskCount(item.type, item.type === "image" ? generationPreferences?.image?.count || item.count : item.count, defaults.count, globalDefaults.canvasImageCount),
             ratio: resolveAgentTaskRatio({
                 type: item.type,
                 requestedImageSize,
-                configuredImageSize,
+                configuredImageSize: preferredSize || configuredImageSize,
                 plannedRatio: item.ratio,
                 defaultSize: textDefault(defaults.size),
                 globalSize: ["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined,
                 reference: target || (selectedAssets[0]?.type === "image" ? selectedAssets[0] : undefined),
             }),
-            quality: item.quality?.trim() || textDefault(item.type === "video" ? defaults.vquality : defaults.quality) || (item.type === "video" ? globalDefaults.videoQuality : item.type === "image" ? globalDefaults.imageQuality : undefined),
-            seconds: resolveAgentVideoSeconds(item.type, item.seconds, defaults.videoSeconds, globalDefaults.videoSeconds),
-            voice: item.voice?.trim() || textDefault(defaults.voice) || (item.type === "audio" ? globalDefaults.audioVoice : undefined),
-            format: item.format?.trim() || textDefault(defaults.format) || (item.type === "audio" ? globalDefaults.audioFormat : undefined),
+            quality:
+                preferredQuality ||
+                item.quality?.trim() ||
+                textDefault(item.type === "video" ? defaults.vquality : defaults.quality) ||
+                (item.type === "video" ? globalDefaults.videoQuality : item.type === "image" ? globalDefaults.imageQuality : undefined),
+            seconds: item.type === "video" && generationPreferences?.video?.seconds ? generationPreferences.video.seconds : resolveAgentVideoSeconds(item.type, item.seconds, defaults.videoSeconds, globalDefaults.videoSeconds),
+            voice: item.type === "audio" ? generationPreferences?.audio?.voice || item.voice?.trim() || textDefault(defaults.voice) || globalDefaults.audioVoice : item.voice?.trim() || textDefault(defaults.voice),
+            format: item.type === "audio" ? generationPreferences?.audio?.format || item.format?.trim() || textDefault(defaults.format) || globalDefaults.audioFormat : item.format?.trim() || textDefault(defaults.format),
             dependencies: item.dependencies || [],
             status: "ready",
             attempts: 0,
@@ -379,13 +395,24 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                 return;
             }
             const blocked = run.tasks.filter((task) => task.status === "ready");
-            await updateAgentRunById(
-                runId,
-                { status: "failed", executionId: undefined, tasks: blocked.length ? run.tasks.map((task) => (task.status === "ready" ? { ...task, status: "failed", error: "前置任务未完成" } : task)) : run.tasks },
-                { type: "run.failed", data: { message: agentRunFailureMessage(run.tasks) } },
-                ["running"],
-                executionId,
-            );
+            const terminalTasks = blocked.length ? run.tasks.map((task) => (task.status === "ready" ? { ...task, status: "failed" as const, error: "前置任务未完成" } : task)) : run.tasks;
+            const partialSuccess = Boolean(run.assetIds.length) && terminalTasks.some((task) => task.status === "failed") && terminalTasks.every((task) => task.status === "completed" || task.status === "failed");
+            if (partialSuccess) {
+                await updateAgentRunById(
+                    runId,
+                    {
+                        status: "completed",
+                        executionId: undefined,
+                        tasks: terminalTasks,
+                        timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), allResultsReadyAt: run.timings?.allResultsReadyAt || Date.now(), runCompletedAt: Date.now() },
+                    },
+                    { type: "run.completed", data: { completed: terminalTasks.filter((task) => task.status === "completed").length, partial: true, assetIds: run.assetIds, reply: agentRunFailureMessage(terminalTasks) } },
+                    ["running"],
+                    executionId,
+                );
+                return;
+            }
+            await updateAgentRunById(runId, { status: "failed", executionId: undefined, tasks: terminalTasks }, { type: "run.failed", data: { message: agentRunFailureMessage(terminalTasks) } }, ["running"], executionId);
             return;
         }
         const results = await Promise.all(ready.map((task) => runTaskWithRetry(runId, task, origin, cookie, executionId, settings)));
@@ -629,7 +656,7 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                   context,
               }
             : task.type === "video"
-              ? { config, prompt: task.prompt, references: references.map((item) => ({ type: item.type, url: item.url })), source, context }
+              ? { config, prompt: task.prompt, references: references.map((item) => ({ type: item.type, url: item.url, ...(item.role ? { role: item.role } : {}) })), source, context }
               : task.type === "audio"
                 ? { config, prompt: task.prompt, source, context }
                 : { config, messages: [{ role: "user", content: task.prompt }] };

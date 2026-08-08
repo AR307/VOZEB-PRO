@@ -27,6 +27,9 @@ import { CanvasNodeType, type CanvasAssistantMessage, type CanvasAssistantRefere
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
+const DEFAULT_PANEL_WIDTH = 470;
+const MIN_PANEL_WIDTH = 320;
+const MAX_PANEL_WIDTH = 760;
 type OnlineAgentTab = "chat" | "history";
 
 type CanvasAssistantPanelProps = {
@@ -58,6 +61,7 @@ import {
     canvasRunSelectedNodeIds,
     compactMetadata,
     createSession,
+    removeCanvasAssistantSessions,
 } from "./canvas-assistant-elements";
 
 export function CanvasAssistantPanel({
@@ -79,7 +83,7 @@ export function CanvasAssistantPanel({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const user = useUserStore((state) => state.user);
     const { skills, skillsLoading, models } = useCreativeAgentOptions("canvas");
-    const [width, setWidth] = useState(520);
+    const [width, setWidth] = useState(DEFAULT_PANEL_WIDTH);
     const [view, setView] = useState<OnlineAgentTab>("chat");
     const [prompt, setPrompt] = useState("");
     const [selectedSkillId, setSelectedSkillId] = useState<string>();
@@ -180,19 +184,18 @@ export function CanvasAssistantPanel({
     };
 
     const removeSessions = (ids: string[]) => {
-        const next = localSessions.filter((session) => !ids.includes(session.id));
-        if (!next.length) {
-            setLocalSessions([]);
-            setLocalActiveSessionId(null);
-        } else {
-            setLocalSessions(next);
-            setLocalActiveSessionId(localActiveSessionId && ids.includes(localActiveSessionId) ? next[0].id : localActiveSessionId);
+        const removedActiveSession = Boolean(activeSession && ids.includes(activeSession.id));
+        const next = removeCanvasAssistantSessions(localSessions, localActiveSessionId, ids);
+        setLocalSessions(next.sessions);
+        setLocalActiveSessionId(next.activeSessionId);
+        if (removedActiveSession || ids.length >= localSessions.length) {
+            setView("chat");
+            requestLatest();
         }
     };
 
     const clearSessions = () => {
-        setLocalSessions([]);
-        setLocalActiveSessionId(null);
+        removeSessions(localSessions.map((session) => session.id));
     };
 
     const sendMessage = async (text: string, savedReferences?: CanvasAssistantReference[]) => {
@@ -361,7 +364,7 @@ export function CanvasAssistantPanel({
     };
 
     const startResize = () => {
-        const move = (event: MouseEvent) => setWidth(Math.min(760, Math.max(320, window.innerWidth - event.clientX)));
+        const move = (event: MouseEvent) => setWidth(Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, window.innerWidth - event.clientX)));
         const stop = () => {
             setResizing(false);
             document.body.style.cursor = "";
@@ -402,6 +405,7 @@ export function CanvasAssistantPanel({
                                     icon={<X className="size-4" />}
                                     disabled={!historySessions.length}
                                     onClick={() => setDeleteChatIds(historySessions.map((session) => session.id))}
+                                    aria-label="删除全部对话"
                                 />
                             </Tooltip>
                         ) : null}
@@ -417,6 +421,7 @@ export function CanvasAssistantPanel({
                                     startChatSession();
                                     setView("chat");
                                 }}
+                                aria-label="新建对话"
                             />
                         </Tooltip>
                     </>
@@ -585,6 +590,7 @@ export function CanvasAssistantPanel({
         >
             <motion.aside
                 className="canvas-agent-panel relative flex shrink-0 flex-col border-l"
+                aria-label="Canvas Agent 对话面板"
                 initial={{ x: 48 }}
                 animate={{ x: closing ? 28 : 0 }}
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
@@ -605,7 +611,7 @@ export function CanvasAssistantPanel({
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                         <Tooltip title="收起对话">
-                            <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<PanelRightClose className="size-4" />} onClick={collapse} />
+                            <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<PanelRightClose className="size-4" />} onClick={collapse} aria-label="收起 Agent 面板" />
                         </Tooltip>
                     </div>
                 </header>

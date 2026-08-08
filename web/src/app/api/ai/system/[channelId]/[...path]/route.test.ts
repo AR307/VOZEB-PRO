@@ -547,6 +547,50 @@ describe("VOZEB recommended video proxy", () => {
     });
 });
 
+describe("Gemini Veo native video proxy", () => {
+    const model = "veo-3.1-generate-preview";
+
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue({ model: "gemini-video", cost: 6, units: 6, recordId: "points-gemini", remaining: 94, permanentRemaining: 94, dailyRemaining: 0, dailyExpiresAt: "" });
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: { videoQuality: { "720": 2 }, videoSeconds: { "6": 3 } },
+            logicalModels: [logicalModel("gemini-video", "video", model)],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://generativelanguage.googleapis.com", apiKey: "gemini-secret", apiFormat: "gemini", models: [model], advancedConfig: { protocol: "gemini" } }],
+        });
+    });
+
+    it("forwards Gemini creation and operation polling with x-goog-api-key and video billing", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(Response.json({ name: `models/${model}/operations/operation-one`, done: false }))
+            .mockResolvedValueOnce(Response.json({ done: false }));
+        const headers = { "content-type": "application/json", ...systemModelHeaders("gemini-video", model) };
+        const createResponse = await POST(
+            new Request(`http://localhost/api/ai/system/channel-one/models/${model}:predictLongRunning`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ instances: [{ prompt: "A test video" }], parameters: { durationSeconds: 6, resolution: "720p" } }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["models", `${model}:predictLongRunning`] }) },
+        );
+        const queryResponse = await GET(new Request(`http://localhost/api/ai/system/channel-one/models/${model}/operations/operation-one`, { headers }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["models", model, "operations", "operation-one"] }),
+        });
+
+        expect(createResponse.status).toBe(200);
+        expect(queryResponse.status).toBe(200);
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`, `https://generativelanguage.googleapis.com/v1beta/models/${model}/operations/operation-one`]);
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("x-goog-api-key")).toBe("gemini-secret");
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "gemini-video", 6, "video", expect.any(String), expect.any(String));
+        expect(mocks.consumeUserPoints).toHaveBeenCalledOnce();
+    });
+});
+
 describe("custom protocol model routing", () => {
     beforeEach(() => {
         vi.restoreAllMocks();

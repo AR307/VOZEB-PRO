@@ -13,7 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { App } from "antd";
 import { type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
 import { useCanvasStore } from "../stores/use-canvas-store";
-import { type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type SelectionBox, type ViewportTransform } from "../types";
+import { type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type ContextMenuState, type Position, type ViewportTransform } from "../types";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -42,24 +42,9 @@ export function useCanvasPageState() {
     const historyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const applyingHistoryRef = useRef(false);
-    const historyPausedRef = useRef(false);
     const didInitialCenterRef = useRef(false);
-    const rafRef = useRef<number | null>(null);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const nodeDraggingRef = useRef(false);
-    const dragRef = useRef<{
-        isDraggingNode: boolean;
-        hasMoved: boolean;
-        startX: number;
-        startY: number;
-        initialSelectedNodes: { id: string; x: number; y: number }[];
-    }>({
-        isDraggingNode: false,
-        hasMoved: false,
-        startX: 0,
-        startY: 0,
-        initialSelectedNodes: [],
-    });
 
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -72,6 +57,9 @@ export function useCanvasPageState() {
     const loadProject = useCanvasStore((state) => state.loadProject);
     const createProject = useCanvasStore((state) => state.createProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
+    const flushProjectSave = useCanvasStore((state) => state.flushProjectSave);
+    const projectSaveState = useCanvasStore((state) => state.saveStateByProject[projectId]);
+    const retryProjectSave = useCanvasStore((state) => state.retryProjectSave);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
@@ -85,11 +73,7 @@ export function useCanvasPageState() {
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-    const [connectingParams, setConnectingParams] = useState<ConnectionHandle | null>(null);
-    const [connectionTargetNodeId, setConnectionTargetNodeId] = useState<string | null>(null);
     const [pendingConnectionCreate, setPendingConnectionCreate] = useState<PendingConnectionCreate | null>(null);
-    const [mouseWorld, setMouseWorld] = useState<Position>({ x: 0, y: 0 });
-    const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
@@ -125,9 +109,6 @@ export function useCanvasPageState() {
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
     const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>(null);
-    const connectingParamsRef = useRef(connectingParams);
-    const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
-    const selectionBoxRef = useRef(selectionBox);
     const agentCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const autoOpenedAgentRef = useRef(false);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
@@ -151,12 +132,9 @@ export function useCanvasPageState() {
         historyCommitTimerRef,
         viewportSaveTimerRef,
         applyingHistoryRef,
-        historyPausedRef,
         didInitialCenterRef,
-        rafRef,
         toolbarHideTimerRef,
         nodeDraggingRef,
-        dragRef,
         effectiveConfig,
         isAiConfigReady,
         openConfigDialog,
@@ -168,6 +146,9 @@ export function useCanvasPageState() {
         loadProject,
         createProject,
         updateProject,
+        flushProjectSave,
+        projectSaveState,
+        retryProjectSave,
         renameProject,
         deleteProjects,
         currentProject,
@@ -190,16 +171,8 @@ export function useCanvasPageState() {
         setSelectedConnectionId,
         hoveredNodeId,
         setHoveredNodeId,
-        connectingParams,
-        setConnectingParams,
-        connectionTargetNodeId,
-        setConnectionTargetNodeId,
         pendingConnectionCreate,
         setPendingConnectionCreate,
-        mouseWorld,
-        setMouseWorld,
-        selectionBox,
-        setSelectionBox,
         contextMenu,
         setContextMenu,
         runningNodeId,
@@ -263,9 +236,6 @@ export function useCanvasPageState() {
         selectedNodeIdsRef,
         viewportRef,
         generateNodeRef,
-        connectingParamsRef,
-        connectionTargetNodeIdRef,
-        selectionBoxRef,
         agentCloseTimerRef,
         autoOpenedAgentRef,
         pendingConnectionCreateRef,

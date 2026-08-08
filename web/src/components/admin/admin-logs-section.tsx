@@ -134,7 +134,7 @@ export function AdminLogsSection({ controller }: { controller: AdminDashboardCon
     if (activeSection !== "logs") return null;
     return (
         <Panel>
-            <PanelHeader title="调用记录" description="查看用户通过画布、图片工作台和视频创作台产生的生成任务、入口来源和调用状态。" />
+            <PanelHeader title="调用记录" description="查看用户通过创作 Agent、画布和短剧产生的生成任务、入口来源和调用状态。" />
             <div className="space-y-4 p-4 sm:p-5">
                 <div className="grid min-w-0 gap-3 2xl:grid-cols-[minmax(0,1fr)_286px] 2xl:items-start">
                     <div className="grid min-w-0 grid-cols-2 gap-2.5 xl:grid-cols-[minmax(220px,300px)_118px_138px_118px_minmax(132px,180px)]">
@@ -174,8 +174,8 @@ export function AdminLogsSection({ controller }: { controller: AdminDashboardCon
                             }}
                             options={[
                                 { label: "画布", value: "canvas" },
-                                { label: "生图工作台", value: "image-workbench" },
-                                { label: "视频创作台", value: "video-workbench" },
+                                { label: "图片生成", value: "image-workbench" },
+                                { label: "视频生成", value: "video-workbench" },
                             ]}
                         />
                         <Select

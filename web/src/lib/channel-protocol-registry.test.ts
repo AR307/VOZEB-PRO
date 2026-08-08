@@ -26,7 +26,7 @@ const channel = {
 describe("channel protocol registry", () => {
     it("exposes SD2 video and Stable Diffusion image as separate protocols", () => {
         const protocols = channelProtocolOptions().map((item) => item.value);
-        expect(protocols).toEqual(expect.arrayContaining(["openai", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "seedance-special", "custom"]));
+        expect(protocols).toEqual(expect.arrayContaining(["openai", "gemini", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "seedance-special", "custom"]));
         expect(channelProtocolDefinition("openai").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("sub2api").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("newapi").modelCatalogPaths).toEqual(["/v1/models"]);
@@ -34,6 +34,7 @@ describe("channel protocol registry", () => {
         expect(channelProtocolDefinition("seedance").modelCatalogPaths).toEqual(["/models"]);
         expect(channelProtocolDefinition("volcengine-video").modelCatalogPaths).toEqual(["/api/v3/models"]);
         expect(channelProtocolDefinition("stable-diffusion").modelCatalogPaths).toEqual(["/sdapi/v1/sd-models"]);
+        expect(channelProtocolDefinition("gemini").modelCatalogPaths).toEqual(["/v1beta/models"]);
     });
 
     it("keeps strict protocol paths and request contracts isolated", () => {
@@ -55,6 +56,13 @@ describe("channel protocol registry", () => {
             queryPath: "/v1/videos/generations/:task_id",
             resultField: "metadata.url",
             statusField: "status",
+        });
+        expect(channelProtocolDefinition("gemini").operations.video).toMatchObject({
+            createPath: "/models/:model:predictLongRunning",
+            imageToVideoPath: "/models/:model:predictLongRunning",
+            queryPath: "/models/:model/operations/:task_id",
+            resultField: "response.generateVideoResponse.generatedSamples[0].video.uri",
+            statusField: "done",
         });
     });
 
@@ -89,6 +97,15 @@ describe("channel protocol registry", () => {
         expect(configured.advancedConfig?.authMode).toBe("none");
         expect(channelCredentialsReady(configured)).toBe(true);
         expect(protocolAuthHeaders("", configured.advancedConfig)).toEqual({});
+    });
+
+    it("uses the Gemini API key header for the explicit Gemini protocol", () => {
+        const configured = applyChannelProtocol({ ...channel, models: ["veo-3.1-generate-preview"] }, "gemini");
+
+        expect(configured.baseUrl).toBe("https://generativelanguage.googleapis.com");
+        expect(configured.apiFormat).toBe("gemini");
+        expect(configured.advancedConfig?.modelConfigs?.["veo-3.1-generate-preview"]).toMatchObject({ protocol: "gemini", apiFormat: "gemini", capability: "video" });
+        expect(protocolAuthHeaders("secret", configured.advancedConfig, "gemini")).toEqual({ "x-goog-api-key": "secret" });
     });
 
     it("loads the documented Seedance special models and rejects preset tampering", () => {

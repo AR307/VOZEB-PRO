@@ -1,16 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button, Modal } from "antd";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { CanvasConfigComposer } from "../components/canvas-config-composer";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
-import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
-import { Minimap } from "../components/canvas-mini-map";
-import { CanvasNode } from "../components/canvas-node";
+import { CanvasSurface, type CanvasInteractionMode } from "../components/canvas-surface";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog } from "../components/canvas-node-crop-dialog";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canvas-node-hover-toolbar";
@@ -21,7 +19,6 @@ import { CanvasNodeUpscaleDialog } from "../components/canvas-node-upscale-dialo
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasTopBar } from "../components/canvas-top-bar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
-import { VozebProCanvas } from "../components/vozeb-pro-canvas";
 import { CanvasNodeType, type Position } from "../types";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
@@ -29,7 +26,7 @@ const loadAssetPickerModal = () => import("../components/asset-picker-modal").th
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { CanvasRefreshShell, ConnectionCreateMenu, NodeCreateMenu } from "./canvas-page-elements";
-import { getInputSummary, isHiddenBatchConnectionEndpoint } from "./canvas-page-utils";
+import { getInputSummary, isHiddenBatchChild } from "./canvas-page-utils";
 
 export default function CanvasPage() {
     const [mounted, setMounted] = useState(false);
@@ -47,6 +44,7 @@ import { useCanvasPageController } from "./use-canvas-page-controller";
 
 function VozebProCanvasPage() {
     const [nodeCreatePosition, setNodeCreatePosition] = useState<Position | null>(null);
+    const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>("pan");
     const controller = useCanvasPageController();
     const {
         message,
@@ -63,12 +61,9 @@ function VozebProCanvasPage() {
         historyCommitTimerRef,
         viewportSaveTimerRef,
         applyingHistoryRef,
-        historyPausedRef,
         didInitialCenterRef,
-        rafRef,
         toolbarHideTimerRef,
         nodeDraggingRef,
-        dragRef,
         effectiveConfig,
         isAiConfigReady,
         openConfigDialog,
@@ -79,6 +74,8 @@ function VozebProCanvasPage() {
         hydrate,
         createProject,
         updateProject,
+        projectSaveState,
+        retryProjectSave,
         renameProject,
         deleteProjects,
         currentProject,
@@ -93,24 +90,13 @@ function VozebProCanvasPage() {
         setActiveChatId,
         viewport,
         setViewport,
-        size,
-        setSize,
         selectedNodeIds,
         setSelectedNodeIds,
         selectedConnectionId,
         setSelectedConnectionId,
-        hoveredNodeId,
         setHoveredNodeId,
-        connectingParams,
-        setConnectingParams,
-        connectionTargetNodeId,
-        setConnectionTargetNodeId,
         pendingConnectionCreate,
         setPendingConnectionCreate,
-        mouseWorld,
-        setMouseWorld,
-        selectionBox,
-        setSelectionBox,
         contextMenu,
         setContextMenu,
         runningNodeId,
@@ -174,9 +160,6 @@ function VozebProCanvasPage() {
         selectedNodeIdsRef,
         viewportRef,
         generateNodeRef,
-        connectingParamsRef,
-        connectionTargetNodeIdRef,
-        selectionBoxRef,
         agentCloseTimerRef,
         autoOpenedAgentRef,
         pendingConnectionCreateRef,
@@ -195,17 +178,12 @@ function VozebProCanvasPage() {
         startAndCompleteImageTask,
         completeTextTask,
         completeAudioTask,
-        screenToCanvas,
         getCanvasCenter,
-        setConnecting,
         keepNodeToolbar,
         hideNodeToolbar,
         connectNodes,
         createConnectedNode,
         cancelPendingConnectionCreate,
-        getConnectionDropTarget,
-        visibleNodes,
-        nodeById,
         toolbarNode,
         infoNode,
         cropNode,
@@ -242,21 +220,11 @@ function VozebProCanvasPage() {
         redoCanvas,
         createAndOpenProject,
         deleteCurrentProject,
-        handleCanvasMouseDown,
-        handleNodeMouseDown,
-        finishNodeDrag,
-        updateDraggedNodes,
-        handleGlobalMouseMove,
-        handleGlobalPointerMove,
-        finishConnectionAt,
-        handleGlobalMouseUp,
         createImageFileNode,
         createVideoFileNode,
         createAudioFileNode,
         createTextNodeFromClipboard,
         pasteSystemClipboard,
-        handleConnectStart,
-        handleNodeResize,
         handleImageDimensions,
         toggleNodeFreeResize,
         handleNodeContentChange,
@@ -293,6 +261,7 @@ function VozebProCanvasPage() {
         openAgent,
         closeAgent,
     } = controller;
+    const hiddenCanvasNodeIds = useMemo(() => new Set(nodes.filter((node) => isHiddenBatchChild(node, nodes, collapsingBatchIds)).map((node) => node.id)), [collapsingBatchIds, nodes]);
     if (!projectLoaded) return <CanvasRefreshShell />;
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.backdrop, color: theme.node.text }}>
@@ -305,6 +274,8 @@ function VozebProCanvasPage() {
                     onStartTitleEditing={startTitleEditing}
                     onFinishTitleEditing={finishTitleEditing}
                     onCancelTitleEditing={() => setTitleEditing(false)}
+                    saveState={projectSaveState}
+                    onRetrySave={() => (projectSaveState?.status === "conflict" ? window.location.reload() : retryProjectSave(projectId))}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
                     onWorkbench={() => router.push("/create")}
@@ -318,180 +289,165 @@ function VozebProCanvasPage() {
                     onToggleAgent={() => (assistantOpen ? closeAgent() : openAgent())}
                 />
 
-                <VozebProCanvas
+                <CanvasSurface
                     containerRef={containerRef}
+                    nodes={nodes}
+                    hiddenNodeIds={hiddenCanvasNodeIds}
+                    connections={connections}
                     viewport={viewport}
                     backgroundMode={backgroundMode}
-                    onViewportChange={(next) => {
+                    interactionMode={interactionMode}
+                    minimapOpen={isMiniMapOpen}
+                    selectedNodeIds={selectedNodeIds}
+                    selectedConnectionId={selectedConnectionId}
+                    relatedNodeIds={relatedHighlight.nodeIds}
+                    relatedConnectionIds={relatedHighlight.connectionIds}
+                    nodeProps={{
+                        onHoverStart: (nodeId) => {
+                            if (nodeDraggingRef.current) return;
+                            setHoveredNodeId(nodeId);
+                            keepNodeToolbar(nodeId);
+                        },
+                        onHoverEnd: (nodeId) => {
+                            setHoveredNodeId((current) => (current === nodeId ? null : current));
+                            hideNodeToolbar();
+                        },
+                        onContentChange: handleNodeContentChange,
+                        onToggleBatch: toggleBatchExpanded,
+                        onSetBatchPrimary: setBatchPrimary,
+                        onRetry: (node) => void handleRetryNode(node),
+                        onGenerateImage: generateImageFromTextNode,
+                        onOpenPanel: (node) => {
+                            setSelectedNodeIds(new Set([node.id]));
+                            setSelectedConnectionId(null);
+                            setDialogNodeId(node.id);
+                        },
+                        onImageDimensions: handleImageDimensions,
+                        onViewImage: (node) => setPreviewNodeId(node.id),
+                    }}
+                    getNodeViewProps={(node) => ({
+                        editRequestNonce: editingNodeId === node.id ? editRequestNonce : 0,
+                        showPanel: dialogNodeId === node.id,
+                        batchCount: batchChildCountById.get(node.id) || 0,
+                        batchExpanded: Boolean(node.metadata?.imageBatchExpanded),
+                        batchClosing: Boolean(node.metadata?.batchRootId && collapsingBatchIds.has(node.metadata.batchRootId)),
+                        batchOpening: openingBatchIds.has(node.id),
+                        batchRecovering: collapsingBatchIds.has(node.id),
+                        batchMotion: batchMotionById.get(node.id),
+                        showImageInfo,
+                        resourceLabel: resourceReferenceByNodeId.get(node.id),
+                        mentionReferences: mentionReferencesByNodeId.get(node.id) || [],
+                    })}
+                    renderPanel={(panelNode) =>
+                        panelNode.type === CanvasNodeType.Config ? (
+                            <CanvasConfigComposer
+                                value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
+                                inputs={configInputsById.get(panelNode.id) || []}
+                                onChange={(composerContent) => handleConfigNodeChange(panelNode.id, { composerContent })}
+                                onClose={() => setDialogNodeId(null)}
+                            />
+                        ) : (
+                            <CanvasNodePromptPanel
+                                node={panelNode}
+                                isRunning={runningNodeId === panelNode.id}
+                                mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || []}
+                                onPromptChange={handleNodePromptChange}
+                                onConfigChange={handleConfigNodeChange}
+                                onGenerate={handleGenerateNode}
+                                onStop={confirmStopGeneration}
+                                onImageSettingsOpenChange={(open) => {
+                                    setNodeImageSettingsOpen(open);
+                                    if (open) setToolbarNodeId(null);
+                                }}
+                            />
+                        )
+                    }
+                    renderNode={(contentNode) => (
+                        <CanvasConfigNodePanel
+                            node={contentNode}
+                            isRunning={runningNodeId === contentNode.id}
+                            inputSummary={getInputSummary(configInputsById.get(contentNode.id) || [])}
+                            references={mentionReferencesByNodeId.get(contentNode.id) || []}
+                            onConfigChange={handleConfigNodeChange}
+                            onComposerToggle={() => setDialogNodeId((current) => (current === contentNode.id ? null : contentNode.id))}
+                            onStop={confirmStopGeneration}
+                            onGenerate={(nodeId) => {
+                                const target = nodesRef.current.find((item) => item.id === nodeId);
+                                void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "");
+                            }}
+                        />
+                    )}
+                    onNodesCommit={(updates) => {
+                        const updatesById = new Map(updates.map((update) => [update.id, update]));
+                        setNodes((current) =>
+                            current.map((node) => {
+                                const update = updatesById.get(node.id);
+                                return update
+                                    ? {
+                                          ...node,
+                                          position: update.position ?? node.position,
+                                          width: update.width ?? node.width,
+                                          height: update.height ?? node.height,
+                                      }
+                                    : node;
+                            }),
+                        );
+                    }}
+                    onSelectionChange={(nodeIds, connectionId) => {
+                        setSelectedNodeIds(nodeIds);
+                        setSelectedConnectionId(connectionId);
+                        setContextMenu(null);
+                    }}
+                    onViewportCommit={(next) => {
                         setViewport(next);
                         setContextMenu(null);
                         setNodeCreatePosition(null);
                     }}
-                    onCanvasMouseDown={handleCanvasMouseDown}
-                    onCanvasDeselect={() => {
+                    onConnect={({ source, target }) => connectNodes({ nodeId: source, handleType: "source" }, target)}
+                    onConnectionCreate={({ nodeId, handleType, position }) => setPendingConnectionCreate({ connection: { nodeId, handleType }, position })}
+                    onPaneClick={() => {
                         setNodeCreatePosition(null);
                         deselectCanvas();
                     }}
-                    onCanvasDoubleClick={(event) => {
+                    onPaneDoubleClick={(position) => {
                         setContextMenu(null);
-                        setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
+                        setNodeCreatePosition(position);
                     }}
-                    onContextMenu={preventCanvasContextMenu}
-                    onDrop={handleDrop}
-                >
-                    <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
-                        {connections
-                            .filter((connection) => {
-                                const from = nodeById.get(connection.fromNodeId);
-                                const to = nodeById.get(connection.toNodeId);
-                                return Boolean(from && to && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
-                            })
-                            .map((connection) => {
-                                const from = nodeById.get(connection.fromNodeId);
-                                const to = nodeById.get(connection.toNodeId);
-                                if (!from || !to) return null;
-
-                                return (
-                                    <ConnectionPath
-                                        key={connection.id}
-                                        connection={connection}
-                                        from={from}
-                                        to={to}
-                                        active={selectedConnectionId === connection.id || relatedHighlight.connectionIds.has(connection.id)}
-                                        onSelect={() => {
-                                            setSelectedConnectionId(connection.id);
-                                            setSelectedNodeIds(new Set());
-                                            setContextMenu(null);
-                                        }}
-                                        onContextMenu={(event) => {
-                                            setSelectedConnectionId(connection.id);
-                                            setSelectedNodeIds(new Set());
-                                            setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: connection.id });
-                                        }}
-                                    />
-                                );
-                            })}
-                        {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
-                    </svg>
-
-                    {visibleNodes.map((node) => (
-                        <CanvasNode
-                            key={node.id}
-                            data={node}
-                            scale={viewport.k}
-                            isSelected={selectedNodeIds.has(node.id)}
-                            isRelated={relatedHighlight.nodeIds.has(node.id)}
-                            isFocusRelated={activeNodeId === node.id}
-                            isConnectionTarget={connectionTargetNodeId === node.id}
-                            isConnecting={Boolean(connectingParams)}
-                            editRequestNonce={editingNodeId === node.id ? editRequestNonce : 0}
-                            showPanel={dialogNodeId === node.id && !selectionBox}
-                            batchCount={batchChildCountById.get(node.id) || 0}
-                            batchExpanded={Boolean(node.metadata?.imageBatchExpanded)}
-                            batchClosing={Boolean(node.metadata?.batchRootId && collapsingBatchIds.has(node.metadata.batchRootId))}
-                            batchOpening={openingBatchIds.has(node.id)}
-                            batchRecovering={collapsingBatchIds.has(node.id)}
-                            batchMotion={batchMotionById.get(node.id)}
-                            showImageInfo={showImageInfo}
-                            resourceLabel={resourceReferenceByNodeId.get(node.id)}
-                            mentionReferences={mentionReferencesByNodeId.get(node.id) || []}
-                            renderPanel={(panelNode) =>
-                                panelNode.type === CanvasNodeType.Config ? (
-                                    <CanvasConfigComposer
-                                        value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
-                                        inputs={configInputsById.get(panelNode.id) || []}
-                                        onChange={(composerContent) => handleConfigNodeChange(panelNode.id, { composerContent })}
-                                        onClose={() => setDialogNodeId(null)}
-                                    />
-                                ) : (
-                                    <CanvasNodePromptPanel
-                                        node={panelNode}
-                                        isRunning={runningNodeId === panelNode.id}
-                                        mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || []}
-                                        onPromptChange={handleNodePromptChange}
-                                        onConfigChange={handleConfigNodeChange}
-                                        onGenerate={handleGenerateNode}
-                                        onStop={confirmStopGeneration}
-                                        onImageSettingsOpenChange={(open) => {
-                                            setNodeImageSettingsOpen(open);
-                                            if (open) setToolbarNodeId(null);
-                                        }}
-                                    />
-                                )
-                            }
-                            renderNodeContent={(contentNode) => (
-                                <CanvasConfigNodePanel
-                                    node={contentNode}
-                                    isRunning={runningNodeId === contentNode.id}
-                                    inputSummary={getInputSummary(configInputsById.get(contentNode.id) || [])}
-                                    onConfigChange={handleConfigNodeChange}
-                                    onComposerToggle={() => setDialogNodeId((current) => (current === contentNode.id ? null : contentNode.id))}
-                                    onStop={confirmStopGeneration}
-                                    onGenerate={(nodeId) => {
-                                        const target = nodesRef.current.find((item) => item.id === nodeId);
-                                        void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "");
+                    onPaneContextMenu={(event) => preventCanvasContextMenu(event as React.MouseEvent)}
+                    onNodeContextMenu={(event, id) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setDialogNodeId(null);
+                        setEditingNodeId(null);
+                        setToolbarNodeId(null);
+                        setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId: id });
+                    }}
+                    onEdgeContextMenu={(event, id) => {
+                        setSelectedConnectionId(id);
+                        setSelectedNodeIds(new Set());
+                        setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: id });
+                    }}
+                    onDrop={(event) => handleDrop(event as React.DragEvent<HTMLDivElement>)}
+                    onDragStateChange={(dragging) => {
+                        nodeDraggingRef.current = dragging;
+                        setIsNodeDragging(dragging);
+                    }}
+                    overlay={
+                        <>
+                            {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
+                            {nodeCreatePosition ? (
+                                <NodeCreateMenu
+                                    position={nodeCreatePosition}
+                                    onCreate={(type) => {
+                                        createNode(type, nodeCreatePosition);
+                                        setNodeCreatePosition(null);
                                     }}
+                                    onClose={() => setNodeCreatePosition(null)}
                                 />
-                            )}
-                            onMouseDown={handleNodeMouseDown}
-                            onHoverStart={(nodeId) => {
-                                if (nodeDraggingRef.current) return;
-                                setHoveredNodeId(nodeId);
-                                keepNodeToolbar(nodeId);
-                            }}
-                            onHoverEnd={(nodeId) => {
-                                setHoveredNodeId((current) => (current === nodeId ? null : current));
-                                hideNodeToolbar();
-                            }}
-                            onConnectStart={handleConnectStart}
-                            onResize={handleNodeResize}
-                            onImageDimensions={handleImageDimensions}
-                            onContentChange={handleNodeContentChange}
-                            onToggleBatch={toggleBatchExpanded}
-                            onSetBatchPrimary={setBatchPrimary}
-                            onRetry={(node) => void handleRetryNode(node)}
-                            onGenerateImage={generateImageFromTextNode}
-                            onViewImage={(node) => setPreviewNodeId(node.id)}
-                            onContextMenu={(event, id) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                dragRef.current.hasMoved = true;
-                                dragRef.current.isDraggingNode = false;
-                                nodeDraggingRef.current = false;
-                                setIsNodeDragging(false);
-                                setDialogNodeId(null);
-                                setEditingNodeId(null);
-                                setToolbarNodeId(null);
-                                setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId: id });
-                            }}
-                        />
-                    ))}
-
-                    {selectionBox ? (
-                        <div
-                            className="pointer-events-none absolute z-[100] border"
-                            style={{
-                                left: Math.min(selectionBox.startWorldX, selectionBox.currentWorldX),
-                                top: Math.min(selectionBox.startWorldY, selectionBox.currentWorldY),
-                                width: Math.abs(selectionBox.currentWorldX - selectionBox.startWorldX),
-                                height: Math.abs(selectionBox.currentWorldY - selectionBox.startWorldY),
-                                borderColor: theme.canvas.selectionStroke,
-                                background: theme.canvas.selectionFill,
-                            }}
-                        />
-                    ) : null}
-                    {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
-                    {nodeCreatePosition ? (
-                        <NodeCreateMenu
-                            position={nodeCreatePosition}
-                            onCreate={(type) => {
-                                createNode(type, nodeCreatePosition);
-                                setNodeCreatePosition(null);
-                            }}
-                            onClose={() => setNodeCreatePosition(null)}
-                        />
-                    ) : null}
-                </VozebProCanvas>
+                            ) : null}
+                        </>
+                    }
+                />
 
                 <CanvasNodeHoverToolbar
                     node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}
@@ -526,6 +482,7 @@ function VozebProCanvasPage() {
                     canRedo={historyState.canRedo}
                     agentOpen={assistantOpen}
                     backgroundMode={backgroundMode}
+                    interactionMode={interactionMode}
                     showImageInfo={showImageInfo}
                     onAddImage={() => createNode(CanvasNodeType.Image)}
                     onAddPanorama={() => createNode(CanvasNodeType.Panorama)}
@@ -538,15 +495,13 @@ function VozebProCanvasPage() {
                     onUpload={() => handleUploadRequest()}
                     onDelete={() => deleteNodes(new Set(selectedNodeIds))}
                     onClear={() => setClearConfirmOpen(true)}
-                    onDeselect={deselectCanvas}
+                    onInteractionModeChange={setInteractionMode}
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
                     onOpenMyAssets={() => {
                         setAssetPickerOpen(true);
                     }}
                 />
-
-                {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
 

@@ -1,16 +1,14 @@
-import { BookMarked, Clapperboard, Compass, FileText, GalleryVerticalEnd, ImagePlus, Images, Maximize2, Sparkles, UserRound, Video } from "lucide-react";
+import { BookMarked, Clapperboard, Compass, FileText, GalleryVerticalEnd, Images, Maximize2, Sparkles, UserRound } from "lucide-react";
 
 export const navigationGroups = [
     { id: "create", label: "创作" },
     { id: "projects", label: "项目" },
-    { id: "professional", label: "专业工具" },
     { id: "assets", label: "资产" },
     { id: "community", label: "社区" },
 ] as const;
 
 export const landingNavigationTools = [
     { slug: "create", label: "Agent 创作" },
-    { slug: "image", label: "生图工作台" },
     { slug: "drama", label: "短剧项目" },
     { slug: "gallery", label: "作品广场" },
 ] as const;
@@ -37,20 +35,6 @@ export const navigationTools = [
         description: "剧本、分镜与成片",
         group: "projects",
         icon: Clapperboard,
-    },
-    {
-        slug: "image",
-        label: "生图工作台",
-        description: "图片生成与精调",
-        group: "professional",
-        icon: ImagePlus,
-    },
-    {
-        slug: "video",
-        label: "视频创作台",
-        description: "视频生成与精调",
-        group: "professional",
-        icon: Video,
     },
     {
         slug: "works",

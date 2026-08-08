@@ -190,6 +190,43 @@ describe("video generation candidate failover", () => {
         expect((await response.json()).task.model).toBe("video");
     });
 
+    it("creates a Gemini Veo long-running operation with the native request contract", async () => {
+        mocks.getAuthSettings.mockResolvedValue(geminiSettings());
+        mocks.fetchInternalApi.mockResolvedValue(json({ name: "models/veo-3.1-generate-preview/operations/gemini-operation-one", done: false }));
+
+        const response = await POST(request({ model: "gemini-video", videoSeconds: 5, size: "16:9", vquality: "720" }));
+        const [url, init] = mocks.fetchInternalApi.mock.calls[0] as [string, RequestInit];
+        const payload = JSON.parse(String(init.body));
+
+        expect(response.status).toBe(200);
+        expect(url).toContain("/api/ai/system/gemini/models/veo-3.1-generate-preview:predictLongRunning");
+        expect(payload).toEqual({
+            instances: [{ prompt: "A test video" }],
+            parameters: { durationSeconds: 6, aspectRatio: "16:9", resolution: "720p", generateAudio: true },
+        });
+        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith(
+            "video",
+            "local-task",
+            expect.objectContaining({
+                executionPhase: "submitted",
+                upstreamTaskId: "gemini-operation-one",
+                queryPath: "/models/veo-3.1-generate-preview/operations/gemini-operation-one",
+            }),
+        );
+        expect((await response.json()).task.durationSeconds).toBe(6);
+    });
+
+    it("rejects Gemini reference video and audio before creating an operation", async () => {
+        mocks.getAuthSettings.mockResolvedValue(geminiSettings());
+
+        const response = await POST(request({ model: "gemini-video" }, [{ type: "video", url: "https://cdn.example.com/reference.mp4" }]));
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("参考视频");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
     it("forwards the authenticated maintenance worker identity to the internal system proxy", async () => {
         const token = "maintenance-token-used-by-generation-worker";
         vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", token);
@@ -478,6 +515,83 @@ describe("video generation candidate failover", () => {
         });
     });
 
+    it("sends explicit first and last frames as Seedance content roles", async () => {
+        mocks.getAuthSettings.mockResolvedValue(seedanceFrameSettings());
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "seedance-frame-task", status: "queued" }));
+
+        const response = await POST(
+            request({ model: "video", videoSeconds: "5", size: "16:9" }, [
+                { type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" },
+                { type: "image", url: "https://cdn.example.com/last.png", role: "last_frame" },
+            ]),
+        );
+        const [url, init] = mocks.fetchInternalApi.mock.calls[0] as [string, RequestInit];
+
+        expect(response.status).toBe(200);
+        expect(url).toContain("/api/ai/system/one/seedance-special/videos");
+        expect(JSON.parse(String(init.body))).toMatchObject({
+            content: [
+                expect.objectContaining({ type: "text" }),
+                { type: "image_url", role: "first_frame", image_url: { url: "https://cdn.example.com/first.png" } },
+                { type: "image_url", role: "last_frame", image_url: { url: "https://cdn.example.com/last.png" } },
+            ],
+        });
+    });
+
+    it("rejects a last frame on OpenAI before creating or billing an upstream task", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [{ ...channels[0], advancedConfig: { protocol: "openai", supportsReferenceImage: true } }],
+            logicalModels: [{ ...settings.logicalModels[0], bindings: [settings.logicalModels[0].bindings[0]] }],
+        });
+
+        const response = await POST(
+            request({ model: "video" }, [
+                { type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" },
+                { type: "image", url: "https://cdn.example.com/last.png", role: "last_frame" },
+            ]),
+        );
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("不支持尾帧输入");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("skips an unsupported candidate and submits the same frame roles to the next capable binding", async () => {
+        const seedanceModel = "sd_2.0_fast_special_720p";
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [
+                { ...channels[0], advancedConfig: { protocol: "openai", supportsReferenceImage: true } },
+                {
+                    ...channels[1],
+                    models: [seedanceModel],
+                    advancedConfig: { protocol: "seedance-special", createPath: "/seedance-special/videos", queryPath: "/result/:task_id", supportsReferenceImage: true },
+                },
+            ],
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: [settings.logicalModels[0].bindings[0], { ...settings.logicalModels[0].bindings[1], upstreamModel: seedanceModel }],
+                },
+            ],
+        });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "seedance-fallback-task", status: "queued" }));
+
+        const response = await POST(
+            request({ model: "video" }, [
+                { type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" },
+                { type: "image", url: "https://cdn.example.com/last.png", role: "last_frame" },
+            ]),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.createVideoTask).toHaveBeenCalledTimes(1);
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
+        expect(String(mocks.fetchInternalApi.mock.calls[0][0])).toContain("/api/ai/system/two/seedance-special/videos");
+    });
+
     it("ignores legacy GlobalAiOpc sample references for text-to-video requests", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             ...settings,
@@ -575,7 +689,7 @@ describe("video generation candidate failover", () => {
     });
 });
 
-function request(config: Record<string, unknown> = { model: "video" }, references: Array<{ type: string; url: string }> = [], context?: Record<string, unknown>) {
+function request(config: Record<string, unknown> = { model: "video" }, references: Array<{ type: string; url: string; role?: string }> = [], context?: Record<string, unknown>) {
     const clientRequestId = typeof context?.clientRequestId === "string" ? context.clientRequestId : "";
     return new Request("http://localhost/api/video-generation-tasks", {
         method: "POST",
@@ -586,6 +700,26 @@ function request(config: Record<string, unknown> = { model: "video" }, reference
         },
         body: JSON.stringify({ config, prompt: "A test video", references, context }),
     });
+}
+
+function seedanceFrameSettings() {
+    const model = "sd_2.0_fast_special_720p";
+    return {
+        ...settings,
+        systemChannels: [
+            {
+                ...channels[0],
+                models: [model],
+                advancedConfig: { protocol: "seedance-special", createPath: "/seedance-special/videos", queryPath: "/result/:task_id", supportsReferenceImage: true },
+            },
+        ],
+        logicalModels: [
+            {
+                ...settings.logicalModels[0],
+                bindings: [{ ...settings.logicalModels[0].bindings[0], upstreamModel: model }],
+            },
+        ],
+    };
 }
 
 function publicUrlCompatibleSettings() {
@@ -605,6 +739,51 @@ function publicUrlCompatibleSettings() {
             },
         ],
         logicalModels: [{ ...settings.logicalModels[0], bindings: [settings.logicalModels[0].bindings[0]] }],
+    };
+}
+
+function geminiSettings() {
+    const model = "veo-3.1-generate-preview";
+    const operation = {
+        capability: "video" as const,
+        source: "manual" as const,
+        protocol: "gemini" as const,
+        apiFormat: "gemini" as const,
+        createPath: "/models/:model:predictLongRunning",
+        imageToVideoPath: "/models/:model:predictLongRunning",
+        queryPath: "/models/:model/operations/:task_id",
+        requestTemplate: "gemini",
+        resultField: "response.generateVideoResponse.generatedSamples[0].video.uri",
+        statusField: "done",
+        durationRange: "4、6、8 秒",
+        supportsReferenceImage: true,
+        supportsReferenceVideo: false,
+        supportsReferenceAudio: false,
+    };
+    return {
+        ...settings,
+        systemChannels: [
+            {
+                id: "gemini",
+                name: "Gemini",
+                baseUrl: "https://generativelanguage.googleapis.com",
+                apiKey: "gemini-secret",
+                apiFormat: "gemini" as const,
+                models: [model],
+                enabled: true,
+                advancedConfig: { protocol: "gemini" as const, modelCapabilities: { [model]: "video" as const }, modelConfigs: { [model]: operation } },
+            },
+        ],
+        logicalModels: [
+            {
+                id: "gemini-video",
+                name: "Gemini 视频",
+                capability: "video" as const,
+                enabled: true,
+                bindings: [{ id: "gemini-binding", channelId: "gemini", upstreamModel: model, enabled: true, priority: 1 }],
+            },
+        ],
+        defaultModels: { ...settings.defaultModels, videoModel: "gemini-video" },
     };
 }
 

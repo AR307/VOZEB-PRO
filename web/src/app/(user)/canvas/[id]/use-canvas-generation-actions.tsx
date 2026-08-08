@@ -8,32 +8,34 @@ import { createFreshGenerationTaskContext } from "@/lib/generation-request-conte
 import { resolveImageRequestSize } from "@/lib/image-size";
 import { readImageMeta } from "@/lib/image-utils";
 import { createAudioGenerationTask } from "@/services/api/audio";
+import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { createTextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask } from "@/services/api/video";
 import type { InsertAssetPayload } from "../components/asset-picker-modal";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "../components/canvas-agent-panel-motion";
 import { retryCanvasAgentNode } from "../components/canvas-agent-node-retry";
-import { buildNodeGenerationContext, buildNodeResponseMessages, hydrateNodeGenerationContext } from "../components/canvas-node-generation";
+import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext } from "../components/canvas-node-generation";
 import { type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasAssistantImage, type CanvasNodeData } from "../types";
 import { applyCameraPrompt } from "../utils/canvas-camera";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { buildPanoramaPrompt } from "../utils/canvas-panorama";
+import { canvasVideoReferenceMetadata, resolveCanvasVideoGenerationReferences, restoreCanvasVideoGenerationReferences } from "../utils/canvas-video-references";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
-import { NODE_STATUS_ERROR, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
+import { NODE_STATUS_ERROR, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_NEEDS_REVIEW, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
 import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
+import { hasCanvasGenerationTask, pauseCanvasGenerationReview, resumeCanvasGenerationReview } from "./canvas-generation-review";
 import {
     buildAudioGenerationMetadata,
     buildGenerationConfig,
     buildImageGenerationMetadata,
     canvasNodeReferenceImage,
     findRetrySourceNode,
-    generationReferenceUrls,
     getGenerationCount,
     imageMetadata,
     isGenerationCanceled,
@@ -84,6 +86,12 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             window.setTimeout(() => {
                 setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask && item.metadata.status === NODE_STATUS_LOADING ? { ...item, metadata: { ...item.metadata } } : item)));
             }, delayMs);
+        },
+        [setNodes],
+    );
+    const pauseReviewedTasks = useCallback(
+        (nodeIds: string[], errorDetails: string) => {
+            setNodes((prev) => pauseCanvasGenerationReview(prev, nodeIds, errorDetails));
         },
         [setNodes],
     );
@@ -243,6 +251,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);
                     let hasSuccess = false;
                     let hasFailure = false;
+                    let hasReview = false;
                     await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
@@ -253,6 +262,11 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             } catch (error) {
                                 if (isGenerationCanceled(error)) return false;
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                                if (isGenerationTaskNeedsReviewError(error)) {
+                                    hasReview = true;
+                                    pauseReviewedTasks([targetId], errorDetails);
+                                    return false;
+                                }
                                 hasFailure = true;
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : node)));
                             } finally {
@@ -266,22 +280,37 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         setNodes((prev) => prev.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
                         return;
                     }
+                    if (hasReview) message.warning("部分图片任务待管理员确认，系统未重复提交");
                     if (hasFailure) message.error(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
                     setNodes((prev) =>
                         prev.map((node) =>
-                            node.id === nodeId && isConfigNode
-                                ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "全部图片生成失败" } }
-                                : node.id === nodeId && isEmptyImageNode
-                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "全部图片生成失败" } }
-                                  : node.id === rootId && !hasSuccess
-                                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: "全部图片生成失败" } }
-                                    : node,
+                            node.metadata?.status === NODE_STATUS_NEEDS_REVIEW
+                                ? node
+                                : node.id === nodeId && isConfigNode
+                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : hasReview ? NODE_STATUS_IDLE : NODE_STATUS_ERROR, errorDetails: hasSuccess || hasReview ? undefined : "全部图片生成失败" } }
+                                  : node.id === nodeId && isEmptyImageNode
+                                    ? {
+                                          ...node,
+                                          metadata: {
+                                              ...node.metadata,
+                                              status: hasSuccess ? NODE_STATUS_SUCCESS : hasReview ? NODE_STATUS_NEEDS_REVIEW : NODE_STATUS_ERROR,
+                                              errorDetails: hasSuccess ? undefined : node.metadata?.errorDetails || "全部图片生成失败",
+                                          },
+                                      }
+                                    : node.id === rootId && !hasSuccess
+                                      ? { ...node, metadata: { ...node.metadata, status: hasReview ? NODE_STATUS_IDLE : NODE_STATUS_ERROR, errorDetails: hasReview ? undefined : "全部图片生成失败" } }
+                                      : node,
                         ),
                     );
                     return;
                 }
 
                 if (mode === "video") {
+                    const videoReferences = resolveCanvasVideoGenerationReferences({
+                        metadata: sourceNode?.metadata,
+                        context: generationContext,
+                        availableInputs: buildNodeGenerationInputs(nodeId, nodesRef.current, connectionsRef.current),
+                    });
                     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
                     const videoId = isEmptyVideoNode ? nodeId : nanoid();
@@ -302,7 +331,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             vquality: generationConfig.vquality,
                             generateAudio: generationConfig.videoGenerateAudio,
                             watermark: generationConfig.videoWatermark,
-                            references: generationReferenceUrls(generationContext),
+                            ...canvasVideoReferenceMetadata(videoReferences),
                         },
                     };
                     pendingChildIds = [videoId];
@@ -314,12 +343,12 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        const task = await createServerVideoGenerationTask(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, {
+                        const task = await createServerVideoGenerationTask(generationConfig, effectivePrompt, videoReferences.images, videoReferences.videos, videoReferences.audios, {
                             signal: controller.signal,
                             conversationId: currentProject?.creativeConversationId,
                             surface: "canvas",
                             projectId,
-                            clientRequestId: `canvas-video:${projectId}:${nodeId}`,
+                            ...createFreshGenerationTaskContext("canvas-video", [projectId, videoId]),
                         });
                         setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, metadata: { ...node.metadata, videoTask: task } } : node)));
                         await completeVideoTask(videoId, generationConfig, task, controller, effectivePrompt);
@@ -375,7 +404,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 const textConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
                 const parentPosition = sourceNode?.position || { x: 0, y: 0 };
                 const childIds = isConfigNode || editingTextNode ? Array.from({ length: textCount }, () => nanoid()) : [];
-                pendingChildIds = childIds;
+                pendingChildIds = childIds.length ? childIds : [nodeId];
                 if (isConfigNode || editingTextNode) {
                     const childNodes: CanvasNodeData[] = childIds.map((id, index) => ({
                         id,
@@ -435,16 +464,16 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                if (isGenerationTaskNeedsReviewError(error) && pendingChildIds.length) {
+                    message.error(errorDetails);
+                    pauseReviewedTasks(pendingChildIds, errorDetails);
+                    return;
+                }
                 const videoTaskId = pendingChildIds.find((id) => nodesRef.current.find((item) => item.id === id)?.metadata?.videoTask);
                 const videoFailure = mode === "video" && videoTaskId ? classifyCanvasVideoTaskFailure(error) : undefined;
                 if (videoTaskId && videoFailure && videoFailure !== "upstream_failed") {
-                    if (videoFailure === "needs_review") {
-                        message.error(errorDetails);
-                        deferVideoTask(videoTaskId, errorDetails, 30_000);
-                    } else {
-                        message.info("视频仍在后台生成，系统会继续查询原任务");
-                        deferVideoTask(videoTaskId);
-                    }
+                    message.info("视频仍在后台生成，系统会继续查询原任务");
+                    deferVideoTask(videoTaskId);
                     return;
                 }
                 const terminalVideoFailure = videoFailure === "upstream_failed";
@@ -474,6 +503,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             isAiConfigReady,
             message,
             openConfigDialog,
+            pauseReviewedTasks,
             projectId,
             startAndCompleteImageTask,
             startGenerationRequest,
@@ -485,6 +515,11 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
 
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData) => {
+            if (node.metadata?.status === NODE_STATUS_NEEDS_REVIEW && hasCanvasGenerationTask(node)) {
+                setNodes((prev) => resumeCanvasGenerationReview(prev, node.id));
+                message.info("正在检查原任务状态，不会重复提交");
+                return;
+            }
             if (node.metadata?.agentRunId && node.metadata.agentTaskId) {
                 setRunningNodeId(node.id);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: "" } } : item)));
@@ -501,6 +536,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 return;
             }
             const sourceNode = findRetrySourceNode(node.id, nodesRef.current, connectionsRef.current) || node;
+            const isVideoRetry = node.type === CanvasNodeType.Video;
             const batchRoot = node.metadata?.batchRootId ? nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
             const savedImageMetadata = isCanvasImageNodeType(node.type) ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
             const hasSavedImageMetadata = Boolean(savedImageMetadata?.generationType);
@@ -513,13 +549,17 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                           size: savedImageMetadata.size || effectiveConfig.size,
                           count: "1",
                       }
-                    : { ...buildGenerationConfig(effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image"), count: "1" };
+                    : { ...buildGenerationConfig(effectiveConfig, isVideoRetry ? node : sourceNode, node.type === CanvasNodeType.Text ? "text" : isVideoRetry ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image"), count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
 
-            const retryPromptSource = sourceNode.type === CanvasNodeType.Config && sourceNode.metadata?.composerContent ? sourceNode.metadata.composerContent : sourceNode.metadata?.prompt || node.metadata?.prompt || "";
+            const retryPromptSource = isVideoRetry
+                ? node.metadata?.prompt || sourceNode.metadata?.prompt || sourceNode.metadata?.composerContent || ""
+                : sourceNode.type === CanvasNodeType.Config && sourceNode.metadata?.composerContent
+                  ? sourceNode.metadata.composerContent
+                  : sourceNode.metadata?.prompt || node.metadata?.prompt || "";
             const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryPromptSource));
             const sourcePrompt = (savedImageMetadata?.sourcePrompt || sourceNode.metadata?.sourcePrompt || context?.prompt || savedImageMetadata?.prompt || sourceNode.metadata?.prompt || node.metadata?.prompt || "").trim();
             const panoramaPrompt = node.type === CanvasNodeType.Panorama ? buildPanoramaPrompt(sourcePrompt, Boolean(savedImageMetadata?.references?.length || context?.referenceImages.length)) : sourcePrompt;
@@ -554,14 +594,22 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const task = await createServerVideoGenerationTask(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], {
+                    if (!context) throw new Error("视频生成上下文已丢失，无法继续重试");
+                    const videoReferences =
+                        restoreCanvasVideoGenerationReferences(node.metadata) ||
+                        resolveCanvasVideoGenerationReferences({
+                            metadata: sourceNode.metadata,
+                            context,
+                            availableInputs: buildNodeGenerationInputs(sourceNode.id, nodesRef.current, connectionsRef.current),
+                        });
+                    const task = await createServerVideoGenerationTask(generationConfig, prompt, videoReferences.images, videoReferences.videos, videoReferences.audios, {
                         signal: controller.signal,
                         conversationId: currentProject?.creativeConversationId,
                         surface: "canvas",
                         projectId,
                         ...createFreshGenerationTaskContext("canvas-video-retry", [projectId, node.id]),
                     });
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, videoTask: task } } : item)));
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, ...canvasVideoReferenceMetadata(videoReferences), videoTask: task } } : item)));
                     await completeVideoTask(node.id, generationConfig, task, controller, prompt);
                     return;
                 }
@@ -598,6 +646,10 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 message.error(errorDetails);
+                if (isGenerationTaskNeedsReviewError(error)) {
+                    pauseReviewedTasks([node.id], errorDetails);
+                    return;
+                }
                 setNodes((prev) =>
                     prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined, textTask: undefined, videoTask: undefined, audioTask: undefined } } : item)),
                 );
@@ -618,6 +670,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             isAiConfigReady,
             message,
             openConfigDialog,
+            pauseReviewedTasks,
             projectId,
             setNodes,
             setRunningNodeId,

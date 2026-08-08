@@ -272,7 +272,7 @@ export function AuthForm({
                         <h1 className="text-balance text-2xl font-semibold tracking-normal sm:text-3xl">{firstUser ? "创建首个管理员" : isRegister ? "从一个入口开始视觉创作" : "回到你的视觉创作台"}</h1>
                     </div>
                     <div className="auth-page-feature-list grid gap-2 text-sm text-stone-600 dark:text-stone-300">
-                        {["电商、短剧与美颜创作", "画布项目与提示词复用", "图片、视频工作台自由切换"].map((item) => (
+                        {["电商、短剧与美颜创作", "画布项目与提示词复用", "图片、视频与音频统一创作"].map((item) => (
                             <div key={item} className="flex items-center gap-2">
                                 <span className="size-1.5 rounded-full bg-cyan-400" />
                                 <span>{item}</span>

@@ -105,6 +105,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
         activeSection,
         saveSettings,
         updateSiteSetting,
+        getLatestSiteSettings,
         uploadSiteIcon,
         updateSiteSocialSetting,
         addFriendLink,
@@ -121,7 +122,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                 title="网站设置"
                 description="统一管理前台品牌、Logo、浏览器标题和搜索引擎展示信息。"
                 actions={
-                    <Button type="primary" loading={settingsLoading} icon={<Save className="size-4" />} onClick={() => saveSettings({ site: settings.site }, "网站信息已保存")}>
+                    <Button type="primary" loading={settingsLoading} icon={<Save className="size-4" />} onClick={() => saveSettings({ site: getLatestSiteSettings() }, "网站信息已保存")}>
                         保存网站设置
                     </Button>
                 }

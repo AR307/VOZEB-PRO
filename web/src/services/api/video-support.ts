@@ -296,7 +296,6 @@ export function readHeader(headers: unknown, key: string) {
 export function assertVideoConfig(config: AiConfig, model: string) {
     if (!model) throw new Error("请先配置视频模型");
     if (!config.baseUrl.startsWith("/api/ai/system/")) throw new Error("请管理员先配置可用的视频系统渠道");
-    if (config.apiFormat === "gemini") throw new Error("Gemini 暂不支持视频生成，请使用 OpenAI 兼容渠道");
 }
 
 export function normalizeVideoSeconds(value: string) {

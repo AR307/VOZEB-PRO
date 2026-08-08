@@ -115,6 +115,51 @@ describe("video task upstream reconciliation", () => {
         }
     });
 
+    it("polls a Gemini Veo operation and reads generateVideoResponse", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+
+        try {
+            const created = (await fetch(`${origin}/v1beta/models/veo-3.1-generate-preview:predictLongRunning`, { method: "POST", body: "{}" }).then((response) => response.json())) as { name: string };
+            const operationId = created.name.split("/").at(-1) || "";
+            const task = videoTask({
+                config: {
+                    channelId: "fixture-gemini",
+                    apiSource: "system",
+                    baseUrl: origin,
+                    apiKey: "system",
+                    apiFormat: "gemini",
+                    model: "veo-3.1-generate-preview",
+                    advancedConfig: { protocol: "gemini", queryPath: `/v1beta/models/veo-3.1-generate-preview/operations/${operationId}` } as NonNullable<VideoTask["config"]["advancedConfig"]>,
+                },
+                upstream: {
+                    id: operationId,
+                    provider: "generation",
+                    model: "veo-3.1-generate-preview",
+                    pollPath: "/v1beta/models/veo-3.1-generate-preview:predictLongRunning",
+                    queryPath: `/v1beta/models/veo-3.1-generate-preview/operations/${operationId}`,
+                    pointsCost: 1,
+                    pointsUnits: 1,
+                    pointsRecordId: "points-gemini",
+                },
+            });
+            const completed = { ...task, status: "success" as const, result: { url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
+            mocks.claim.mockResolvedValue(task);
+            mocks.get.mockResolvedValue(task);
+            mocks.fetchInternalApi.mockImplementation((url: string | URL | Request, init?: RequestInit) => fetch(url, init));
+            mocks.complete.mockResolvedValue(completed);
+
+            await expect(refreshVideoTaskFromUpstream(task, "", "")).resolves.toEqual(completed);
+            expect(fixture.requests.map((request) => request.path)).toEqual(["/v1beta/models/veo-3.1-generate-preview:predictLongRunning", `/v1beta/models/veo-3.1-generate-preview/operations/${operationId}`]);
+            expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/result.mp4" }));
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
+        }
+    });
+
     it("persists the real provider failure and refunds a still-running task", async () => {
         const task = videoTask();
         const failed = { ...task, status: "error", error: "The output video may contain sensitive information" };

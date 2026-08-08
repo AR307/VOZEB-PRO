@@ -1,3 +1,5 @@
+import type { VideoGenerationReference } from "@/lib/video-reference-contract";
+
 export function resolveVideoGenerationParameters(raw: Record<string, unknown>, defaults: { imageSize: string; videoQuality: string; videoSeconds: number }) {
     return {
         ...raw,
@@ -33,8 +35,16 @@ export function resolveVideoDuration(value: unknown, fallback: number) {
     return Math.max(1, Math.min(20, Math.floor(seconds)));
 }
 
-export function withVideoReferenceFidelity(prompt: string, references: Array<{ type?: string }>) {
+export function withVideoReferenceFidelity(prompt: string, references: readonly VideoGenerationReference[]) {
     const source = prompt.trim();
+    const hasFirstFrame = references.some((reference) => reference.role === "first_frame");
+    const hasLastFrame = references.some((reference) => reference.role === "last_frame");
+    if ((hasFirstFrame || hasLastFrame) && !source.includes("首尾帧连续性要求：")) {
+        const ending = hasLastFrame
+            ? "首帧是唯一开场画面，尾帧是唯一结束画面；镜头、主体姿态、光线和环境变化必须在两帧之间自然连续过渡，禁止交换两帧、跳切到无关场景或把尾帧当普通参考图。"
+            : "首帧是唯一开场画面；保持其中主体身份、外观、构图和场景，再按用户描述产生连续动作与运镜，禁止重设计主体或换成无关开场。";
+        return `${source}\n\n首尾帧连续性要求：${ending}`;
+    }
     const hasImage = references.some((reference) => reference.type === "image");
     const hasVideo = references.some((reference) => reference.type === "video");
     if ((!hasImage && !hasVideo) || source.includes("参考素材一致性要求：")) return source;

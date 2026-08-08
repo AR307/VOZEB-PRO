@@ -6,7 +6,7 @@ import { generationModelId, toSystemGenerationChannel } from "@/lib/server/gener
 import { finishGenerationAttempt, startGenerationAttempt, type GenerationAttempt } from "@/lib/server/generation-attempt";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
-import { assertReferenceCapabilities, assertReferenceUrls, buildVideoProviderRequest, isProviderBusinessError, readProviderError, readProviderString, resolvedProviderCreatePaths } from "@/lib/server/provider-task-config";
+import { assertReferenceCapabilities, assertReferenceUrls, assertVideoReferenceRoles, buildVideoProviderRequest, isProviderBusinessError, readProviderError, readProviderString, resolvedProviderCreatePaths } from "@/lib/server/provider-task-config";
 import { buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { createVideoTask, transitionVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
@@ -22,17 +22,19 @@ import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl } from "@/lib/server/video-provider-response";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
+import { assertGeminiVideoReferences, buildGeminiVideoRequest, geminiVideoCreatePath, normalizeGeminiVideoDuration, parseGeminiVideoCreateResponse } from "@/lib/server/gemini-video-provider";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
+import { normalizeVideoGenerationReferences, regularVideoReferences, videoFrameReferences, type VideoGenerationReference } from "@/lib/video-reference-contract";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 2400;
 
 const CREATE_PATHS = ["/video/generations", "/videos/generations", "/videos/videos", "/videos"];
-type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: Array<{ type?: string; url?: string }>; source?: string; context?: GenerationTaskContext };
+type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: VideoGenerationReference[]; source?: string; context?: GenerationTaskContext };
 
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
@@ -64,7 +66,12 @@ export async function POST(request: Request) {
         const prompt = String(body.prompt || "").trim();
         if (!channels.length || !prompt) return NextResponse.json({ error: "视频任务参数不完整或渠道不支持" }, { status: 400 });
         const publicOrigin = requestPublicOrigin(request);
-        const references = (Array.isArray(body.references) ? body.references : []).map((reference) => ({ ...reference, url: signReferenceAssetInputUrl(String(reference.url || ""), publicOrigin) }));
+        let references: VideoGenerationReference[];
+        try {
+            references = normalizeVideoGenerationReferences(body.references).map((reference) => ({ ...reference, url: signReferenceAssetInputUrl(reference.url, publicOrigin) }));
+        } catch (error) {
+            return NextResponse.json({ error: error instanceof Error ? error.message : "视频参考素材不正确" }, { status: 400 });
+        }
         const providerPrompt = withVideoReferenceFidelity(prompt, references);
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = requestRuntimeCredential(request, user.id);
@@ -76,14 +83,16 @@ export async function POST(request: Request) {
         let localTask: VideoTask | undefined;
         for (let index = 0; index < channels.length; index += 1) {
             const channel = channels[index];
-            if (channel.apiFormat === "gemini") continue;
+            const geminiVideo = isGeminiVideoChannel(channel);
             const parameters = {
                 ...requestedParameters,
-                videoSeconds: resolveUpstreamVideoDuration(requestedParameters.videoSeconds, settings.generationDefaults.videoSeconds, {
-                    durationRange: channel.advancedConfig?.durationRange,
-                    minDurationSeconds: channel.capabilityProfile?.minDurationSeconds,
-                    maxDurationSeconds: channel.capabilityProfile?.maxDurationSeconds,
-                }),
+                videoSeconds: geminiVideo
+                    ? normalizeGeminiVideoDuration(requestedParameters.videoSeconds)
+                    : resolveUpstreamVideoDuration(requestedParameters.videoSeconds, settings.generationDefaults.videoSeconds, {
+                          durationRange: channel.advancedConfig?.durationRange,
+                          minDurationSeconds: channel.capabilityProfile?.minDurationSeconds,
+                          maxDurationSeconds: channel.capabilityProfile?.maxDurationSeconds,
+                      }),
             };
             try {
                 assertCapabilityConstraints(channel.capabilityProfile, {
@@ -93,19 +102,24 @@ export async function POST(request: Request) {
                     aspectRatio: ratioValue(parameters.size),
                 });
                 const globalPreset = globalAiOpcVideoPreset(channel.advancedConfig, channel.model);
-                assertReferenceCapabilities(
-                    globalPreset
-                        ? {
-                              ...channel.advancedConfig!,
-                              supportsReferenceImage: Boolean(globalPreset.supportsReferenceImage),
-                              supportsReferenceVideo: Boolean(globalPreset.supportsReferenceVideo),
-                              supportsReferenceAudio: Boolean(globalPreset.supportsReferenceAudio),
-                          }
-                        : channel.advancedConfig,
-                    references,
-                );
-                if (channel.advancedConfig?.protocol === "vozeb-recommended") assertVozebRecommendedVideoReferences(channel.model, references);
-                assertReferenceUrls(channel.advancedConfig, references, Boolean(globalPreset));
+                if (geminiVideo) {
+                    assertGeminiVideoReferences(references);
+                } else {
+                    assertReferenceCapabilities(
+                        globalPreset
+                            ? {
+                                  ...channel.advancedConfig!,
+                                  supportsReferenceImage: Boolean(globalPreset.supportsReferenceImage),
+                                  supportsReferenceVideo: Boolean(globalPreset.supportsReferenceVideo),
+                                  supportsReferenceAudio: Boolean(globalPreset.supportsReferenceAudio),
+                              }
+                            : channel.advancedConfig,
+                        references,
+                    );
+                    assertVideoReferenceRoles(channel.advancedConfig, references, globalPreset?.videoReferenceRoles);
+                    if (channel.advancedConfig?.protocol === "vozeb-recommended") assertVozebRecommendedVideoReferences(channel.model, references);
+                    assertReferenceUrls(channel.advancedConfig, references, Boolean(globalPreset));
+                }
             } catch (error) {
                 capabilityError = error;
                 continue;
@@ -116,7 +130,7 @@ export async function POST(request: Request) {
                 id: "",
                 provider: "generation" as const,
                 model: channel.model,
-                pollPath: channel.advancedConfig?.createPath || CREATE_PATHS[0],
+                pollPath: geminiVideo ? geminiVideoCreatePath(channel.model) : channel.advancedConfig?.createPath || CREATE_PATHS[0],
             };
             if (!localTask) {
                 localTask = await createVideoTask({
@@ -161,7 +175,7 @@ export async function POST(request: Request) {
                     upstreamTaskId: task.upstream.id,
                     channelId: channel.channelId,
                     provider: task.upstream.provider,
-                    queryPath: task.upstream.pollPath,
+                    queryPath: task.upstream.queryPath || task.config.advancedConfig?.queryPath || task.upstream.pollPath,
                     submittedAt,
                     nextPollAt: submittedAt,
                     lastUpstreamStatus: "submitted",
@@ -205,18 +219,25 @@ export async function createUpstream(
     channel: NonNullable<ReturnType<typeof toSystemGenerationChannel>>,
     prompt: string,
     raw: Record<string, unknown>,
-    references: Array<{ type?: string; url?: string }>,
+    references: VideoGenerationReference[],
     multipliers: Awaited<ReturnType<typeof getAuthSettings>>["generationPointMultipliers"],
     billingRequestId: string,
 ) {
     let lastError = "";
-    const images = referenceUrls(references, "image");
-    const videos = referenceUrls(references, "video");
-    const audios = referenceUrls(references, "audio");
+    const regularReferences = regularVideoReferences(references);
+    const { firstFrame, lastFrame } = videoFrameReferences(references);
+    const images = referenceUrls(regularReferences, "image");
+    const videos = referenceUrls(regularReferences, "video");
+    const audios = referenceUrls(regularReferences, "audio");
     const requestImage = images[0] || "";
     const requestImages = images;
+    const firstFrameUrl = firstFrame?.url || "";
+    const lastFrameUrl = lastFrame?.url || "";
     const dimensions = videoDimensions(raw.size, raw.vquality);
     const generateAudio = raw.videoGenerateAudio !== false && raw.videoGenerateAudio !== "false";
+    if (isGeminiVideoChannel(channel)) {
+        return createGeminiVideoUpstream({ userId, origin, cookie, channel, prompt, raw, references, generateAudio, multipliers, billingRequestId });
+    }
     const values = {
         model: channel.model,
         prompt,
@@ -237,6 +258,11 @@ export async function createUpstream(
         video: videos[0] || "",
         audio: audios[0] || "",
         references,
+        content: videoReferenceContent(prompt, references),
+        first_frame: firstFrameUrl,
+        first_frame_url: firstFrameUrl,
+        last_frame: lastFrameUrl,
+        last_frame_url: lastFrameUrl,
     };
     const defaults = {
         model: channel.model,
@@ -253,7 +279,9 @@ export async function createUpstream(
         ...(requestImages.length ? { images: requestImages, image_urls: requestImages, reference_images: requestImages } : {}),
         ...(videos.length ? { video: videos[0], videos, reference_videos: videos } : {}),
         ...(audios.length ? { audio: audios[0], audios, reference_audios: audios } : {}),
-        ...(references.length ? { ref_assets: references.map((item) => ({ type: item.type, url: item.url })) } : {}),
+        ...(references.length ? { ref_assets: references.map((item) => ({ type: item.type, url: item.url, role: item.role || "reference" })) } : {}),
+        ...(firstFrameUrl ? { first_frame: firstFrameUrl, first_frame_url: firstFrameUrl } : {}),
+        ...(lastFrameUrl ? { last_frame: lastFrameUrl, last_frame_url: lastFrameUrl } : {}),
     };
     const globalPreset = globalAiOpcVideoPreset(channel.advancedConfig, channel.model);
     const multipart = channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data") === true;
@@ -278,7 +306,7 @@ export async function createUpstream(
                   duration: values.duration === -1 ? 5 : (values.duration as number),
                   ratio: values.ratio as string,
                   generateAudio,
-                  references: { images, videos, audios },
+                  references,
               })
             : globalPreset
               ? buildGlobalAiOpcVideoRequest(globalPreset, {
@@ -291,10 +319,14 @@ export async function createUpstream(
                     videos,
                     audios,
                     generateAudio,
+                    firstFrame: firstFrameUrl || undefined,
+                    lastFrame: lastFrameUrl || undefined,
                 })
               : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
-    const requestBody = multipart ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: images, origin, cookie }) : JSON.stringify(payload);
-    const imageToVideoPath = images.length ? channel.advancedConfig?.imageToVideoPath?.trim() : "";
+    const requestBody = multipart
+        ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: firstFrameUrl ? [firstFrameUrl] : images, origin, cookie })
+        : JSON.stringify(payload);
+    const imageToVideoPath = images.length || firstFrameUrl ? channel.advancedConfig?.imageToVideoPath?.trim() : "";
     const createPaths = globalPreset ? [globalPreset.createPath] : imageToVideoPath ? [imageToVideoPath] : resolvedProviderCreatePaths(channel.advancedConfig, "video", CREATE_PATHS);
     for (const path of createPaths) {
         const response = await proxyFetch(origin, channel.baseUrl, path, cookie, {
@@ -343,6 +375,7 @@ export async function createUpstream(
             provider: "generation" as const,
             model: channel.model,
             pollPath: path,
+            queryPath: undefined,
             resultUrl: resultUrl || undefined,
             pointsCost: billedPointsCost(response.headers.get("x-vozeb-pro-points-cost")),
             pointsUnits: videoUnits(raw, multipliers),
@@ -352,9 +385,82 @@ export async function createUpstream(
     throw new SafeCandidateFailure(lastError || "没有可用的视频创建接口");
 }
 
+async function createGeminiVideoUpstream(input: {
+    userId: string;
+    origin: string;
+    cookie: string;
+    channel: NonNullable<ReturnType<typeof toSystemGenerationChannel>>;
+    prompt: string;
+    raw: Record<string, unknown>;
+    references: VideoGenerationReference[];
+    generateAudio: boolean;
+    multipliers: Awaited<ReturnType<typeof getAuthSettings>>["generationPointMultipliers"];
+    billingRequestId: string;
+}) {
+    const payload = await buildGeminiVideoRequest({
+        prompt: input.prompt,
+        durationSeconds: input.raw.videoSeconds,
+        aspectRatio: input.raw.size,
+        resolution: input.raw.vquality,
+        generateAudio: input.generateAudio,
+        references: input.references,
+        origin: input.origin,
+        cookie: input.cookie,
+    });
+    const path = geminiVideoCreatePath(input.channel.model);
+    const response = await proxyFetch(input.origin, input.channel.baseUrl, path, input.cookie, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": input.billingRequestId,
+            "X-Client-Request-Id": input.billingRequestId,
+            ...systemAiBillingHeaders(generationModelId(input.channel), `video-request:${input.billingRequestId}`, input.channel.model),
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(input.channel, "video")),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+        const message = readVideoProviderHttpError(text, response.status);
+        if (SAFE_CREATE_FAILURE_STATUSES.has(response.status)) throw new SafeCandidateFailure(message);
+        throw new Error(message);
+    }
+    let data: unknown;
+    try {
+        data = parseVideoProviderJson(text);
+    } catch (error) {
+        throw error instanceof Error ? error : new Error("Gemini Veo 返回了无效 JSON");
+    }
+    const created = parseGeminiVideoCreateResponse(data, input.channel.model);
+    const pointsCost = billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
+    const pointsRecordId = response.headers.get("x-vozeb-pro-points-record-id") || undefined;
+    if (created.error) {
+        if (pointsCost !== undefined && pointsRecordId) {
+            await refundUserPoints(input.userId, generationModelId(input.channel), pointsCost, "video", videoUnits(input.raw, input.multipliers), undefined, pointsRecordId);
+        }
+        throw new SafeCandidateFailure(created.error);
+    }
+    if (!created.id) throw new Error("Gemini Veo 没有返回 operation ID");
+    return {
+        id: created.id,
+        provider: "generation" as const,
+        model: input.channel.model,
+        pollPath: path,
+        queryPath: created.queryPath || undefined,
+        resultUrl: created.resultUrl || undefined,
+        pointsCost,
+        pointsUnits: videoUnits(input.raw, input.multipliers),
+        pointsRecordId,
+    };
+}
+
 function globalAiOpcVideoPreset(config: NonNullable<ReturnType<typeof toSystemGenerationChannel>>["advancedConfig"], model: string) {
     const preset = resolveGlobalAiOpcPreset(config, model);
     return preset?.capability === "video" ? preset : undefined;
+}
+
+function isGeminiVideoChannel(channel: NonNullable<ReturnType<typeof toSystemGenerationChannel>>) {
+    return channel.apiFormat === "gemini" && channel.advancedConfig?.protocol !== "globalaiopc";
 }
 
 function proxyFetch(origin: string, baseUrl: string, path: string, cookie: string, init: RequestInit) {
@@ -403,8 +509,21 @@ function positiveAttemptNo(value: unknown) {
 function unique(values: string[]) {
     return Array.from(new Set(values.filter(Boolean)));
 }
-function referenceUrls(items: Array<{ type?: string; url?: string }>, type: string) {
+function referenceUrls(items: readonly VideoGenerationReference[], type: VideoGenerationReference["type"]) {
     return unique(items.filter((item) => item.type === type).map((item) => clean(item.url)));
+}
+
+function videoReferenceContent(prompt: string, references: readonly VideoGenerationReference[]) {
+    return [
+        { type: "text", text: prompt },
+        ...references.map((reference) =>
+            reference.type === "image"
+                ? { type: "image_url", role: reference.role === "first_frame" || reference.role === "last_frame" ? reference.role : "reference_image", image_url: { url: reference.url } }
+                : reference.type === "video"
+                  ? { type: "video_url", role: "reference_video", video_url: { url: reference.url } }
+                  : { type: "audio_url", role: "reference_audio", audio_url: { url: reference.url } },
+        ),
+    ];
 }
 function requestPublicOrigin(request: Request) {
     const configured = normalizePublicOrigin(process.env.NEXT_PUBLIC_SITE_URL || "");

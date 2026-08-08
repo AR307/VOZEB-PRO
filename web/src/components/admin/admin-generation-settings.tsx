@@ -5,7 +5,7 @@ import { SlidersHorizontal, Sparkles } from "lucide-react";
 
 import type { AuthSettings } from "@/lib/auth/store";
 import { resolveLogicalModelConfig } from "@/lib/model-routing-config";
-import { LabeledControl, SectionTitle, SettingToggle } from "@/components/admin/admin-settings-controls";
+import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
 
 const settingsPanelSurfaceClass = "rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950";
 
@@ -64,7 +64,7 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
                 <LabeledControl label="画布默认生图张数">
                     <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationDefaults.canvasImageCount} onChange={(value) => onChange("canvasImageCount", value || 1)} />
                 </LabeledControl>
-                <LabeledControl label="工作台默认生图张数">
+                <LabeledControl label="Agent 默认生图张数">
                     <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationDefaults.imageCount} onChange={(value) => onChange("imageCount", value || 1)} />
                 </LabeledControl>
                 <LabeledControl label="默认图片/视频比例">
@@ -102,29 +102,6 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
                 </LabeledControl>
             </div>
             <div className="mt-2 text-xs leading-5 text-stone-500 dark:text-stone-400">新建画布生图节点和配置节点默认使用，单个节点仍可单独覆盖。</div>
-            <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
-                <div className="text-xs font-semibold text-stone-700 dark:text-stone-200">工作台 Agent 智能规划</div>
-                <div className="mt-3 grid gap-4 sm:grid-cols-2 sm:divide-x sm:divide-zinc-200 dark:sm:divide-zinc-800">
-                    <SettingToggle
-                        title="生图工作台默认开启"
-                        description="关闭后，用户进入生图工作台会被引导先选择图片模型。"
-                        checked={settings.generationDefaults.workbenchSmartPlanning.image}
-                        checkedChildren="开启"
-                        unCheckedChildren="关闭"
-                        onChange={(image) => onChange("workbenchSmartPlanning", { ...settings.generationDefaults.workbenchSmartPlanning, image })}
-                    />
-                    <div className="sm:pl-4">
-                        <SettingToggle
-                            title="视频工作台默认开启"
-                            description="关闭后，用户进入视频工作台会被引导先选择视频模型。"
-                            checked={settings.generationDefaults.workbenchSmartPlanning.video}
-                            checkedChildren="开启"
-                            unCheckedChildren="关闭"
-                            onChange={(video) => onChange("workbenchSmartPlanning", { ...settings.generationDefaults.workbenchSmartPlanning, video })}
-                        />
-                    </div>
-                </div>
-            </div>
         </div>
     );
 }

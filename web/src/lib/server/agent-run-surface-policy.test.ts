@@ -109,6 +109,7 @@ describe("agentPlannerInput", () => {
         expect(filterAgentPlannerModels(models, { surface: "chat", prompt: "你好，你能做什么" }).map((item) => item.capability)).toEqual(["text"]);
         expect(filterAgentPlannerModels(models, { surface: "chat", prompt: "生成一张商品海报" }).map((item) => item.capability)).toEqual(["text", "image"]);
         expect(filterAgentPlannerModels(models, { surface: "chat", prompt: "让这张图动起来，生成视频" }).map((item) => item.capability)).toEqual(["text", "image", "video"]);
+        expect(filterAgentPlannerModels(models, { surface: "chat", prompt: "做一个作品", generationPreferences: { mode: "audio" } }).map((item) => item.capability)).toEqual(["text", "audio"]);
     });
 
     it("only exposes explicitly selected Skills to the planner", () => {

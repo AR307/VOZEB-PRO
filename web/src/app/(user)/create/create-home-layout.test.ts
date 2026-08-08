@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 
 describe("create Agent home layout", () => {
     it("keeps Agent input, recent work and reusable public inspiration in one flow", async () => {
-        const [page, composer, overview, inspiration, previewModal] = await Promise.all([
+        const [page, composer, generationControls, preferences, overview, inspiration, previewModal] = await Promise.all([
             readFile(resolve(process.cwd(), "src/app/(user)/create/page.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-composer.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-generation-controls.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-generation-preferences.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/create-workbench-overview.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/create-inspiration-gallery.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/components/works/public-work-preview-modal.tsx"), "utf8"),
@@ -14,11 +16,50 @@ describe("create Agent home layout", () => {
 
         expect(page).toContain("创作 Agent");
         expect(page).toContain("createAgentPromptFromHash");
+        expect(page).toContain('data-testid="creative-conversation-scroll"');
+        expect(page).toContain("updateConversationScrollState");
+        expect(page).toContain("onWheelCapture");
+        expect(page).toContain("distanceFromLatest > 48");
+        expect(page).toContain("awayFromLatestRef.current = false");
+        expect(page).toContain("setAwayFromLatestState(true)");
+        expect(page).toContain("回到底部");
         expect(page).not.toContain("最近创作");
         expect(page).toContain("<CreateInspirationGallery");
         expect(page.indexOf("<CreateWorkbenchOverview")).toBeLessThan(page.indexOf("<CreateInspirationGallery"));
         expect(page).toContain("usePublicImage");
-        expect(composer).toContain('centered ? "max-w-[960px]"');
+        expect(composer).toContain('centered ? "max-w-[1080px]"');
+        expect(composer).toContain('data-compact="true"');
+        expect(composer).toContain('data-compact="false"');
+        expect(composer).toContain("autoSize={{ minRows: 1, maxRows: 5 }}");
+        expect(composer).toContain("<CreativeGenerationControls");
+        expect(composer).toContain("使用 Skill");
+        expect(composer).toContain('aria-label={mediaAttachments.length ? "继续添加参考素材" : "添加素材"}');
+        expect(composer).toContain("创作类型");
+        expect(composer).toContain('const popoverPlacement = centered ? "bottomLeft" : "topLeft"');
+        expect(composer).toContain("placement={popoverPlacement}");
+        expect(composer).not.toContain("上传中");
+        expect(composer).toContain("data-delete-indicator");
+        expect(composer).toContain("size-[22px]");
+        expect(composer).toContain("bg-[#66727f]/95");
+        expect(composer).toContain("text-white");
+        expect(generationControls).toContain("placement={placement}");
+        expect(composer).toContain("hide-scrollbar flex min-w-0 flex-1");
+        expect(generationControls).toContain("智能模型");
+        expect(generationControls).toContain("选择模型");
+        expect(generationControls).toContain("<Orbit");
+        expect(generationControls).toContain("<GenerationPreferencesControl");
+        expect(generationControls).toContain("max-w-[360px]");
+        expect(generationControls).not.toContain("选择比例");
+        expect(preferences).toContain("Agent 模式");
+        expect(preferences).toContain("图片生成");
+        expect(preferences).toContain("视频生成");
+        expect(preferences).toContain("音频生成");
+        expect(preferences).toContain("生成参数");
+        expect(preferences).toContain(">比例</p>");
+        expect(preferences).toContain("1080P");
+        expect(preferences).toContain("选择音色");
+        expect(preferences).toContain("<Select");
+        expect(preferences).not.toContain("选择模型");
         expect(composer).not.toContain("CreativeImageSizeControl");
         const pointerDownHandler = composer.slice(composer.indexOf("const onPointerDown"), composer.indexOf("const onPointerMove"));
         const pointerMoveHandler = composer.slice(composer.indexOf("const onPointerMove"), composer.indexOf("const finishDrag"));

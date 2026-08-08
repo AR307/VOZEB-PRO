@@ -34,7 +34,7 @@ const ENDPOINT_SPECS: EndpointSpec[] = [
     { marker: "/videos", kind: "video" },
 ];
 
-const IMAGE_REFERENCE_KEYS = new Set(["image", "images", "image_url", "image_urls", "input_image", "input_images", "ref_assets", "reference_image", "reference_images", "first_frame_url", "first_frame_image"]);
+const IMAGE_REFERENCE_KEYS = new Set(["image", "images", "image_url", "image_urls", "input_image", "input_images", "ref_assets", "reference_image", "reference_images", "first_frame_url", "first_frame_image", "last_frame_url", "last_frame_image"]);
 const VIDEO_REFERENCE_KEYS = new Set(["referencevideo", "referencevideos", "reference_video", "reference_videos", "video", "videos", "input_video", "input_videos"]);
 const AUDIO_REFERENCE_KEYS = new Set(["referenceaudio", "referenceaudios", "reference_audio", "reference_audios", "audio", "audios", "input_audio", "input_audios"]);
 const RESULT_URL_KEYS = new Set([

@@ -56,13 +56,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 async function cancelChildTasks(tasks: AgentRun["tasks"], origin: string, cookie: string) {
     await Promise.all(
         tasks
-            .filter((task) => task.status === "running" && task.taskId && ["text", "image", "video", "audio"].includes(task.type))
-            .map((task) =>
-                fetchInternalApi(`${origin}/api/${task.type}-tasks/${encodeURIComponent(task.taskId!)}`, {
+            .filter((task) => task.status === "running" && ["text", "image", "video", "audio"].includes(task.type))
+            .flatMap((task) => cancellableChildTaskIds(task).map((taskId) => ({ task, taskId })))
+            .map(({ task, taskId }) =>
+                fetchInternalApi(`${origin}/api/${task.type}-tasks/${encodeURIComponent(taskId)}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json", cookie },
                     body: JSON.stringify({ status: "cancelled" }),
                 }).catch(() => null),
             ),
     );
+}
+
+function cancellableChildTaskIds(task: AgentRun["tasks"][number]) {
+    const childStatuses = new Map(task.childTasks?.map((child) => [child.id, child.status]) || []);
+    const ids = new Set([...(task.taskIds || []), ...(task.taskId ? [task.taskId] : []), ...(task.childTasks?.map((child) => child.id) || [])]);
+    return Array.from(ids).filter((taskId) => !childStatuses.has(taskId) || childStatuses.get(taskId) === "pending");
 }

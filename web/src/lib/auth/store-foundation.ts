@@ -155,7 +155,6 @@ export const DEFAULT_SETTINGS: AuthSettings = {
         videoSeconds: 5,
         audioVoice: "alloy",
         audioFormat: "mp3",
-        workbenchSmartPlanning: { image: true, video: true },
     },
     systemChannels: [],
     logicalModels: [],

@@ -158,6 +158,7 @@ describe("video creation protocols over a live fixture", () => {
             prompt: "animate a blue logo",
             duration: 5,
             resolution: "720p",
+            metadata: { resolution: "720p" },
             generate_audio: false,
             aspect_ratio: "16:9",
             images: [referenceUrl],

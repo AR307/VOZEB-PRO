@@ -1,10 +1,11 @@
-import type { CreativeSurface } from "@/lib/creative-runtime-contract";
+import type { CreativeGenerationPreferences, CreativeSurface } from "@/lib/creative-runtime-contract";
 import type { AgentSkillWorkspace } from "@/lib/auth/store";
 
 type PlanningRun = {
     surface: CreativeSurface;
     prompt: string;
     snapshot?: unknown;
+    generationPreferences?: CreativeGenerationPreferences;
 };
 
 type ModelOption = {
@@ -30,7 +31,7 @@ const COMPLEX_RE = /短剧|分镜|故事板|多物料|完整方案|全套|角色
 export function resolveAgentPlanningProfile(run: PlanningRun): AgentPlanningProfile {
     const prompt = run.prompt.trim();
     const selectedTypes = selectedNodeTypes(run.snapshot);
-    const capabilities = inferCapabilities(run.surface, prompt, selectedTypes);
+    const capabilities = run.generationPreferences?.mode ? new Set(["text", run.generationPreferences.mode]) : inferCapabilities(run.surface, prompt, selectedTypes);
     const complex = run.surface === "drama" || COMPLEX_RE.test(prompt) || (run.surface === "canvas" && snapshotNodeCount(run.snapshot) > 10);
     const multi = complex || MULTI_RE.test(prompt);
     const complexity = complex ? "complex" : multi ? "multi" : "ordinary";

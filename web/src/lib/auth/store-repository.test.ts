@@ -38,7 +38,6 @@ describe("PostgreSQL auth read paths", () => {
 
         expect(settings.generationDefaults).toMatchObject({
             imageCount: 2,
-            workbenchSmartPlanning: { image: true, video: true },
         });
     });
 

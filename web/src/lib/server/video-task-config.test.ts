@@ -51,7 +51,7 @@ describe("resolveVideoGenerationParameters", () => {
     });
 
     it("adds a server-side subject fidelity constraint for visual references", () => {
-        const prompt = withVideoReferenceFidelity("让人物自然挥手", [{ type: "image" }]);
+        const prompt = withVideoReferenceFidelity("让人物自然挥手", [{ type: "image", url: "https://cdn.example.com/reference.png" }]);
 
         expect(prompt).toContain("让人物自然挥手");
         expect(prompt).toContain("将参考图作为首帧、主体身份、外观和场景的主要依据");
@@ -60,7 +60,7 @@ describe("resolveVideoGenerationParameters", () => {
 
     it("does not change text-to-video or duplicate the fidelity constraint", () => {
         expect(withVideoReferenceFidelity("生成海边日落", [])).toBe("生成海边日落");
-        const once = withVideoReferenceFidelity("让镜头缓慢推进", [{ type: "video" }]);
-        expect(withVideoReferenceFidelity(once, [{ type: "video" }])).toBe(once);
+        const once = withVideoReferenceFidelity("让镜头缓慢推进", [{ type: "video", url: "https://cdn.example.com/reference.mp4" }]);
+        expect(withVideoReferenceFidelity(once, [{ type: "video", url: "https://cdn.example.com/reference.mp4" }])).toBe(once);
     });
 });

@@ -67,7 +67,20 @@ describe("audio task runtime submission safety", () => {
         expect(state.config.channelId).toBe("channel-two");
         expect(state.candidateConfigs).toEqual([]);
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
-        expect(mocks.schedule).toHaveBeenLastCalledWith("audio", "audio-one", expect.objectContaining({ channelId: "channel-two" }));
+        expect(mocks.schedule).toHaveBeenLastCalledWith(
+            "audio",
+            "audio-one",
+            expect.objectContaining({ executionPhase: "result_ready", channelId: "channel-two", resultPayload: { url: "https://cdn.example/result.mp3" }, lastUpstreamStatus: "completed" }),
+        );
+    });
+
+    it("persists an asynchronous upstream task identity before returning", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ id: "audio-upstream-one" })));
+
+        await expect(createAudioTaskUpstreamStep(state, "http://internal")).resolves.toMatchObject({ state: "pending", upstreamTaskId: "audio-upstream-one" });
+
+        expect(state.upstream).toEqual({ id: "audio-upstream-one", createPath: "/audio/speech" });
+        expect(mocks.schedule).toHaveBeenLastCalledWith("audio", "audio-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "audio-upstream-one", channelId: "channel-one", lastUpstreamStatus: "submitted" }));
     });
 
     it("persists audio bytes returned by a live OpenAI-compatible fixture", async () => {

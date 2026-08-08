@@ -53,8 +53,25 @@ describe("video API service", () => {
         expect(fetchMock.mock.calls[0][0]).toBe("/api/video-generation-tasks");
         expect(headers.get("x-vozeb-pro-client-request-id")).toBe("video-workbench:conversation:slot");
         expect(headers.get("x-vozeb-pro-attempt-no")).toBe("2");
-        expect(body.references).toEqual([{ type: "image", url: "https://cdn.example.com/original-person.png" }]);
+        expect(body.references).toEqual([{ type: "image", role: "reference", url: "https://cdn.example.com/original-person.png" }]);
         expect(mocks.imageToDataUrl).not.toHaveBeenCalled();
+    });
+
+    it("preserves explicit first and last frame roles in the server payload", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-frames", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+        const references = [
+            { id: "first-image", name: "首帧", type: "image/png", dataUrl: "https://cdn.example.com/first.png", url: "https://cdn.example.com/first.png", videoRole: "first_frame" },
+            { id: "last-image", name: "尾帧", type: "image/png", dataUrl: "https://cdn.example.com/last.png", url: "https://cdn.example.com/last.png", videoRole: "last_frame" },
+        ] as ReferenceImage[];
+
+        await createServerVideoGenerationTask(config, "让首尾画面自然衔接", references);
+
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body.references).toEqual([
+            { type: "image", role: "first_frame", url: "https://cdn.example.com/first.png" },
+            { type: "image", role: "last_frame", url: "https://cdn.example.com/last.png" },
+        ]);
     });
 
     it("routes the public creation helper through the server task endpoint", async () => {

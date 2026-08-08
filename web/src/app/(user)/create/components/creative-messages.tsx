@@ -1,7 +1,7 @@
 "use client";
 
-import { Button, Tooltip } from "antd";
-import { Check, Clapperboard, Copy, Download, ExternalLink, FileAudio2, Film, Link2, LoaderCircle, PanelsTopLeft, RotateCcw } from "lucide-react";
+import { Button, Dropdown, Popover, Tooltip } from "antd";
+import { Check, ChevronDown, Clapperboard, Copy, Download, Edit3, ExternalLink, FileAudio2, Film, Info, Link2, LoaderCircle, MoreHorizontal, PanelsTopLeft, RefreshCw, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -12,6 +12,7 @@ import { formatAgentMessageText } from "@/components/agent/agent-message-format"
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
 import { isCreativeProjectHandoff, type CreativeAsset, type CreativeMessage, type CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imagePreviewUrl } from "@/lib/media-image-url";
@@ -21,7 +22,13 @@ import type { MaterializedCreativeProject } from "@/services/creative-project-ha
 import type { CreativeAgentRun } from "@/services/api/creative";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
-import { creativeAssetCardLayout } from "./creative-asset-layout";
+import { creativeAssetLayout } from "./creative-asset-layout";
+import { creativeConversationEntries, isMediaCreativeRound, type CreativeConversationEntry } from "./creative-conversation-rounds";
+import { CreativeMediaResult } from "./creative-media-result";
+import { formatCreativeMessageTime } from "./creative-result-presentation";
+import type { CreativeResultActionContext } from "./creative-result-switcher";
+import { creativeRunMode, creativeRunPresentation } from "./creative-run-presentation";
+import { CreativeVideoResult } from "./creative-video-result";
 
 export function CreativeMessages({
     messages,
@@ -36,11 +43,14 @@ export function CreativeMessages({
     onRetryRun,
     onRetrySubmission,
     onEditMessage,
+    onRepeatMessage,
+    busy,
     selectedAssetIds,
     onToggleAsset,
     hasOlder,
     olderLoading,
     onLoadOlder,
+    followLatest = true,
 }: {
     messages: CreativeMessage[];
     assets: CreativeAsset[];
@@ -53,16 +63,20 @@ export function CreativeMessages({
     onRetryTask: (runId: string, taskId: string) => void;
     onRetryRun: (runId: string) => void;
     onRetrySubmission: (messageId: string) => void;
-    onEditMessage: (message: CreativeMessage) => void;
+    onEditMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
+    onRepeatMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
+    busy: boolean;
     selectedAssetIds: string[];
     onToggleAsset: (id: string) => void;
     hasOlder?: boolean;
     olderLoading?: boolean;
     onLoadOlder?: () => void;
+    followLatest?: boolean;
 }) {
     const endRef = useRef<HTMLDivElement>(null);
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
     const user = usePublicSessionStore((state) => state.payload?.user || null);
+    const models = useCreativeAgentModels();
     const avatarUrl = user?.avatarUrl?.trim();
     const avatarFallback = userAvatarFallback(user?.displayName || user?.username || "用户");
     const assetsByMessage = useMemo(() => {
@@ -75,15 +89,30 @@ export function CreativeMessages({
         return map;
     }, [assets]);
     const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets]);
+    const modelNames = useMemo(() => new Map(models.map((model) => [model.id, model.name])), [models]);
+    const entries = useMemo(() => creativeConversationEntries(messages, runDetails), [messages, runDetails]);
+    const lastMessageId = messages.at(-1)?.id;
+    const mediaRounds = useMemo(() => {
+        const byUserMessage = new Map<string, Extract<CreativeConversationEntry, { type: "round" }>>();
+        const assistantMessageIds = new Set<string>();
+        for (const entry of entries) {
+            if (entry.type !== "round") continue;
+            const outputAssets = assetsForAssistant(entry.assistant, assetsByMessage);
+            if (!isMediaCreativeRound(entry.run, outputAssets)) continue;
+            byUserMessage.set(entry.user.id, entry);
+            assistantMessageIds.add(entry.assistant.id);
+        }
+        return { byUserMessage, assistantMessageIds };
+    }, [assetsByMessage, entries]);
 
     useEffect(() => {
-        endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }, [assets.length, messages.at(-1)?.id]);
+        if (followLatest) endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    }, [assets.length, followLatest, lastMessageId]);
 
     if (loading) return <div className="grid flex-1 place-items-center text-sm text-stone-400">正在读取会话...</div>;
 
     return (
-        <div className="mx-auto w-full max-w-[1120px] space-y-3 px-3 pb-4 pt-6 sm:space-y-8 sm:px-8 sm:pb-10 sm:pt-20">
+        <div className="mx-auto w-full max-w-[1120px] space-y-3 px-3 pb-4 pt-5 sm:space-y-8 sm:px-8 sm:pb-10 sm:pt-7">
             {hasOlder ? (
                 <div className="flex justify-center">
                     <Button type="text" loading={olderLoading} onClick={onLoadOlder}>
@@ -92,27 +121,70 @@ export function CreativeMessages({
                 </div>
             ) : null}
             {messages.map((item) => {
+                const mediaRound = mediaRounds.byUserMessage.get(item.id);
+                if (mediaRound) {
+                    const referencedAssets = messageAssetIds(mediaRound.user).flatMap((id) => assetById.get(id) || []);
+                    const outputAssets = assetsForAssistant(mediaRound.assistant, assetsByMessage);
+                    return (
+                        <CreativeMediaRound
+                            key={mediaRound.id}
+                            userMessage={mediaRound.user}
+                            assistantMessage={mediaRound.assistant}
+                            referencedAssets={referencedAssets}
+                            outputAssets={outputAssets}
+                            run={mediaRound.run}
+                            modelNames={modelNames}
+                            projectLinks={projectLinks}
+                            projectErrors={projectErrors}
+                            materializingProjectId={materializingProjectId}
+                            onMaterializeProject={onMaterializeProject}
+                            onRetryTask={onRetryTask}
+                            onRetryRun={onRetryRun}
+                            onEditMessage={onEditMessage}
+                            onRepeatMessage={onRepeatMessage}
+                            busy={busy}
+                            selectedAssetIds={selectedAssetIds}
+                            onToggleAsset={onToggleAsset}
+                        />
+                    );
+                }
+                if (mediaRounds.assistantMessageIds.has(item.id)) return null;
                 const referencedAssets = item.role === "user" ? messageAssetIds(item).flatMap((id) => assetById.get(id) || []) : [];
                 const itemAssets = [...referencedAssets, ...(assetsByMessage.get(item.id) || []), ...(item.runId ? assetsByMessage.get(item.runId) || [] : [])].filter((asset, index, list) => list.findIndex((current) => current.id === asset.id) === index);
                 const handoff = isCreativeProjectHandoff(item.metadata.projectHandoff) ? item.metadata.projectHandoff : null;
                 const displayContent = formatAgentMessageText(item.content);
+                const textAssetContent = itemAssets
+                    .filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim())
+                    .map((asset) => asset.textContent!.trim())
+                    .join("\n\n");
                 const downloads = agentAssetDownloads(itemAssets);
                 const run = item.runId ? runDetails[item.runId] : undefined;
                 const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
                 return (
-                    <article key={item.id} className={cn("group/message flex items-start gap-3", item.role === "user" ? "justify-end" : "justify-start")}>
-                        {item.role === "assistant" ? (
-                            <span className="mt-1 grid size-7 shrink-0 place-items-center">
-                                <SiteLogo logoUrl={site.logoUrl} className="size-5" />
-                            </span>
-                        ) : null}
-                        <div className={cn("min-w-0", item.role === "user" ? "max-w-[85%] py-1" : "min-w-0 flex-1")}>
-                            {item.role === "user" && itemAssets.length ? <CreativeReferenceStrip assets={itemAssets} /> : null}
-                            <div className={cn("break-words text-[15px] leading-7", item.status === "failed" && "text-red-600 dark:text-red-300", item.status === "cancelled" && "text-stone-400")}>
-                                {item.role === "assistant" && item.status === "running" ? <LoaderCircle className="mr-2 inline size-4 animate-spin text-stone-400" /> : null}
-                                {item.role === "assistant" && item.status === "completed" ? <AgentMarkdown>{displayContent}</AgentMarkdown> : <span className="whitespace-pre-wrap">{displayContent}</span>}
-                            </div>
-                            {item.role !== "user" && itemAssets.length ? <CreativeAssetGrid assets={itemAssets} messageText={displayContent} selectedAssetIds={selectedAssetIds} onToggleAsset={onToggleAsset} /> : null}
+                    <article key={item.id} className={cn("group/message flex min-w-0 items-start gap-4 sm:gap-5", item.role === "user" ? "justify-end" : "justify-start")}>
+                        {item.role === "assistant" ? <CreativeAssistantAvatar className="mt-0" logoUrl={site.logoUrl} /> : null}
+                        <div className={cn("min-w-0", item.role === "user" ? "max-w-[520px] text-right" : "min-w-0 flex-1")}>
+                            {item.role === "user" && itemAssets.length ? <CreativeRoundReferenceStrip assets={itemAssets} /> : null}
+                            {textAssetContent && item.role === "assistant" && item.status === "completed" ? null : (
+                                <div
+                                    className={cn(
+                                        "break-words text-[15px] leading-7",
+                                        item.role === "user" &&
+                                            "rounded-[14px] bg-[linear-gradient(135deg,#f3f1ff_0%,#ebeaff_100%)] px-[18px] py-3 text-left leading-6 text-[#111827] dark:bg-[linear-gradient(135deg,#2d2a46_0%,#26243a_100%)] dark:text-[#f3f5f7]",
+                                        item.status === "failed" && "text-red-600 dark:text-red-300",
+                                        item.status === "cancelled" && "text-stone-400",
+                                    )}
+                                >
+                                    {item.role === "assistant" && item.status === "running" ? <LoaderCircle className="mr-2 inline size-4 animate-spin text-stone-400" /> : null}
+                                    {item.role === "assistant" && item.status === "completed" ? <AgentMarkdown>{displayContent}</AgentMarkdown> : <span className="whitespace-pre-wrap">{displayContent}</span>}
+                                </div>
+                            )}
+                            {item.role === "user" ? (
+                                <time className="mt-1.5 block pr-1 text-[11px] leading-4 text-[#98a2b3] dark:text-[#7f8996]" dateTime={new Date(item.createdAt).toISOString()}>
+                                    {formatCreativeMessageTime(item.createdAt)}
+                                </time>
+                            ) : null}
+                            {item.role !== "user" && itemAssets.length ? <CreativeAssetResults assets={itemAssets} messageText={displayContent} selectedAssetIds={selectedAssetIds} onToggleAsset={onToggleAsset} /> : null}
                             {handoff ? (
                                 <ProjectHandoffAction
                                     handoff={handoff}
@@ -127,33 +199,369 @@ export function CreativeMessages({
                             {item.role === "assistant" && item.status === "failed" && !item.runId ? <FailedSubmissionAction onRetry={() => onRetrySubmission(item.id)} /> : null}
                             {item.status !== "running" ? (
                                 <AgentMessageActions
-                                    text={item.role === "assistant" && downloads.length ? "" : displayContent}
+                                    text={item.role === "assistant" ? textAssetContent || (downloads.length ? "" : displayContent) : displayContent}
                                     downloads={item.role === "assistant" && downloads.length ? [] : downloads}
                                     onEdit={item.role === "user" ? () => onEditMessage(item) : undefined}
                                     align={item.role === "user" ? "end" : "start"}
                                 />
                             ) : null}
                         </div>
-                        {item.role === "user" ? (
-                            <span className="mt-1 grid size-7 shrink-0 place-items-center overflow-hidden rounded-full" role="img" aria-label={user?.displayName || user?.username || "用户"}>
-                                {avatarUrl ? (
-                                    <img src={avatarUrl} alt="" className="size-full object-cover" referrerPolicy="no-referrer" />
-                                ) : (
-                                    <span
-                                        aria-hidden="true"
-                                        className="grid size-full place-items-center rounded-full bg-[#66758e] text-[10px] font-semibold leading-none text-white ring-1 ring-black/5 dark:bg-[#d8dee8] dark:text-[#252b33] dark:ring-white/10"
-                                    >
-                                        {avatarFallback}
-                                    </span>
-                                )}
-                            </span>
-                        ) : null}
+                        {item.role === "user" ? <CreativeUserAvatar className="mt-2 !size-8" avatarUrl={avatarUrl} fallback={avatarFallback} label={user?.displayName || user?.username || "用户"} /> : null}
                     </article>
                 );
             })}
             <div ref={endRef} className="h-36 sm:h-40" aria-hidden="true" />
         </div>
     );
+}
+
+function CreativeMediaRound({
+    userMessage,
+    assistantMessage,
+    referencedAssets,
+    outputAssets,
+    run,
+    modelNames,
+    projectLinks,
+    projectErrors,
+    materializingProjectId,
+    onMaterializeProject,
+    onRetryTask,
+    onRetryRun,
+    onEditMessage,
+    onRepeatMessage,
+    busy,
+    selectedAssetIds,
+    onToggleAsset,
+}: {
+    userMessage: CreativeMessage;
+    assistantMessage: CreativeMessage;
+    referencedAssets: CreativeAsset[];
+    outputAssets: CreativeAsset[];
+    run?: CreativeAgentRun;
+    modelNames: ReadonlyMap<string, string>;
+    projectLinks: Record<string, MaterializedCreativeProject>;
+    projectErrors: Record<string, string>;
+    materializingProjectId?: string;
+    onMaterializeProject: (handoff: CreativeProjectHandoff) => Promise<MaterializedCreativeProject>;
+    onRetryTask: (runId: string, taskId: string) => void;
+    onRetryRun: (runId: string) => void;
+    onEditMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
+    onRepeatMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
+    busy: boolean;
+    selectedAssetIds: string[];
+    onToggleAsset: (id: string) => void;
+}) {
+    const siteLogoUrl = usePublicSessionStore((state) => state.payload?.settings?.site?.logoUrl || "/logo.svg");
+    const displayContent = formatAgentMessageText(assistantMessage.content);
+    const handoff = isCreativeProjectHandoff(assistantMessage.metadata.projectHandoff) ? assistantMessage.metadata.projectHandoff : null;
+    const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
+    const mediaOutputs = outputAssets.filter((asset) => asset.type !== "text" && assetUrl(asset));
+    const videoOutputs = mediaOutputs.filter((asset) => asset.type === "video");
+    const otherMediaOutputs = mediaOutputs.filter((asset) => asset.type !== "video");
+    const textOutputs = outputAssets.filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim());
+    const isFailedMediaRound = assistantMessage.status === "failed" && run?.status === "failed" && !mediaOutputs.length && !textOutputs.length;
+    const showAssistantText = Boolean(displayContent.trim()) && !(assistantMessage.status === "completed" && (mediaOutputs.length || textOutputs.length));
+    const mode = creativeRunMode(run);
+    const taskTitle = run?.tasks.find((task) => task.type === mode)?.title.trim();
+    const resultTitle = taskTitle?.startsWith("生成") ? `已为你${taskTitle}` : mode === "video" ? "已为你生成视频" : mode === "audio" ? "已为你生成音频" : "已为你生成图片";
+    const renderRoundActions = (activeAsset: CreativeAsset, context: CreativeResultActionContext) =>
+        activeAsset.status === "ready" ? (
+            <CreativeRoundActions
+                userMessage={userMessage}
+                outputAssets={outputAssets}
+                activeAsset={activeAsset}
+                preferredWidth={context.shellWidth}
+                run={run}
+                busy={busy}
+                selectedAssetIds={selectedAssetIds}
+                onEditMessage={onEditMessage}
+                onRepeatMessage={onRepeatMessage}
+                onToggleAsset={onToggleAsset}
+            />
+        ) : null;
+
+    return (
+        <section data-testid="creative-media-round" className="pb-8 sm:pb-11">
+            <div className="w-full min-w-0 space-y-5 sm:space-y-6">
+                <div data-testid="creative-round-request" className="ml-auto min-w-0 max-w-[640px] text-right lg:-mr-8">
+                    <div className="flex items-start justify-end gap-3">
+                        <div className="min-w-0 max-w-[520px]">
+                            {referencedAssets.length ? <CreativeRoundReferenceStrip assets={referencedAssets} /> : null}
+                            <p className="whitespace-pre-wrap break-words rounded-[14px] bg-[linear-gradient(135deg,#f3f1ff_0%,#ebeaff_100%)] px-[18px] py-3 text-left text-[15px] leading-6 text-[#111827] dark:bg-[linear-gradient(135deg,#2d2a46_0%,#26243a_100%)] dark:text-[#f3f5f7]">
+                                {userMessage.content}
+                            </p>
+                            <time className="mt-1.5 block pr-1 text-[11px] leading-4 text-[#98a2b3] dark:text-[#7f8996]" dateTime={new Date(userMessage.createdAt).toISOString()}>
+                                {formatCreativeMessageTime(userMessage.createdAt)}
+                            </time>
+                        </div>
+                        <CreativeUserAvatar className="mt-2 !size-8" />
+                    </div>
+                </div>
+
+                <div className="flex min-w-0 items-start gap-4 sm:gap-5">
+                    <CreativeAssistantAvatar logoUrl={siteLogoUrl} />
+                    <div className="min-w-0 flex-1">
+                        {!isFailedMediaRound ? (
+                            <>
+                                <div className="mb-2 flex min-w-0 items-center gap-3">
+                                    <h2 className="truncate text-[17px] font-semibold leading-7 text-[#1f2937] dark:text-[#f3f5f7]">{resultTitle}</h2>
+                                </div>
+                                <CreativeRunSummary run={run} modelNames={modelNames} time={assistantMessage.createdAt} />
+                            </>
+                        ) : null}
+                        <div data-testid="creative-result-group" className="mt-3 flex w-fit max-w-full flex-col items-start">
+                            {isFailedMediaRound ? (
+                                <CreativeGenerationFailure
+                                    message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent}
+                                    onRetry={failedTasks.length ? () => onRetryTask(run!.id, failedTasks[0]!.id) : () => onRetryRun(run!.id)}
+                                    retryLabel={failedTasks.length ? `重新分析${failedTasks[0]?.title ? ` ${failedTasks[0].title}` : ""}` : "重新分析本次请求"}
+                                />
+                            ) : showAssistantText ? (
+                                <div
+                                    className={cn(
+                                        "mb-3 max-w-[612px] break-words text-sm leading-6 text-[#75808c] dark:text-[#929ca8]",
+                                        assistantMessage.status === "failed" && "text-red-600 dark:text-red-300",
+                                        assistantMessage.status === "cancelled" && "text-[#8b949f] dark:text-[#7f8996]",
+                                    )}
+                                >
+                                    {assistantMessage.status === "running" ? <LoaderCircle className="mr-1.5 inline size-3.5 animate-spin text-[#8b949f]" /> : null}
+                                    {assistantMessage.status === "completed" ? <AgentMarkdown>{displayContent}</AgentMarkdown> : <span className="whitespace-pre-wrap">{displayContent}</span>}
+                                </div>
+                            ) : null}
+                            {textOutputs.length ? <CreativeAssetResults assets={textOutputs} messageText={displayContent} selectedAssetIds={selectedAssetIds} onToggleAsset={onToggleAsset} contained /> : null}
+                            {mode === "video" && videoOutputs.length ? (
+                                <>
+                                    <CreativeVideoResult
+                                        assets={videoOutputs}
+                                        message={assistantMessage}
+                                        fallbackResolution={run?.tasks.find((task) => task.type === "video")?.quality || run?.generationPreferences?.video?.quality}
+                                        fallbackRatio={run?.tasks.find((task) => task.type === "video")?.ratio || run?.generationPreferences?.video?.size}
+                                        renderActions={renderRoundActions}
+                                    />
+                                    {otherMediaOutputs.length ? (
+                                        <div className="mt-3">
+                                            <CreativeMediaResult assets={otherMediaOutputs} fallbackRatio={run?.tasks.find((task) => task.type === "image")?.ratio || run?.generationPreferences?.image?.size} />
+                                        </div>
+                                    ) : null}
+                                </>
+                            ) : mediaOutputs.length ? (
+                                <CreativeMediaResult assets={mediaOutputs} fallbackRatio={run?.tasks.find((task) => task.type === "image")?.ratio || run?.generationPreferences?.image?.size} renderActions={renderRoundActions} />
+                            ) : assistantMessage.status === "completed" && textOutputs.length ? (
+                                <CreativeRoundActions
+                                    userMessage={userMessage}
+                                    outputAssets={outputAssets}
+                                    preferredWidth={420}
+                                    run={run}
+                                    busy={busy}
+                                    selectedAssetIds={selectedAssetIds}
+                                    onEditMessage={onEditMessage}
+                                    onRepeatMessage={onRepeatMessage}
+                                    onToggleAsset={onToggleAsset}
+                                />
+                            ) : null}
+                        </div>
+                        {handoff ? (
+                            <ProjectHandoffAction
+                                handoff={handoff}
+                                project={projectLinks[handoff.id]}
+                                error={projectErrors[handoff.id]}
+                                loading={materializingProjectId === handoff.id}
+                                onMaterialize={() => void onMaterializeProject(handoff).catch(() => undefined)}
+                            />
+                        ) : null}
+                        {!isFailedMediaRound && run && failedTasks.length ? <FailedTaskActions run={run} onRetryTask={onRetryTask} /> : null}
+                        {assistantMessage.status === "failed" && run?.status === "failed" && !run.tasks.length ? <FailedPlanningAction onRetry={() => onRetryRun(run.id)} /> : null}
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+function CreativeRoundReferenceStrip({ assets }: { assets: CreativeAsset[] }) {
+    let imageIndex = 0;
+    return (
+        <div className="hide-scrollbar mb-2 ml-auto flex max-w-[176px] justify-end gap-1.5 overflow-x-auto pb-0.5" aria-label="本轮参考素材">
+            {assets.map((asset) => {
+                const url = assetUrl(asset);
+                if (!url || asset.type === "text") return null;
+                const label = asset.type === "image" ? imageReferenceLabel(imageIndex++) : asset.type === "video" ? "视频" : "音频";
+                return (
+                    <div
+                        key={asset.id}
+                        className="relative grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dde2e7] bg-[#eef1f4] text-[#697582] dark:border-[#3b424b] dark:bg-[#252a31] dark:text-[#aab2bc]"
+                        title={asset.title}
+                    >
+                        {asset.type === "image" ? <img src={imagePreviewUrl(url, 192)} alt={asset.title || "参考图"} loading="lazy" className="size-full object-cover" /> : null}
+                        {asset.type === "video" ? <Film className="size-5" aria-hidden /> : null}
+                        {asset.type === "audio" ? <FileAudio2 className="size-5" aria-hidden /> : null}
+                        <span className="absolute left-1 top-1 rounded-sm bg-black/68 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{label}</span>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function CreativeUserAvatar({ avatarUrl, fallback, label, className }: { avatarUrl?: string; fallback?: string; label?: string; className?: string }) {
+    const user = usePublicSessionStore((state) => state.payload?.user || null);
+    const resolvedAvatarUrl = avatarUrl ?? user?.avatarUrl?.trim();
+    const resolvedFallback = fallback ?? userAvatarFallback(user?.displayName || user?.username || "用户");
+    const resolvedLabel = label ?? user?.displayName ?? user?.username ?? "用户";
+    return (
+        <span data-testid="creative-user-avatar" className={cn("grid size-7 shrink-0 place-items-center overflow-hidden rounded-full", className)} role="img" aria-label={resolvedLabel}>
+            {resolvedAvatarUrl ? (
+                <img src={resolvedAvatarUrl} alt="" className="size-full object-cover" referrerPolicy="no-referrer" />
+            ) : (
+                <span aria-hidden="true" className="grid size-full place-items-center rounded-full bg-[#66758e] text-[10px] font-semibold leading-none text-white ring-1 ring-black/5 dark:bg-[#d8dee8] dark:text-[#252b33] dark:ring-white/10">
+                    {resolvedFallback}
+                </span>
+            )}
+        </span>
+    );
+}
+
+function CreativeAssistantAvatar({ logoUrl, className }: { logoUrl?: string; className?: string }) {
+    return (
+        <span
+            data-testid="creative-assistant-avatar"
+            className={cn("grid size-11 shrink-0 place-items-center rounded-full border border-[#b9b5ff] bg-white text-[#615cff] shadow-[0_4px_14px_rgba(97,92,255,0.08)] dark:border-[#514b81] dark:bg-[#1d2025]", className)}
+            aria-label="创作助手"
+        >
+            <SiteLogo logoUrl={logoUrl || "/logo.svg"} className="size-6" />
+        </span>
+    );
+}
+
+function CreativeRunSummary({ run, modelNames, time }: { run?: CreativeAgentRun; modelNames: ReadonlyMap<string, string>; time: number }) {
+    const items = creativeRunPresentation(run, modelNames);
+    if (!items.length) return null;
+    const mode = creativeRunMode(run);
+    return (
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-[#667085] dark:text-[#a0a9b4]" aria-label="本轮创作参数">
+            {items.map((item) => (
+                <span
+                    key={item.key}
+                    title={`${item.label}：${item.value}`}
+                    className={cn(
+                        "inline-flex h-6 max-w-[220px] items-center truncate rounded-md border border-[#e9ecf0] bg-white px-2 text-[11px] leading-none dark:border-[#343a43] dark:bg-[#1b1f24]",
+                        item.key === "mode" && mode === "image" && "border-[#ddd9ff] bg-[#f2f0ff] font-medium text-[#5c5fff] dark:border-[#4a4675] dark:bg-[#29263d] dark:text-[#aaa6ff]",
+                        item.key === "mode" && mode === "video" && "border-[#ddd9ff] bg-[#f2f0ff] font-medium text-[#5c5fff] dark:border-[#4a4675] dark:bg-[#29263d] dark:text-[#aaa6ff]",
+                        item.key === "mode" && mode === "audio" && "border-[#eadcf4] bg-[#faf4ff] font-medium text-[#8a66a8] dark:border-[#554364] dark:bg-[#302538] dark:text-[#cfafe6]",
+                    )}
+                >
+                    {item.value}
+                </span>
+            ))}
+            <time className="ml-1 text-[11px] text-[#98a2b3] dark:text-[#7f8996]" dateTime={new Date(time).toISOString()}>
+                {formatCreativeMessageTime(time)}
+            </time>
+            <Popover
+                trigger="click"
+                placement="bottomLeft"
+                arrow={false}
+                content={
+                    <div className="w-[min(280px,calc(100vw-56px))] py-1">
+                        <p className="mb-2 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">本轮创作详情</p>
+                        <dl className="space-y-2">
+                            {items.map((item) => (
+                                <div key={item.key} className="grid grid-cols-[64px_minmax(0,1fr)] gap-3 text-xs leading-5">
+                                    <dt className="text-[#8b949f] dark:text-[#7f8996]">{item.label}</dt>
+                                    <dd className="min-w-0 break-words text-[#3c4652] dark:text-[#d5dae0]">{item.value}</dd>
+                                </div>
+                            ))}
+                        </dl>
+                    </div>
+                }
+            >
+                <button
+                    type="button"
+                    className="inline-flex size-6 items-center justify-center rounded-md text-[#98a2b3] transition-colors duration-150 hover:bg-[#f4f5f7] hover:text-[#344054] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#615cff]/30 dark:text-[#7f8996] dark:hover:bg-[#252a31] dark:hover:text-white"
+                    aria-label="查看本轮创作详细信息"
+                >
+                    <Info className="size-3.5" />
+                </button>
+            </Popover>
+        </div>
+    );
+}
+
+function CreativeRoundActions({
+    userMessage,
+    outputAssets,
+    activeAsset,
+    preferredWidth,
+    run,
+    busy,
+    selectedAssetIds,
+    onEditMessage,
+    onRepeatMessage,
+    onToggleAsset,
+}: {
+    userMessage: CreativeMessage;
+    outputAssets: CreativeAsset[];
+    activeAsset?: CreativeAsset;
+    preferredWidth: number;
+    run?: CreativeAgentRun;
+    busy: boolean;
+    selectedAssetIds: string[];
+    onEditMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
+    onRepeatMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
+    onToggleAsset: (id: string) => void;
+}) {
+    const copyText = useCopyText();
+    const downloads = agentAssetDownloads(activeAsset ? [activeAsset] : outputAssets);
+    const referenceAssets = outputAssets.filter((asset) => asset.status === "ready" && asset.type !== "text");
+    const allReferenced = Boolean(referenceAssets.length) && referenceAssets.every((asset) => selectedAssetIds.includes(asset.id));
+    const primaryDownload = downloads[0];
+    const mode = creativeRunMode(run);
+    const menuItems = [
+        { key: "copy", label: "复制原始需求", icon: <Copy className="size-4" /> },
+        ...(primaryDownload ? [{ key: "copy-link", label: "复制结果链接", icon: <Link2 className="size-4" /> }] : []),
+        ...(primaryDownload ? [{ key: "open", label: "在新窗口打开", icon: <ExternalLink className="size-4" /> }] : []),
+        ...(referenceAssets.length ? [{ key: "reference", label: allReferenced ? "取消引用本轮结果" : "引用本轮结果", icon: <Link2 className="size-4" /> }] : []),
+    ];
+    const actionClass =
+        "!flex !h-9 !min-w-0 !items-center !justify-center !gap-1.5 !rounded-lg !border !border-[#e4e7ec] !bg-white !px-2 !text-xs !font-medium !text-[#667085] !shadow-none hover:!border-[#d0d5dd] hover:!bg-[#f8f9fb] hover:!text-[#344054] disabled:!border-[#edf0f2] disabled:!bg-[#f8f9fa] disabled:!text-[#b3bac4] dark:!border-[#343a43] dark:!bg-[#181b20] dark:!text-[#aab2bc] dark:hover:!border-[#4a525c] dark:hover:!bg-[#22262c] dark:hover:!text-white dark:disabled:!border-[#2a2f36] dark:disabled:!bg-[#1a1d22] dark:disabled:!text-[#5f6873]";
+    return (
+        <div data-active-asset-id={activeAsset?.id} className="mt-2 grid max-w-full grid-cols-2 gap-2 min-[360px]:grid-cols-4" style={{ width: `${preferredWidth}px` }} aria-label="本轮创作操作">
+            <Button className={actionClass} icon={<Edit3 className="size-3.5" />} onClick={() => onEditMessage(userMessage, run)}>
+                重新编辑
+            </Button>
+            <Button disabled={busy} className={actionClass} icon={<RefreshCw className={cn("size-3.5", busy && "animate-spin")} />} onClick={() => onRepeatMessage(userMessage, run)}>
+                {busy ? "生成中" : "再次生成"}
+            </Button>
+            <Button
+                className={cn(actionClass, "!border-[#d8d6ff] !bg-[#f7f6ff] !text-[#5c5fff] hover:!border-[#c9c5ff] hover:!bg-[#f1efff] dark:!border-[#4b4775] dark:!bg-[#29263d] dark:!text-[#aaa6ff]")}
+                disabled={!downloads.length}
+                icon={<Download className="size-3.5" />}
+                onClick={() => downloadAgentMedia(downloads)}
+            >
+                {mode === "video" ? "下载视频" : "下载"}
+            </Button>
+            <Dropdown
+                trigger={["click"]}
+                menu={{
+                    items: menuItems,
+                    onClick: ({ key }) => {
+                        if (key === "copy") void copyText(userMessage.content, "需求已复制");
+                        if (key === "copy-link" && primaryDownload) void copyText(primaryDownload.url, "结果链接已复制");
+                        if (key === "open" && primaryDownload) window.open(primaryDownload.url, "_blank", "noopener,noreferrer");
+                        if (key === "reference") referenceAssets.forEach((asset) => (allReferenced === selectedAssetIds.includes(asset.id) ? onToggleAsset(asset.id) : undefined));
+                    },
+                }}
+            >
+                <Button className={actionClass} icon={<MoreHorizontal className="size-3.5" />} aria-label="更多本轮创作操作">
+                    更多 <ChevronDown className="size-3" />
+                </Button>
+            </Dropdown>
+        </div>
+    );
+}
+
+function assetsForAssistant(message: CreativeMessage, assetsByMessage: Map<string, CreativeAsset[]>) {
+    return [...(assetsByMessage.get(message.id) || []), ...(message.runId ? assetsByMessage.get(message.runId) || [] : [])].filter((asset, index, list) => list.findIndex((current) => current.id === asset.id) === index);
 }
 
 function FailedSubmissionAction({ onRetry }: { onRetry: () => void }) {
@@ -186,32 +594,26 @@ function FailedPlanningAction({ onRetry }: { onRetry: () => void }) {
             >
                 重新分析
             </Button>
-            <span className="text-xs text-stone-500 dark:text-stone-400">仅在你确认后重新请求</span>
         </div>
     );
 }
 
-function CreativeReferenceStrip({ assets }: { assets: CreativeAsset[] }) {
-    let imageIndex = 0;
+function CreativeGenerationFailure({ message, onRetry, retryLabel }: { message: string; onRetry: () => void; retryLabel: string }) {
+    const displayMessage = formatAgentMessageText(message) || "创作任务执行失败";
     return (
-        <div className="mb-1.5 flex max-w-full flex-wrap justify-end gap-1.5" aria-label="本轮参考素材">
-            {assets.map((asset) => {
-                const url = assetUrl(asset);
-                if (!url || asset.type === "text") return null;
-                const label = asset.type === "image" ? imageReferenceLabel(imageIndex++) : asset.type === "video" ? "视频" : "音频";
-                return (
-                    <div
-                        key={asset.id}
-                        className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-stone-200 bg-stone-100 text-stone-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300"
-                        title={asset.title}
-                    >
-                        {asset.type === "image" ? <img src={imagePreviewUrl(url, 192)} alt={asset.title || "参考图"} loading="lazy" className="size-full object-cover" /> : null}
-                        {asset.type === "video" ? <Film className="size-5" aria-hidden /> : null}
-                        {asset.type === "audio" ? <FileAudio2 className="size-5" aria-hidden /> : null}
-                        <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{label}</span>
-                    </div>
-                );
-            })}
+        <div data-testid="creative-generation-failure" className="max-w-[620px] py-1">
+            <div className="min-w-0">
+                <p className="break-words text-[17px] font-medium leading-7 text-[#ef2b2d] dark:text-[#ff8b8d]">{displayMessage}</p>
+                <Button
+                    type="default"
+                    className="!mt-3 !h-9 !rounded-[10px] !border-[#ffd4d5] !bg-white !px-4 !text-sm !font-medium !text-[#e22b2e] hover:!border-[#ffb7b8] hover:!bg-[#fff8f8] hover:!text-[#c51f22] dark:!border-[#6b3438] dark:!bg-transparent dark:!text-[#ff9a9c] dark:hover:!border-[#9a4a4e] dark:hover:!bg-[#321e20]"
+                    icon={<RotateCcw className="size-4" />}
+                    onClick={onRetry}
+                    aria-label={retryLabel}
+                >
+                    重新分析
+                </Button>
+            </div>
         </div>
     );
 }
@@ -273,87 +675,117 @@ function ProjectHandoffAction({ handoff, project, error, loading, onMaterialize 
     );
 }
 
-function CreativeAssetGrid({ assets, messageText, selectedAssetIds, onToggleAsset }: { assets: CreativeAsset[]; messageText: string; selectedAssetIds: string[]; onToggleAsset: (id: string) => void }) {
+function CreativeAssetResults({
+    assets,
+    messageText,
+    selectedAssetIds,
+    onToggleAsset,
+    showItemActions = true,
+    contained = false,
+}: {
+    assets: CreativeAsset[];
+    messageText: string;
+    selectedAssetIds: string[];
+    onToggleAsset: (id: string) => void;
+    showItemActions?: boolean;
+    contained?: boolean;
+}) {
     const [loadedDimensions, setLoadedDimensions] = useState<Record<string, { width: number; height: number }>>({});
     const copyText = useCopyText();
+    const textAssets = assets.filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim());
     const media = assets.filter((asset) => asset.type !== "text" && assetUrl(asset));
     const updateDimensions = useCallback((id: string, width: number, height: number) => {
         if (width <= 0 || height <= 0) return;
         setLoadedDimensions((current) => (current[id]?.width === width && current[id]?.height === height ? current : { ...current, [id]: { width, height } }));
     }, []);
-    if (!media.length) return null;
+    if (!textAssets.length && !media.length) return null;
     return (
-        <div className="mt-3 flex w-full max-w-[1040px] flex-wrap items-start gap-2 sm:mt-4 sm:gap-3">
-            {media.map((asset) => {
-                const url = assetUrl(asset)!;
-                const selected = selectedAssetIds.includes(asset.id);
-                const layout = creativeAssetCardLayout(loadedDimensions[asset.id] || asset);
-                return (
-                    <div key={asset.id} style={layout?.card} className={cn("min-w-0 max-w-full flex-none", !layout && "w-[min(100%,240px)]")}>
-                        <figure className={cn("relative w-full overflow-hidden rounded-md", asset.type === "audio" && "border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900")}>
-                            {asset.type === "audio" ? (
-                                <div className="p-3 sm:p-4">
-                                    <AgentMediaPreview type={asset.type} url={url} title={asset.title || "生成音频"} />
-                                </div>
-                            ) : (
-                                <div style={layout?.media} className={cn("w-full overflow-hidden", !layout && asset.type === "video" && "aspect-video")}>
-                                    <AgentMediaPreview
-                                        type={asset.type}
-                                        url={url}
-                                        title={asset.title || (asset.type === "video" ? "生成视频" : "生成图片")}
-                                        className="size-full"
-                                        fit="contain"
-                                        onDimensions={(width, height) => updateDimensions(asset.id, width, height)}
-                                    />
-                                </div>
-                            )}
-                        </figure>
-                        {asset.type === "image" || asset.type === "video" ? (
-                            <div className="mt-1 flex min-h-8 items-center justify-end gap-0.5 text-stone-500 dark:text-stone-400">
-                                {asset.status === "ready" ? (
-                                    <Tooltip title={selected ? "取消引用" : "引用素材"}>
-                                        <button
-                                            type="button"
-                                            aria-label={selected ? "取消引用素材" : "引用素材"}
-                                            aria-pressed={selected}
-                                            className={cn(
-                                                "grid size-8 place-items-center text-current transition hover:text-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:text-white sm:size-7",
-                                                selected && "text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300",
-                                            )}
-                                            onClick={() => onToggleAsset(asset.id)}
-                                        >
-                                            {selected ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
-                                        </button>
-                                    </Tooltip>
-                                ) : null}
-                                <Tooltip title={asset.type === "video" ? "下载视频" : "下载图片"}>
-                                    <button
-                                        type="button"
-                                        aria-label={asset.type === "video" ? "下载视频" : "下载图片"}
-                                        className="grid size-8 place-items-center text-current transition hover:text-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:text-white sm:size-7"
-                                        onClick={() => downloadAgentMedia([agentAssetDownload(asset)])}
-                                    >
-                                        <Download className="size-3.5" />
-                                    </button>
-                                </Tooltip>
-                                {messageText.trim() ? (
-                                    <Tooltip title="复制消息">
-                                        <button
-                                            type="button"
-                                            aria-label="复制消息"
-                                            className="grid size-8 place-items-center text-current transition hover:text-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:text-white sm:size-7"
-                                            onClick={() => copyText(messageText, "消息已复制")}
-                                        >
-                                            <Copy className="size-3.5" />
-                                        </button>
-                                    </Tooltip>
+        <>
+            {textAssets.length ? (
+                <div className="mt-3 w-full max-w-[760px] space-y-5 sm:mt-4">
+                    {textAssets.map((asset, index) => (
+                        <section key={asset.id} aria-label={`文本产物：${asset.title || index + 1}`} className="min-w-0 border-l border-stone-200 pl-3.5 text-[15px] leading-7 dark:border-stone-700 sm:pl-4">
+                            <div className="mb-1.5 text-xs font-medium text-stone-500 dark:text-stone-400">{asset.title || `文本结果 ${index + 1}`}</div>
+                            <AgentMarkdown>{asset.textContent!.trim()}</AgentMarkdown>
+                        </section>
+                    ))}
+                </div>
+            ) : null}
+            {media.length ? (
+                <div className={cn("flex max-w-full flex-wrap items-start gap-2 sm:gap-3", contained ? "w-fit" : "mt-3 w-full max-w-[1040px] sm:mt-4", media.length > 1 && "max-w-[420px]")}>
+                    {media.map((asset) => {
+                        const url = assetUrl(asset)!;
+                        const selected = selectedAssetIds.includes(asset.id);
+                        const featured = media.length === 1 && (asset.type === "image" || asset.type === "video");
+                        const layout = creativeAssetLayout(loadedDimensions[asset.id] || asset, { variant: featured ? (asset.type === "video" ? "video-result" : "image-result") : "compact" });
+                        return (
+                            <div key={asset.id} style={layout?.container} className={cn("min-w-0 max-w-full flex-none", !layout && (featured ? "w-fit max-w-full" : "w-[min(100%,200px)]"), media.length > 1 && "max-[480px]:!w-[calc(50%-4px)]")}>
+                                <figure className={cn("relative w-full overflow-hidden rounded-md", asset.type === "audio" && "border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900")}>
+                                    {asset.type === "audio" ? (
+                                        <div className="p-3 sm:p-4">
+                                            <AgentMediaPreview type={asset.type} url={url} title={asset.title || "生成音频"} />
+                                        </div>
+                                    ) : (
+                                        <div style={layout?.media} className={cn("overflow-hidden", layout || asset.type === "video" ? "w-full" : "w-fit max-w-full", !layout && asset.type === "video" && "aspect-video")}>
+                                            <AgentMediaPreview
+                                                type={asset.type}
+                                                url={url}
+                                                title={asset.title || (asset.type === "video" ? "生成视频" : "生成图片")}
+                                                className={!layout && asset.type === "image" ? "w-fit max-w-full" : "size-full"}
+                                                fit={!layout && asset.type === "image" ? "intrinsic" : "contain"}
+                                                onDimensions={(width, height) => updateDimensions(asset.id, width, height)}
+                                            />
+                                        </div>
+                                    )}
+                                </figure>
+                                {showItemActions && (asset.type === "image" || asset.type === "video") ? (
+                                    <div className="mt-1 flex min-h-8 items-center justify-end gap-0.5 text-stone-500 dark:text-stone-400">
+                                        {asset.status === "ready" ? (
+                                            <Tooltip title={selected ? "取消引用" : "引用素材"}>
+                                                <button
+                                                    type="button"
+                                                    aria-label={selected ? "取消引用素材" : "引用素材"}
+                                                    aria-pressed={selected}
+                                                    className={cn(
+                                                        "grid size-8 place-items-center text-current transition hover:text-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:text-white sm:size-7",
+                                                        selected && "text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300",
+                                                    )}
+                                                    onClick={() => onToggleAsset(asset.id)}
+                                                >
+                                                    {selected ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
+                                                </button>
+                                            </Tooltip>
+                                        ) : null}
+                                        <Tooltip title={asset.type === "video" ? "下载视频" : "下载图片"}>
+                                            <button
+                                                type="button"
+                                                aria-label={asset.type === "video" ? "下载视频" : "下载图片"}
+                                                className="grid size-8 place-items-center text-current transition hover:text-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:text-white sm:size-7"
+                                                onClick={() => downloadAgentMedia([agentAssetDownload(asset)])}
+                                            >
+                                                <Download className="size-3.5" />
+                                            </button>
+                                        </Tooltip>
+                                        {messageText.trim() ? (
+                                            <Tooltip title="复制消息">
+                                                <button
+                                                    type="button"
+                                                    aria-label="复制消息"
+                                                    className="grid size-8 place-items-center text-current transition hover:text-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:text-white sm:size-7"
+                                                    onClick={() => copyText(messageText, "消息已复制")}
+                                                >
+                                                    <Copy className="size-3.5" />
+                                                </button>
+                                            </Tooltip>
+                                        ) : null}
+                                    </div>
                                 ) : null}
                             </div>
-                        ) : null}
-                    </div>
-                );
-            })}
-        </div>
+                        );
+                    })}
+                </div>
+            ) : null}
+        </>
     );
 }
 

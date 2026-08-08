@@ -1,5 +1,13 @@
-import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeConversationSource, type CreativeMessage, type CreativeProjectHandoff, type CreativeRunRequest } from "@/lib/creative-runtime-contract";
-import type { CreativeWorkbenchSessionDetail, CreativeWorkbenchSessionSummary, WorkbenchWorkspace } from "@/lib/workbench-session-contract";
+import {
+    isCreativeProjectHandoff,
+    type CreativeAsset,
+    type CreativeConversation,
+    type CreativeConversationSource,
+    type CreativeGenerationPreferences,
+    type CreativeMessage,
+    type CreativeProjectHandoff,
+    type CreativeRunRequest,
+} from "@/lib/creative-runtime-contract";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { stopIfClientSessionExpired, throwIfClientSessionExpired } from "@/services/api/session-expiration";
 
@@ -9,9 +17,28 @@ export type CreativeAgentRun = {
     inputMessageId: string;
     assistantMessageId: string;
     status: "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
+    prompt?: string;
+    referencedAssetIds?: string[];
+    selectedSkillIds?: string[];
+    requestedModelIds?: string[];
+    generationPreferences?: CreativeGenerationPreferences;
+    createdAt?: number;
     updatedAt?: number;
     assetIds: string[];
-    tasks: Array<{ id: string; title: string; status: "ready" | "running" | "completed" | "failed"; error?: string }>;
+    tasks: Array<{
+        id: string;
+        title: string;
+        type?: "text" | "image" | "video" | "audio";
+        model?: string;
+        ratio?: string;
+        quality?: string;
+        seconds?: number;
+        voice?: string;
+        format?: string;
+        count?: number;
+        status: "ready" | "running" | "completed" | "failed" | "cancelled";
+        error?: string;
+    }>;
 };
 
 type ApiResponse<T> = { code: number; data: T; msg: string };
@@ -23,17 +50,6 @@ export function listCreativeConversationPage(input: { source?: CreativeConversat
 
 export function listCreativeConversations(source: CreativeConversationSource = "agent") {
     return listCreativeConversationPage({ source, limit: 100 }).then((data) => data.conversations);
-}
-
-export function listCreativeWorkbenchSessions(workspace: WorkbenchWorkspace) {
-    const query = new URLSearchParams({ view: "workbench", workspace, limit: "100" });
-    return request<{ sessions: CreativeWorkbenchSessionSummary[]; hasMore: boolean }>(`/api/creative/conversations?${query}`).then((data) => data.sessions);
-}
-
-export function getCreativeWorkbenchSession(conversationId: string, workspace: WorkbenchWorkspace, beforeSequence?: number) {
-    const query = new URLSearchParams({ view: "workbench", workspace });
-    if (beforeSequence) query.set("beforeSequence", String(beforeSequence));
-    return request<{ session: CreativeWorkbenchSessionDetail }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}?${query}`).then((data) => data.session);
 }
 
 export function getCreativeConversation(conversationId: string) {

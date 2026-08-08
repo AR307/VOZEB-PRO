@@ -8,7 +8,7 @@ describe("workspace sidebar", () => {
 
         expect(shell).toContain("useState(false)");
         expect(shell).toContain("expanded={sidebarExpanded}");
-        expect(sidebar).toContain('expanded ? "w-56" : "w-[72px]"');
+        expect(sidebar).toContain('expanded ? "w-[236px]" : "w-[72px]"');
         expect(sidebar).toContain("hide-scrollbar min-h-0 flex-1 overflow-y-auto");
         expect(sidebar).not.toContain("thin-scrollbar min-h-0 flex-1 overflow-y-auto");
     });

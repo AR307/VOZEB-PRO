@@ -78,10 +78,33 @@ export async function createAudioTaskUpstreamStep(task: AudioTask, origin: strin
             }
             if (isProviderBusinessError(data)) throw new GenerationSubmissionSafeFailure(readProviderError(data) || "音频接口返回失败");
             const directUrl = readProviderString(data, config.advancedConfig?.resultField, AUDIO_KEYS);
-            if (directUrl) return { state: "result_ready", status: "completed", resultUrl: directUrl, ...billing };
+            if (directUrl) {
+                const submittedAt = Date.now();
+                await scheduleGenerationTask("audio", task.id, {
+                    executionPhase: "result_ready",
+                    channelId: config.channelId,
+                    provider: config.advancedConfig?.protocol || config.apiFormat,
+                    submittedAt,
+                    nextPollAt: submittedAt,
+                    lastUpstreamStatus: "completed",
+                    resultPayload: { url: directUrl },
+                });
+                return { state: "result_ready", status: "completed", resultUrl: directUrl, ...billing };
+            }
             const id = readProviderString(data, undefined, ID_KEYS);
             if (!id) throw new GenerationSubmissionUncertainError("音频接口没有返回音频或任务 ID，创建结果待确认");
             await updateAudioTask(task.id, { upstream: { id, createPath: path } });
+            const submittedAt = Date.now();
+            await scheduleGenerationTask("audio", task.id, {
+                executionPhase: "submitted",
+                upstreamTaskId: id,
+                channelId: config.channelId,
+                provider: config.advancedConfig?.protocol || config.apiFormat,
+                queryPath: config.advancedConfig?.queryPath,
+                submittedAt,
+                nextPollAt: submittedAt,
+                lastUpstreamStatus: "submitted",
+            });
             return { state: "pending", status: "submitted", upstreamTaskId: id, createPath: path, ...billing };
         } catch (error) {
             if (!(error instanceof GenerationSubmissionSafeFailure)) throw generationSubmissionUncertainError(error, "音频任务创建结果未知");

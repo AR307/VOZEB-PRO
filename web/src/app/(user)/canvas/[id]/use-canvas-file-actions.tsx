@@ -28,7 +28,6 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
         setSelectedConnectionId,
         setHoveredNodeId,
         setPendingConnectionCreate,
-        setSelectionBox,
         setContextMenu,
         setToolbarNodeId,
         setDialogNodeId,
@@ -39,7 +38,7 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
         nodesRef,
         selectedNodeIdsRef,
     } = state;
-    const { getCanvasCenter, setConnecting, deleteNodes, deleteConnection, copySelectedNodes, pasteCopiedNodes, undoCanvas, redoCanvas } = interactions;
+    const { getCanvasCenter, deleteNodes, deleteConnection, copySelectedNodes, pasteCopiedNodes, undoCanvas, redoCanvas } = interactions;
 
     const createImageFileNode = useCallback(async (file: File, position: Position, preserveSelection = false) => {
         const image = await uploadCanvasImage(file);
@@ -168,7 +167,6 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
                 setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
                 setSelectedConnectionId(null);
                 setContextMenu(null);
-                setSelectionBox(null);
                 return;
             }
 
@@ -196,8 +194,6 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
                 setSelectedNodeIds(new Set());
                 setSelectedConnectionId(null);
                 setContextMenu(null);
-                setSelectionBox(null);
-                setConnecting(null);
                 setHoveredNodeId(null);
                 setToolbarNodeId(null);
                 setDialogNodeId(null);
@@ -211,7 +207,7 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteConnection, deleteNodes, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas]);
+    }, [copySelectedNodes, deleteConnection, deleteNodes, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, undoCanvas]);
     return {
         createImageFileNode,
         createVideoFileNode,

@@ -144,7 +144,7 @@ export const adminHelpGuidance: Record<AdminHelpArticleId, AdminHelpGuidance> = 
             {
                 symptom: "Agent 文本正常，但图片或视频始终不可用",
                 cause: "只验证了默认文本模型，图片或视频逻辑模型没有可用绑定、默认值或对应计费规则。",
-                actions: ["分别在图片和视频工作台发起真实请求。", "确认逻辑类型、默认模型、上游绑定和积分规则四处使用同一逻辑模型 ID。"],
+                actions: ["在创作 Agent 中分别发起图片和视频真实请求。", "确认逻辑类型、默认模型、上游绑定和积分规则四处使用同一逻辑模型 ID。"],
             },
         ],
     },

@@ -20,6 +20,9 @@ import type { CanvasInteractionCore } from "./use-canvas-interaction-core";
 export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; core: CanvasInteractionCore }) {
     const {
         clipboardRef,
+        projectId,
+        updateProject,
+        flushProjectSave,
         effectiveConfig,
         nodes,
         setNodes,
@@ -29,7 +32,6 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setSelectedNodeIds,
         setSelectedConnectionId,
         setHoveredNodeId,
-        setSelectionBox,
         setContextMenu,
         setRunningNodeId,
         setClearConfirmOpen,
@@ -134,7 +136,6 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setSelectedNodeIds(new Set());
         setSelectedConnectionId(null);
         setContextMenu(null);
-        setSelectionBox(null);
         setHoveredNodeId(null);
         setToolbarNodeId(null);
         setDialogNodeId(null);
@@ -144,6 +145,8 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
     const clearCanvas = useCallback(() => {
         setNodes([]);
         setConnections([]);
+        updateProject(projectId, { nodes: [], connections: [] });
+        void flushProjectSave(projectId);
         setInfoNodeId(null);
         setCropNodeId(null);
         setMaskEditNodeId(null);
@@ -152,7 +155,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setRunningNodeId(null);
         deselectCanvas();
         setClearConfirmOpen(false);
-    }, [deselectCanvas]);
+    }, [deselectCanvas, flushProjectSave, projectId, updateProject]);
 
     const duplicateNode = useCallback((nodeId: string) => {
         const source = nodesRef.current.find((node) => node.id === nodeId);

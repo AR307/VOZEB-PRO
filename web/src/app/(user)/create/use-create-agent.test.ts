@@ -3,6 +3,27 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("useCreateAgent submission retry", () => {
+    it("keeps newly selected files as local drafts until the user submits", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-agent.ts"), "utf8");
+        const draftStoreSource = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-draft-attachments-store.ts"), "utf8");
+        const uploadStart = source.indexOf("const uploadAttachments");
+        const materializeStart = source.indexOf("const materializeDraftAttachments", uploadStart);
+        const watchStart = source.indexOf("const watchRun", materializeStart);
+        const submitStart = source.indexOf("const submit =", watchStart);
+        const uploadSource = source.slice(uploadStart, materializeStart);
+        const materializeSource = source.slice(materializeStart, watchStart);
+        const submitSource = source.slice(submitStart, source.indexOf("const retrySubmission", submitStart));
+
+        expect(uploadSource).toContain("addDraftAttachments(files");
+        expect(uploadSource).not.toContain("ensureConversation");
+        expect(uploadSource).not.toContain("uploadCreativeAsset");
+        expect(draftStoreSource).toContain("URL.createObjectURL(file)");
+        expect(draftStoreSource).not.toContain("localStorage");
+        expect(materializeSource).toContain("await ensureConversation()");
+        expect(materializeSource).toContain("await uploadCreativeAsset(id, draft.file)");
+        expect(submitSource.indexOf("await materializeDraftAttachments(selectedIds)")).toBeLessThan(submitSource.indexOf("executeSubmission(snapshot)"));
+    });
+
     it("reuses the original request and keeps attachments on the original user message", async () => {
         const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-agent.ts"), "utf8");
         const executeStart = source.indexOf("const executeSubmission");
@@ -13,7 +34,9 @@ describe("useCreateAgent submission retry", () => {
         const retrySource = source.slice(retryStart, source.indexOf("const cancel", retryStart));
 
         expect(executeSource).toContain("clientRequestId: snapshot.clientRequestId");
+        expect(executeSource).toContain("preferences: snapshot.preferences");
         expect(submitSource).toContain("metadata: { assetIds }");
+        expect(submitSource).toContain("options?.assetIds || selectedAssetIdsWithDrafts");
         expect(submitSource).toContain("setSelectedAssetIds((current) => current.filter");
         expect(retrySource).toContain("failedSubmissionsRef.current.get(assistantMessageId)");
         expect(retrySource).toContain("executeSubmission(snapshot)");

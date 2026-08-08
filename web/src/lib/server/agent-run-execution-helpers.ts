@@ -29,8 +29,21 @@ export function taskReferences(task: AgentRunTask): AgentRunReference[] {
 
 export function mergeTaskReferences(current: AgentRunReference[], additions: AgentRunReference[]) {
     const references = new Map(current.map((item) => [`${item.type}:${item.url}`, item]));
-    additions.forEach((item) => references.set(`${item.type}:${item.url}`, item));
+    additions.forEach((item) => {
+        const key = `${item.type}:${item.url}`;
+        const existing = references.get(key);
+        if (!existing) {
+            references.set(key, item);
+            return;
+        }
+        const role = explicitVideoRole(existing.role) || explicitVideoRole(item.role) || existing.role || item.role;
+        references.set(key, { ...item, ...existing, ...(role ? { role } : {}) });
+    });
     return Array.from(references.values()).slice(0, 20);
+}
+
+function explicitVideoRole(role: AgentRunReference["role"]) {
+    return role === "first_frame" || role === "last_frame" ? role : undefined;
 }
 
 export function acceptsMediaReference(taskType: AgentRunTask["type"], assetType: CreativeAsset["type"]): assetType is "image" | "video" | "audio" {

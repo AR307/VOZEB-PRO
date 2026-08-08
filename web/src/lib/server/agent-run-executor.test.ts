@@ -300,7 +300,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.tasks[0].childTasks).toHaveLength(2);
     });
 
-    it("keeps successful assets and reports counts when a later image copy fails", async () => {
+    it("keeps successful assets and completes the run as partial when a later image copy fails", async () => {
         mocks.run = runWithTasks([{ ...imageTask("image-one"), count: 2 }]);
         mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
         mocks.registerCreativeAssets.mockImplementation(async (inputs: Array<Record<string, unknown>>) => inputs.map((input) => ({ ...input, id: `asset-${input.sourceTaskId}`, status: "ready", createdAt: 1, updatedAt: 1 })));
@@ -322,7 +322,9 @@ describe("executeAgentRun backend settings", () => {
             childTasks: [expect.objectContaining({ id: "child-1", status: "completed" }), expect.objectContaining({ id: "child-2", status: "failed", error: "第二张生成失败" })],
         });
         expect(mocks.run?.assetIds).toEqual(["asset-child-1"]);
-        expect(mocks.events.find((event) => event.type === "run.failed")?.data).toMatchObject({ message: expect.stringContaining("成功 1 张，失败 1 张") });
+        expect(mocks.run?.status).toBe("completed");
+        expect(mocks.events.find((event) => event.type === "run.completed")?.data).toMatchObject({ partial: true, assetIds: ["asset-child-1"], reply: expect.stringContaining("成功 1 张，失败 1 张") });
+        expect(mocks.events.some((event) => event.type === "run.failed")).toBe(false);
     });
 
     it("resumes only unfinished children after a multi-copy run restarts", async () => {
@@ -780,6 +782,56 @@ describe("executeAgentRun backend settings", () => {
         const videoCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/video-generation-tasks"));
         expect(JSON.parse(String(videoCall?.[1]?.body))).toMatchObject({ references: [{ type: "image", url: "https://cdn.example.com/dependency.png" }] });
         expect(mocks.run?.tasks[1]).toMatchObject({ status: "completed", referenceAssetId: "asset-0", references: [{ assetId: "asset-0", url: "https://cdn.example.com/dependency.png", type: "image" }] });
+    });
+
+    it("dispatches explicit video frame roles unchanged to the video route", async () => {
+        mocks.run = runFixture({
+            surface: "chat",
+            projectId: undefined,
+            status: "running",
+            reviewed: true,
+            tasks: [
+                {
+                    id: "video-frames",
+                    title: "首尾衔接视频",
+                    type: "video",
+                    model: "video-model",
+                    prompt: "自然运镜",
+                    count: 1,
+                    dependencies: [],
+                    status: "ready",
+                    attempts: 0,
+                    references: [
+                        { assetId: "first-image", type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" },
+                        { assetId: "last-image", type: "image", url: "https://cdn.example.com/last.png", role: "last_frame" },
+                    ],
+                },
+            ],
+        });
+        const nextSettings = settings("image-model", "image-channel") as unknown as {
+            defaultModels: { videoModel: string };
+            systemChannels: Array<Record<string, unknown>>;
+            logicalModels: Array<Record<string, unknown>>;
+        };
+        nextSettings.defaultModels.videoModel = "video-model";
+        nextSettings.systemChannels.push({ id: "video-channel", name: "视频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "video-secret", models: ["vendor/video-model"] });
+        nextSettings.logicalModels.push({ id: "video-model", name: "视频", capability: "video", enabled: true, bindings: [{ id: "video-binding", channelId: "video-channel", upstreamModel: "vendor/video-model", enabled: true, priority: 1 }] });
+        mocks.getAuthSettings.mockResolvedValue(nextSettings as never);
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST" && url.endsWith("/api/video-generation-tasks")) return Response.json({ task: { id: "child-video-frames" } });
+            if (url.endsWith("/api/video-tasks/child-video-frames")) return Response.json({ task: { status: "success", result: { remoteUrl: "https://cdn.example.com/result.mp4" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const videoCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/video-generation-tasks"));
+        expect(JSON.parse(String(videoCall?.[1]?.body))).toMatchObject({
+            references: [
+                { type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" },
+                { type: "image", url: "https://cdn.example.com/last.png", role: "last_frame" },
+            ],
+        });
     });
 
     it("passes drama project context to planning without creating canvas operations", async () => {

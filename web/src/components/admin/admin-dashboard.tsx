@@ -176,6 +176,8 @@ function AdminSectionLoading() {
 }
 
 export function AdminDashboard(props: AdminDashboardProps) {
+    const [hydrated, setHydrated] = useState(false);
+    useEffect(() => setHydrated(true), []);
     const controller = useAdminDashboardController(props);
     const {
         initialUsers,
@@ -408,7 +410,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
         nextSetupStep,
     } = controller;
     return (
-        <div className={`admin-mobile-safe admin-dashboard-shell min-h-dvh w-full min-w-0 ${desktopNavCollapsed ? "is-sidebar-collapsed" : ""}`}>
+        <div data-hydrated={hydrated ? "true" : "false"} className={`admin-mobile-safe admin-dashboard-shell min-h-dvh w-full min-w-0 ${desktopNavCollapsed ? "is-sidebar-collapsed" : ""}`}>
             {mobileNavOpen ? <button type="button" className="admin-section-nav-backdrop lg:hidden" aria-label="收起后台侧边栏" onClick={() => setMobileNavOpen(false)} /> : null}
             <AdminSectionNav
                 activeKey={activeSection}

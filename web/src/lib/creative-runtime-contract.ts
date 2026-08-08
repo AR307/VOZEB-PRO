@@ -1,3 +1,5 @@
+import { videoFrameAssetIds, type CreativeVideoReferenceMode } from "@/lib/video-reference-contract";
+
 export const creativeSurfaces = ["chat", "canvas", "drama"] as const;
 export type CreativeSurface = (typeof creativeSurfaces)[number];
 export const creativeConversationSources = ["agent", "image-workbench", "video-workbench", "canvas", "drama"] as const;
@@ -117,6 +119,21 @@ export type CreativeRunEvent = {
     createdAt: number;
 };
 
+export type CreativeGenerationMode = "image" | "video" | "audio";
+export type CreativeGenerationPreferences = {
+    mode?: CreativeGenerationMode;
+    image?: { size?: string; quality?: "auto" | "high" | "medium" | "low"; count?: number };
+    video?: {
+        size?: string;
+        quality?: string;
+        seconds?: number;
+        referenceMode?: CreativeVideoReferenceMode;
+        firstFrameAssetId?: string;
+        lastFrameAssetId?: string;
+    };
+    audio?: { voice?: string; format?: string };
+};
+
 export type CreativeRunRequest = {
     clientRequestId: string;
     surface: CreativeSurface;
@@ -127,6 +144,7 @@ export type CreativeRunRequest = {
     assetIds: string[];
     skillIds: string[];
     modelIds: string[];
+    preferences?: CreativeGenerationPreferences;
 };
 
 export class CreativeRuntimeInputError extends Error {
@@ -157,17 +175,86 @@ export function normalizeCreativeRunRequest(value: unknown): CreativeRunRequest 
     const assetIds = Array.from(new Set((Array.isArray(input.assetIds) ? input.assetIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
     const skillIds = Array.from(new Set((Array.isArray(input.skillIds) ? input.skillIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
     const modelIds = Array.from(new Set((Array.isArray(input.modelIds) ? input.modelIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
+    const preferences = normalizeCreativeGenerationPreferences(input.preferences);
     if (!clientRequestId) throw new CreativeRuntimeInputError("请求标识不能为空");
     if (!surface) throw new CreativeRuntimeInputError("创作入口不正确");
     if (!prompt) throw new CreativeRuntimeInputError("创作需求不能为空");
     if (assetIds.length > MAX_ASSETS) throw new CreativeRuntimeInputError(`一次最多引用 ${MAX_ASSETS} 个资产`);
     if (skillIds.length > MAX_SKILLS) throw new CreativeRuntimeInputError(`一次最多启用 ${MAX_SKILLS} 个 Skill`);
     if (modelIds.length > MAX_MODELS) throw new CreativeRuntimeInputError(`一次最多选择 ${MAX_MODELS} 个模型`);
+    if (videoFrameAssetIds(preferences?.video).some((id) => !assetIds.includes(id))) throw new CreativeRuntimeInputError("视频首尾帧必须来自本轮已选择的图片素材");
     if (surface === "chat" && (projectId || snapshot !== undefined)) throw new CreativeRuntimeInputError("普通对话不接受项目或快照");
     if (surface !== "chat" && !projectId) throw new CreativeRuntimeInputError(surface === "canvas" ? "画布标识不能为空" : "短剧项目标识不能为空");
     if (snapshot !== undefined && new TextEncoder().encode(JSON.stringify(snapshot)).length > MAX_SNAPSHOT_BYTES) throw new CreativeRuntimeInputError("当前项目快照过大", 413);
 
-    return { clientRequestId, surface, conversationId, projectId, prompt, snapshot, assetIds, skillIds, modelIds };
+    return { clientRequestId, surface, conversationId, projectId, prompt, snapshot, assetIds, skillIds, modelIds, ...(preferences ? { preferences } : {}) };
+}
+
+function normalizeCreativeGenerationPreferences(value: unknown): CreativeGenerationPreferences | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    const mode = input.mode === "image" || input.mode === "video" || input.mode === "audio" ? input.mode : undefined;
+    const image = normalizeImagePreferences(input.image);
+    const video = normalizeVideoPreferences(input.video);
+    const audio = normalizeAudioPreferences(input.audio);
+    if (!mode && !image && !video && !audio) return undefined;
+    return { ...(mode ? { mode } : {}), ...(image ? { image } : {}), ...(video ? { video } : {}), ...(audio ? { audio } : {}) };
+}
+
+function normalizeImagePreferences(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    const size = normalizePreferenceSize(input.size);
+    const quality: NonNullable<CreativeGenerationPreferences["image"]>["quality"] = input.quality === "auto" || input.quality === "high" || input.quality === "medium" || input.quality === "low" ? input.quality : undefined;
+    const count = Number(input.count);
+    const normalizedCount = Number.isInteger(count) && count > 0 ? Math.min(10, count) : undefined;
+    return size || quality || normalizedCount ? { ...(size ? { size } : {}), ...(quality ? { quality } : {}), ...(normalizedCount ? { count: normalizedCount } : {}) } : undefined;
+}
+
+function normalizeVideoPreferences(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    const size = normalizePreferenceSize(input.size);
+    const rawQuality = typeof input.quality === "string" ? input.quality.trim().toLowerCase().replace(/p$/, "") : "";
+    const quality = /^(?:auto|480|720|1080)$/.test(rawQuality) ? rawQuality : undefined;
+    const seconds = Number(input.seconds);
+    const referenceMode: CreativeVideoReferenceMode | undefined = input.referenceMode === "reference" || input.referenceMode === "first_frame" || input.referenceMode === "first_last" ? input.referenceMode : undefined;
+    const firstFrameAssetId = optionalText(input.firstFrameAssetId, MAX_ID);
+    const lastFrameAssetId = optionalText(input.lastFrameAssetId, MAX_ID);
+    if ((firstFrameAssetId || lastFrameAssetId) && !referenceMode) throw new CreativeRuntimeInputError("选择视频首尾帧时必须指定参考方式");
+    if (referenceMode === "reference" && (firstFrameAssetId || lastFrameAssetId)) throw new CreativeRuntimeInputError("智能参考模式不能保留首尾帧角色");
+    if (referenceMode === "first_frame" && !firstFrameAssetId) throw new CreativeRuntimeInputError("首帧模式需要选择首帧图片");
+    if (referenceMode === "first_last" && (!firstFrameAssetId || !lastFrameAssetId)) throw new CreativeRuntimeInputError("首尾帧模式需要同时选择首帧和尾帧图片");
+    if (firstFrameAssetId && lastFrameAssetId && firstFrameAssetId === lastFrameAssetId) throw new CreativeRuntimeInputError("首帧和尾帧不能使用同一张图片");
+    if (input.referenceMode !== undefined && !referenceMode) throw new CreativeRuntimeInputError("视频参考方式不正确");
+    return size || quality || (Number.isInteger(seconds) && seconds > 0) || referenceMode || firstFrameAssetId || lastFrameAssetId
+        ? {
+              ...(size ? { size } : {}),
+              ...(quality ? { quality } : {}),
+              ...(Number.isInteger(seconds) && seconds > 0 ? { seconds } : {}),
+              ...(referenceMode ? { referenceMode } : {}),
+              ...(firstFrameAssetId ? { firstFrameAssetId } : {}),
+              ...(lastFrameAssetId ? { lastFrameAssetId } : {}),
+          }
+        : undefined;
+}
+
+function normalizeAudioPreferences(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    const voice = optionalText(input.voice, 40);
+    const format = optionalText(input.format, 16);
+    return voice || format ? { ...(voice ? { voice } : {}), ...(format ? { format } : {}) } : undefined;
+}
+
+function normalizePreferenceSize(value: unknown) {
+    if (typeof value !== "string") return undefined;
+    const size = value.trim().replace(/[：；;]/g, ":");
+    if (!size || size === "auto") return size || undefined;
+    const dimensions = size.match(/^(\d+)\s*[x*×]\s*(\d+)$/i);
+    if (dimensions && Number(dimensions[1]) > 0 && Number(dimensions[2]) > 0) return `${Number(dimensions[1])}x${Number(dimensions[2])}`;
+    const ratio = size.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+    return ratio && Number(ratio[1]) > 0 && Number(ratio[2]) > 0 ? `${ratio[1]}:${ratio[2]}` : undefined;
 }
 
 export function normalizeCreativeSurface(value: unknown): CreativeSurface | null {

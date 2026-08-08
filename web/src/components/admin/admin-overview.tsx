@@ -62,7 +62,7 @@ export function AdminOverview({ stats, settingsSummary, walletSummary, billingSu
                 <UsageLinePanel items={operationsSummary.dailyCalls} loading={loading} onRefresh={onRefresh} />
             </div>
             <div className="grid gap-3 sm:gap-5 lg:grid-cols-2">
-                <CompactDonutPanel title="入口分布" description="查看调用来自画布、生图工作台或视频创作台。" items={operationsSummary.sourceDistribution} emptyText="暂无入口记录" totalLabel="入口请求" />
+                <CompactDonutPanel title="入口分布" description="查看调用来自创作 Agent、画布、短剧或其他生成入口。" items={operationsSummary.sourceDistribution} emptyText="暂无入口记录" totalLabel="入口请求" />
                 <CompactDonutPanel title="内容类型分布" description="对图片、视频等生成类型做运营观察。" items={operationsSummary.kindDistribution} emptyText="暂无类型记录" totalLabel="类型请求" />
             </div>
             <Panel>

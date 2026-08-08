@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button, Dropdown, Modal } from "antd";
-import { BookOpen, Bot, Images, Menu, Plus, Redo2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Bot, Check, Images, LoaderCircle, Menu, Plus, Redo2, RefreshCw, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
+import type { CanvasProjectSaveState } from "../stores/use-canvas-store";
 
 export function CanvasTopBar({
     title,
@@ -16,6 +17,8 @@ export function CanvasTopBar({
     onStartTitleEditing,
     onFinishTitleEditing,
     onCancelTitleEditing,
+    saveState,
+    onRetrySave,
     canUndo,
     canRedo,
     onWorkbench,
@@ -36,6 +39,8 @@ export function CanvasTopBar({
     onStartTitleEditing: () => void;
     onFinishTitleEditing: () => void;
     onCancelTitleEditing: () => void;
+    saveState?: CanvasProjectSaveState;
+    onRetrySave: () => void;
     canUndo: boolean;
     canRedo: boolean;
     onWorkbench: () => void;
@@ -132,54 +137,89 @@ export function CanvasTopBar({
                                 {title}
                             </button>
                         )}
+                        <CanvasSaveStatus state={saveState} onRetry={onRetrySave} />
                     </div>
                 </div>
 
                 <div className="canvas-topbar-actions pointer-events-auto flex min-w-0 items-center gap-1.5">
                     {compactAgentStatus ? <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} /> : null}
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} />
-                    <span className="canvas-topbar-divider h-6 w-px" style={{ background: theme.toolbar.border }} />
-                    <Button
-                        type="text"
-                        className="canvas-agent-button !font-medium"
-                        style={{
-                            background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel,
-                            borderColor: agentOpen ? theme.toolbar.activeBg : theme.toolbar.border,
-                            borderStyle: "solid",
-                            borderWidth: 1,
-                            borderRadius: 14,
-                            color: agentOpen ? theme.toolbar.activeText : theme.toolbar.item,
-                            height: 40,
-                            minHeight: 40,
-                            paddingInline: 12,
-                            boxShadow: colorTheme === "dark" ? "0 10px 30px rgba(0,0,0,.28)" : "0 10px 24px rgba(28,25,23,.08)",
-                        }}
-                        icon={<Bot className="size-4" />}
-                        onClick={onToggleAgent}
-                        aria-label="Agent 对话"
-                    >
-                        Agent 对话
-                    </Button>
+                    {!agentOpen ? (
+                        <>
+                            <span className="canvas-topbar-divider h-6 w-px" style={{ background: theme.toolbar.border }} />
+                            <Button
+                                type="text"
+                                className="canvas-agent-button !font-medium"
+                                style={{ color: theme.toolbar.item, height: 36, minHeight: 36, paddingInline: 8 }}
+                                icon={<Bot className="size-4" />}
+                                onClick={onToggleAgent}
+                                aria-label="Agent 对话"
+                            >
+                                Agent 对话
+                            </Button>
+                        </>
+                    ) : null}
                 </div>
             </div>
             <Modal title="快捷键" open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
                 <div className="space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
-                    <Shortcut keys={["拖动画布"]} value="平移视图" />
-                    <Shortcut keys={["滚轮"]} value="缩放画布" />
-                    <Shortcut keys={["缩放滑杆"]} value="精确调整缩放" />
-                    <Shortcut keys={["Ctrl / Cmd", "拖动"]} value="框选多个节点" />
-                    <Shortcut keys={["Shift / Ctrl / Cmd", "点击"]} value="追加选择节点" />
-                    <Shortcut keys={["Ctrl / Cmd", "A"]} value="全选节点" />
-                    <Shortcut keys={["Ctrl / Cmd", "C / V"]} value="复制 / 粘贴节点，或粘贴剪切板文本/图片" />
-                    <Shortcut keys={["Ctrl / Cmd", "Z"]} value="撤销" />
-                    <Shortcut keys={["Ctrl / Cmd", "Shift", "Z"]} value="重做" />
-                    <Shortcut keys={["Ctrl / Cmd", "Y"]} value="重做" />
-                    <Shortcut keys={["Delete / Backspace"]} value="删除选中" />
-                    <Shortcut keys={["Esc"]} value="取消选择并关闭浮层" />
-                    <Shortcut keys={["拖入图片/视频/音频"]} value="上传到画布" />
+                    <Shortcut keys={["拖动画布"]} value="平移视图" theme={theme} />
+                    <Shortcut keys={["滚轮"]} value="缩放画布" theme={theme} />
+                    <Shortcut keys={["缩放滑杆"]} value="精确调整缩放" theme={theme} />
+                    <Shortcut keys={["Ctrl / Cmd", "拖动"]} value="框选多个节点" theme={theme} />
+                    <Shortcut keys={["Shift / Ctrl / Cmd", "点击"]} value="追加选择节点" theme={theme} />
+                    <Shortcut keys={["Ctrl / Cmd", "A"]} value="全选节点" theme={theme} />
+                    <Shortcut keys={["Ctrl / Cmd", "C / V"]} value="复制 / 粘贴节点，或粘贴剪切板文本/图片" theme={theme} />
+                    <Shortcut keys={["Ctrl / Cmd", "Z"]} value="撤销" theme={theme} />
+                    <Shortcut keys={["Ctrl / Cmd", "Shift", "Z"]} value="重做" theme={theme} />
+                    <Shortcut keys={["Ctrl / Cmd", "Y"]} value="重做" theme={theme} />
+                    <Shortcut keys={["Delete / Backspace"]} value="删除选中" theme={theme} />
+                    <Shortcut keys={["Esc"]} value="取消选择并关闭浮层" theme={theme} />
+                    <Shortcut keys={["拖入图片/视频/音频"]} value="上传到画布" theme={theme} />
                 </div>
             </Modal>
         </>
+    );
+}
+
+function CanvasSaveStatus({ state, onRetry }: { state?: CanvasProjectSaveState; onRetry: () => void }) {
+    const theme = canvasThemes[useThemeStore((current) => current.theme)];
+    if (state?.status === "saving") {
+        return (
+            <span className="inline-flex shrink-0 items-center gap-1 text-xs" style={{ color: theme.node.muted }} aria-label="正在保存画布">
+                <LoaderCircle className="size-3.5 motion-safe:animate-spin" />
+                <span className="hidden sm:inline">保存中</span>
+            </span>
+        );
+    }
+    if (state?.status === "error") {
+        return (
+            <button type="button" className="inline-flex shrink-0 items-center gap-1 text-xs transition hover:opacity-70" style={{ color: theme.node.danger }} onClick={onRetry} title={state.message || "保存失败，点击重试"} aria-label="保存失败，点击重试">
+                <RefreshCw className="size-3.5" />
+                <span className="hidden sm:inline">保存失败</span>
+            </button>
+        );
+    }
+    if (state?.status === "conflict") {
+        return (
+            <button
+                type="button"
+                className="inline-flex shrink-0 items-center gap-1 text-xs transition hover:opacity-70"
+                style={{ color: theme.node.danger }}
+                onClick={onRetry}
+                title={state.message || "版本冲突，点击刷新"}
+                aria-label="画布版本冲突，点击刷新"
+            >
+                <RefreshCw className="size-3.5" />
+                <span className="hidden sm:inline">版本冲突</span>
+            </button>
+        );
+    }
+    return (
+        <span className="inline-flex shrink-0 items-center gap-1 text-xs" style={{ color: theme.node.muted }} aria-label="画布已保存">
+            <Check className="size-3.5" />
+            <span className="hidden sm:inline">已保存</span>
+        </span>
     );
 }
 
@@ -200,18 +240,18 @@ function CompactAgentStatus({ status, onClick }: { status: { connected: boolean;
     return (
         <button
             type="button"
-            className="flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium transition hover:opacity-85"
-            style={{ background: theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
+            className="flex h-9 min-w-0 items-center gap-2 rounded-lg px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
+            style={{ background: "transparent", color: theme.node.text }}
             onClick={onClick}
             title="打开本地 Codex 面板"
         >
             <span className="size-2 rounded-full" style={{ background: dotColor }} />
-            <span className="max-w-[180px] truncate">{label}</span>
+            <span className="max-w-[120px] truncate sm:max-w-[180px]">{label}</span>
         </button>
     );
 }
 
-function Shortcut({ keys, value }: { keys: string[]; value: string }) {
+function Shortcut({ keys, value, theme }: { keys: string[]; value: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     return (
         <div className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-6 rounded-lg px-1 py-1.5">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -220,7 +260,7 @@ function Shortcut({ keys, value }: { keys: string[]; value: string }) {
                         {index ? <span className="text-xs opacity-35">+</span> : null}
                         <kbd
                             className="min-w-9 rounded-md border px-2.5 py-1.5 text-center text-xs font-medium leading-none shadow-[inset_0_-1px_0_rgba(0,0,0,.08),0_1px_2px_rgba(0,0,0,.06)]"
-                            style={{ borderColor: "rgba(120,113,108,.28)", background: "linear-gradient(#fff, rgba(245,245,244,.92))", color: "rgb(68,64,60)" }}
+                            style={{ borderColor: theme.toolbar.border, background: theme.toolbar.itemHover, color: theme.toolbar.item }}
                         >
                             {key}
                         </kbd>

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     getCanvasProject: vi.fn(),
     listCanvasProjectSummaries: vi.fn(),
     updateCanvasProject: vi.fn(),
+    updateCanvasProjectMutationPatch: vi.fn(),
     deleteUserLocalMediaAssets: vi.fn(),
 }));
 
@@ -19,6 +20,7 @@ vi.mock("@/lib/server/canvas-project-store", () => ({
     getCanvasProject: mocks.getCanvasProject,
     listCanvasProjectSummaries: mocks.listCanvasProjectSummaries,
     updateCanvasProject: mocks.updateCanvasProject,
+    updateCanvasProjectMutationPatch: mocks.updateCanvasProjectMutationPatch,
 }));
 vi.mock("@/lib/server/creative-entity-deletion-store", () => ({
     deleteCanvasProjectAggregates: mocks.deleteCanvasProjectAggregates,
@@ -86,6 +88,68 @@ describe("canvas project service lifecycle", () => {
     it("rejects saves without a valid base version", async () => {
         await expect(updateCanvasProjectForUser("user-one", "canvas-one", { project: project() })).rejects.toMatchObject({ status: 400 });
         expect(mocks.getCanvasProject).not.toHaveBeenCalled();
+    });
+
+    it("applies a compact mutation and returns an idempotent save acknowledgement", async () => {
+        const current = project();
+        mocks.getCanvasProject.mockResolvedValue(current);
+        mocks.updateCanvasProjectMutationPatch.mockResolvedValue({ projectId: current.id, updatedAt: "2026-08-01T00:00:00.001Z", mutationId: "mutation-one" });
+
+        await expect(
+            updateCanvasProjectForUser("user-one", current.id, {
+                mutation: {
+                    mutationId: "mutation-one",
+                    baseUpdatedAt: current.updatedAt,
+                    title: "增量标题",
+                    viewport: { x: 12, y: 24, k: 0.05 },
+                },
+            }),
+        ).resolves.toMatchObject({ projectId: current.id, mutationId: "mutation-one" });
+
+        expect(mocks.updateCanvasProjectMutationPatch).toHaveBeenCalledWith("user-one", current.id, expect.objectContaining({ title: "增量标题", viewport: { x: 12, y: 24, k: 0.05 } }));
+        expect(mocks.updateCanvasProject).not.toHaveBeenCalled();
+    });
+
+    it("keeps only stable unique entity ids in compact upserts", async () => {
+        const current = project();
+        mocks.getCanvasProject.mockResolvedValue(current);
+        mocks.updateCanvasProjectMutationPatch.mockResolvedValue({ projectId: current.id, updatedAt: current.updatedAt, mutationId: "mutation-ids" });
+
+        await updateCanvasProjectForUser("user-one", current.id, {
+            mutation: {
+                mutationId: "mutation-ids",
+                baseUpdatedAt: current.updatedAt,
+                nodeUpserts: [{ id: "node-one", type: "text" }, { id: "node-one", type: "text", title: "latest" }, { id: "" }, { title: "missing-id" }],
+                connectionUpserts: [
+                    { id: "edge-one", fromNodeId: "node-one", toNodeId: "node-two" },
+                    { id: "edge-one", fromNodeId: "node-two", toNodeId: "node-three" },
+                ],
+            },
+        });
+
+        expect(mocks.updateCanvasProjectMutationPatch).toHaveBeenCalledWith(
+            "user-one",
+            current.id,
+            expect.objectContaining({
+                nodeUpserts: [{ id: "node-one", type: "text", title: "latest" }],
+                connectionUpserts: [{ id: "edge-one", fromNodeId: "node-two", toNodeId: "node-three" }],
+            }),
+        );
+    });
+
+    it("removes transient media payloads before compact persistence", async () => {
+        const current = project();
+        mocks.updateCanvasProjectMutationPatch.mockResolvedValue({ projectId: current.id, updatedAt: current.updatedAt, mutationId: "mutation-media" });
+
+        await updateCanvasProjectForUser("user-one", current.id, {
+            mutation: {
+                mutationId: "mutation-media",
+                baseUpdatedAt: current.updatedAt,
+                nodeUpserts: [{ id: "node-media", metadata: { content: "data:image/png;base64,AA==", preview: "blob:temporary" } }],
+            },
+        });
+
+        expect(mocks.updateCanvasProjectMutationPatch).toHaveBeenCalledWith("user-one", current.id, expect.objectContaining({ nodeUpserts: [{ id: "node-media", metadata: { content: "", preview: "" } }] }));
     });
 });
 

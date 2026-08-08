@@ -15,8 +15,6 @@ export type HomeSiteSettings = {
 
 export const HOME_NAVIGATION = [
     { label: "创作 Agent", href: "/create", protected: true },
-    { label: "图片工作台", href: "/image", protected: true },
-    { label: "视频工作台", href: "/video", protected: true },
     { label: "短剧制作", href: "/drama", protected: true },
     { label: "作品广场", href: "/gallery", protected: false },
     { label: "价格方案", href: "/billing", protected: true },

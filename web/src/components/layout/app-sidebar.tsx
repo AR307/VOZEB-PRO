@@ -1,33 +1,39 @@
 "use client";
 
-import { CircleHelp } from "lucide-react";
+import { ChevronRight, CircleHelp } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
+import { userAvatarFallback } from "@/lib/user-avatar";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: NavigationToolSlug; expanded: boolean }) {
     const pathname = usePathname();
     const router = useRouter();
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const user = usePublicSessionStore((state) => state.payload?.user || null);
+    const [workspaceUrl, setWorkspaceUrl] = useState("");
     const helpActive = pathname.startsWith("/help");
 
+    useEffect(() => setWorkspaceUrl(`${window.location.host}/canvas`), []);
+
     return (
-        <aside className={cn("hidden h-full shrink-0 flex-col border-r border-[#e8ebef] bg-white text-[#20242a] transition-[width] duration-200 lg:flex dark:border-[#292d33] dark:bg-[#111316] dark:text-[#f3f5f7]", expanded ? "w-56" : "w-[72px]")}>
-            <Link href="/create" className={cn("flex h-[60px] shrink-0 items-center border-b border-[#e8ebef] px-3 dark:border-[#292d33]", expanded ? "justify-start px-5" : "justify-center")} aria-label={site.title || "VOZEB PRO"}>
+        <aside className={cn("hidden h-full shrink-0 flex-col border-r border-[#eaecf0] bg-white text-[#111827] transition-[width] duration-200 lg:flex dark:border-[#292d33] dark:bg-[#111316] dark:text-[#f3f5f7]", expanded ? "w-[236px]" : "w-[72px]")}>
+            <Link href="/create" className={cn("flex h-16 shrink-0 items-center border-b border-[#eaecf0] px-3 dark:border-[#292d33]", expanded ? "justify-start px-5" : "justify-center")} aria-label={site.title || "VOZEB PRO"}>
                 <SiteLogo logoUrl={site.logoUrl} className="size-8" />
-                {expanded ? <span className="ml-3 min-w-0 truncate text-sm font-semibold">{site.title || "VOZEB PRO"}</span> : null}
+                {expanded ? <span className="ml-3 min-w-0 truncate text-[15px] font-semibold">{site.title || "VOZEB PRO"}</span> : null}
             </Link>
 
-            <nav className={cn("hide-scrollbar min-h-0 flex-1 overflow-y-auto py-4", expanded ? "px-3" : "px-2")} aria-label="工作空间导航">
+            <nav className={cn("hide-scrollbar min-h-0 flex-1 overflow-y-auto py-5", expanded ? "px-3" : "px-2")} aria-label="工作空间导航">
                 {navigationGroups.map((group, groupIndex) => {
                     const tools = navigationTools.filter((tool) => tool.group === group.id);
                     return (
-                        <div key={group.id} className={cn(groupIndex > 0 && "mt-5")}>
-                            {expanded ? <div className="mb-1 px-2 text-[11px] font-medium text-[#9aa2ad] dark:text-[#737d89]">{group.label}</div> : null}
+                        <div key={group.id} className={cn(groupIndex > 0 && "mt-[22px]")}>
+                            {expanded ? <div className="mb-1.5 px-2 text-xs font-normal text-[#98a2b3] dark:text-[#737d89]">{group.label}</div> : null}
                             <div className="space-y-1">
                                 {tools.map((tool) => {
                                     const Icon = tool.icon;
@@ -42,19 +48,19 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                                             onMouseEnter={() => router.prefetch(`/${tool.slug}`)}
                                             onFocus={() => router.prefetch(`/${tool.slug}`)}
                                             className={cn(
-                                                "group relative flex h-10 items-center rounded-lg px-2 text-sm font-medium transition",
+                                                "group relative flex h-[42px] items-center rounded-lg px-2 text-sm font-medium transition-colors duration-150",
                                                 expanded ? "justify-start gap-3 px-3" : "justify-center",
                                                 active
-                                                    ? "bg-[#f0f2f4] text-[#1d2127] dark:bg-[#22262c] dark:text-[#f3f5f7]"
+                                                    ? "bg-[#f5f4ff] text-[#111827] dark:bg-[#26243a] dark:text-[#f3f5f7]"
                                                     : primary
-                                                      ? "text-[#343b44] hover:bg-[#f3f5f7] dark:text-[#d4d9df] dark:hover:bg-[#20242a]"
-                                                      : "text-[#697381] hover:bg-[#f3f5f7] hover:text-[#20242a] dark:text-[#8f99a6] dark:hover:bg-[#20242a] dark:hover:text-[#f3f5f7]",
+                                                      ? "text-[#111827] hover:bg-[#f8f9fb] dark:text-[#d4d9df] dark:hover:bg-[#20242a]"
+                                                      : "text-[#111827] hover:bg-[#f8f9fb] dark:text-[#c7cdd5] dark:hover:bg-[#20242a] dark:hover:text-[#f3f5f7]",
                                             )}
                                             aria-current={active ? "page" : undefined}
                                         >
-                                            <Icon className="size-[18px] shrink-0" />
+                                            <Icon className={cn("size-[18px] shrink-0", active && "text-[#5965ff]")} />
                                             {expanded ? <span className="min-w-0 truncate">{tool.label}</span> : null}
-                                            {active ? <span className="absolute right-0 h-4 w-0.5 rounded-full bg-[#5d7fdb]" /> : null}
+                                            {active ? <span className="absolute right-2.5 h-[18px] w-0.5 rounded-full bg-[#5965ff]" /> : null}
                                         </Link>
                                     );
                                 })}
@@ -64,7 +70,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                 })}
             </nav>
 
-            <div className={cn("shrink-0 border-t border-[#e8ebef] dark:border-[#292d33]", expanded ? "p-3" : "p-2")}>
+            <div className={cn("shrink-0 border-t border-[#eaecf0] dark:border-[#292d33]", expanded ? "px-3 pb-3 pt-3.5" : "p-2")}>
                 <Link
                     href="/help"
                     prefetch
@@ -72,16 +78,28 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                     onMouseEnter={() => router.prefetch("/help")}
                     onFocus={() => router.prefetch("/help")}
                     className={cn(
-                        "relative flex h-10 items-center rounded-lg px-2 text-sm font-medium text-[#697381] transition hover:bg-[#f3f5f7] hover:text-[#20242a] dark:text-[#8f99a6] dark:hover:bg-[#20242a] dark:hover:text-[#f3f5f7]",
-                        expanded ? "justify-start gap-3 px-3" : "justify-center",
+                        "relative flex min-h-[46px] items-center rounded-lg px-2 text-sm font-medium text-[#111827] transition-colors duration-150 hover:bg-[#f8f9fb] dark:text-[#c7cdd5] dark:hover:bg-[#20242a] dark:hover:text-[#f3f5f7]",
+                        expanded ? "justify-start gap-3 px-2" : "justify-center",
                         helpActive && "bg-[#f0f2f4] text-[#1d2127] dark:bg-[#22262c] dark:text-[#f3f5f7]",
                     )}
                     aria-current={helpActive ? "page" : undefined}
                 >
-                    <CircleHelp className="size-[18px] shrink-0" />
-                    {expanded ? <span>帮助中心</span> : null}
-                    {helpActive ? <span className="absolute right-0 h-4 w-0.5 rounded-full bg-[#5d7fdb]" /> : null}
+                    {expanded ? (
+                        <>
+                            <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-full bg-[#17191d] text-xs font-semibold text-white dark:bg-[#e2e7ee] dark:text-[#20242a]">
+                                {user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="size-full object-cover" referrerPolicy="no-referrer" /> : userAvatarFallback(user?.displayName || user?.username || "N")}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                                <span className="block truncate">帮助中心</span>
+                            </span>
+                            <ChevronRight className="size-4 shrink-0 text-[#7f8995]" />
+                        </>
+                    ) : (
+                        <CircleHelp className="size-[18px] shrink-0" />
+                    )}
+                    {helpActive ? <span className="absolute right-0 h-4 w-0.5 rounded-full bg-[#5965ff]" /> : null}
                 </Link>
+                {expanded && workspaceUrl ? <div className="mt-1 truncate px-2 text-[11px] leading-4 text-[#8b95a2] dark:text-[#737d89]">{workspaceUrl}</div> : null}
             </div>
         </aside>
     );

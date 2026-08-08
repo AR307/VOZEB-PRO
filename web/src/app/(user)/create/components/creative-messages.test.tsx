@@ -28,6 +28,41 @@ describe("CreativeMessages", () => {
         expect(markup).not.toContain("**通用专业简历报告模板**");
     });
 
+    it("renders a text-only Agent asset as the full article with emoji", () => {
+        const message: CreativeMessage = {
+            id: "assistant-article",
+            conversationId: "conversation-one",
+            sequence: 2,
+            role: "assistant",
+            status: "completed",
+            content: "已完成 1 个创作任务。",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const asset: CreativeAsset = {
+            id: "article-one",
+            userId: "user-one",
+            conversationId: "conversation-one",
+            messageId: message.id,
+            ordinal: 0,
+            type: "text",
+            status: "ready",
+            title: "夏日新品推文",
+            textContent: "# 夏日新品\n\n今天也要保持好心情 😊❤️🚀",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderMessages(message, [asset]);
+
+        expect(markup).toContain('aria-label="文本产物：夏日新品推文"');
+        expect(markup).toContain("夏日新品推文");
+        expect(markup).toContain("今天也要保持好心情 😊❤️🚀");
+        expect(markup).toContain("<h1");
+        expect(markup).not.toContain("已完成 1 个创作任务。");
+    });
+
     it("renders current-turn reference images above the user message", () => {
         const message: CreativeMessage = {
             id: "user-message",
@@ -72,6 +107,8 @@ describe("CreativeMessages", () => {
                     onRetryRun={vi.fn()}
                     onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
+                    onRepeatMessage={vi.fn()}
+                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -82,7 +119,7 @@ describe("CreativeMessages", () => {
         expect(markup.indexOf('alt="人物参考图"')).toBeLessThan(markup.indexOf("把她换成白发"));
     });
 
-    it("keeps generated media compact without cropping it", () => {
+    it("renders a single generated media result as a large uncropped preview", () => {
         const message: CreativeMessage = {
             id: "message-one",
             conversationId: "conversation-one",
@@ -124,6 +161,8 @@ describe("CreativeMessages", () => {
                     onRetryRun={vi.fn()}
                     onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
+                    onRepeatMessage={vi.fn()}
+                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -132,7 +171,7 @@ describe("CreativeMessages", () => {
 
         expect(markup).toContain("max-w-[1040px]");
         expect(markup).toContain("flex-wrap");
-        expect(markup).toContain("w-[min(100%,240px)]");
+        expect(markup).toContain("width:420px");
         expect(markup).toContain("object-contain");
         expect(markup).toContain("!size-full object-contain");
         expect(markup).toContain("h-36 sm:h-40");
@@ -147,6 +186,182 @@ describe("CreativeMessages", () => {
         expect(markup).not.toContain(">引用素材<");
         expect(markup).not.toContain("border-stone-200 bg-stone-50");
         expect(markup).not.toContain("aspect-square");
+    });
+
+    it("keeps every media result in a compact wrapping group", () => {
+        const message: CreativeMessage = {
+            id: "message-many",
+            conversationId: "conversation-one",
+            sequence: 1,
+            role: "assistant",
+            status: "completed",
+            content: "图片已生成。",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const asset = {
+            id: "asset-one",
+            userId: "user-one",
+            conversationId: "conversation-one",
+            messageId: message.id,
+            ordinal: 0,
+            type: "image",
+            status: "ready",
+            title: "结果一",
+            serverUrl: "/generated/one.png",
+            width: 1920,
+            height: 1080,
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        } satisfies CreativeAsset;
+        const markup = renderMessages(message, [asset, { ...asset, id: "asset-two", ordinal: 1, title: "结果二", serverUrl: "/generated/two.png" }]);
+
+        expect(markup).toContain('alt="结果一"');
+        expect(markup).toContain('alt="结果二"');
+        expect(markup).toContain("max-w-[420px]");
+        expect(markup).toContain("width:200px");
+        expect(markup).toContain("max-[480px]:!w-[calc(50%-4px)]");
+        expect(markup).toContain('aria-label="下载图片"');
+    });
+
+    it("groups a media run into a request-first creative record with real actions", () => {
+        const userMessage: CreativeMessage = {
+            id: "user-video",
+            conversationId: "conversation-one",
+            runId: "run-video",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "让参考图自然动起来",
+            metadata: { assetIds: ["reference-one"] },
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const assistantMessage: CreativeMessage = {
+            id: "assistant-video",
+            conversationId: "conversation-one",
+            runId: "run-video",
+            sequence: 2,
+            role: "assistant",
+            status: "completed",
+            content: "视频已生成。",
+            metadata: {
+                generation: {
+                    coverUrl: "/video-cover.webp",
+                    resolution: "1080p",
+                    highlights: [
+                        { type: "visual", title: "视频亮点", description: ["电影级画面质感", "多场景转场流畅"] },
+                        { type: "rhythm", title: "镜头节奏", description: "开场铺垫 → 高潮展示 → 收尾" },
+                    ],
+                    scenes: [
+                        { id: "scene-one", index: 1, start: 0, end: 5, thumbnail: "/scene-one.webp", title: "云海开场" },
+                        { id: "scene-two", index: 2, start: 5, end: 10, thumbnail: "/scene-two.webp", title: "主角出场" },
+                    ],
+                },
+            },
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const reference = {
+            id: "reference-one",
+            userId: "user-one",
+            conversationId: "conversation-one",
+            sourceRunId: "upload",
+            ordinal: 0,
+            type: "image",
+            status: "ready",
+            title: "参考图",
+            serverUrl: "/reference.webp",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        } satisfies CreativeAsset;
+        const output = {
+            ...reference,
+            id: "video-one",
+            messageId: assistantMessage.id,
+            sourceRunId: "run-video",
+            type: "video",
+            title: "生成视频",
+            serverUrl: "/video.mp4",
+            width: 1920,
+            height: 1080,
+            durationMs: 10_000,
+        } satisfies CreativeAsset;
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[userMessage, assistantMessage]}
+                    assets={[reference, output]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "run-video": {
+                            id: "run-video",
+                            conversationId: "conversation-one",
+                            inputMessageId: userMessage.id,
+                            assistantMessageId: assistantMessage.id,
+                            status: "completed",
+                            requestedModelIds: ["seedance"],
+                            generationPreferences: { mode: "video", video: { size: "16:9", quality: "720P", seconds: 10 } },
+                            assetIds: [output.id],
+                            tasks: [{ id: "task-video", title: "生成视频", type: "video", model: "seedance", ratio: "16:9", quality: "720P", seconds: 10, status: "completed" }],
+                        },
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryTask={vi.fn()}
+                    onRetryRun={vi.fn()}
+                    onRetrySubmission={vi.fn()}
+                    onEditMessage={vi.fn()}
+                    onRepeatMessage={vi.fn()}
+                    busy={false}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+
+        expect(markup).toContain('data-testid="creative-media-round"');
+        expect(markup).toContain('data-testid="creative-round-request"');
+        expect(markup).toContain('data-testid="creative-user-avatar"');
+        expect(markup).toContain('data-testid="creative-result-group"');
+        expect(markup).toContain('data-testid="creative-video-result"');
+        expect(markup).toContain('data-testid="creative-video-player"');
+        expect(markup).toContain('data-results-count="1"');
+        expect(markup).toContain('data-rendered-width="520"');
+        expect(markup).toContain('data-rendered-height="293"');
+        expect(markup).toContain("space-y-5 sm:space-y-6");
+        expect(markup).toContain("max-w-[640px]");
+        expect(markup).toContain('aria-label="创作助手"');
+        expect(markup).toContain("text-right");
+        expect(markup).toContain("让参考图自然动起来");
+        expect(markup).toContain("已为你生成视频");
+        expect(markup).toContain('aria-label="本轮创作参数"');
+        expect(markup).toContain("视频生成");
+        expect(markup).toContain("16:9");
+        expect(markup).toContain("720P");
+        expect(markup).toContain("10秒");
+        expect(markup).toContain('aria-label="查看本轮创作详细信息"');
+        expect(markup).toContain("重新编辑");
+        expect(markup).toContain("再次生成");
+        expect(markup).toContain("下载视频");
+        expect(markup).toContain('aria-label="更多本轮创作操作"');
+        expect(markup).toContain('preload="metadata"');
+        expect(markup).toContain('aria-label="视频播放进度"');
+        expect(markup).toContain('aria-label="全屏播放"');
+        expect(markup).toContain("00:00 / 00:10");
+        expect(markup).not.toContain("视频已生成。");
+        expect(markup).not.toContain("更多生成结果");
+        expect(markup).not.toContain("视频亮点");
+        expect(markup).not.toContain("镜头分镜");
+        expect(markup).not.toContain("lg:grid-cols-[minmax(0,420px)_minmax(0,480px)]");
+        expect(markup).not.toContain("!bg-[#f0f2f4]");
+        expect(markup).not.toContain("shadow-[0_4px_16px_rgba(32,36,42,0.04)]");
     });
 
     it("offers an in-place retry for an initial submission failure", () => {
@@ -177,6 +392,8 @@ describe("CreativeMessages", () => {
                     onRetryRun={vi.fn()}
                     onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
+                    onRepeatMessage={vi.fn()}
+                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -226,6 +443,8 @@ describe("CreativeMessages", () => {
                     onRetryRun={vi.fn()}
                     onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
+                    onRepeatMessage={vi.fn()}
+                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -233,16 +452,119 @@ describe("CreativeMessages", () => {
         );
 
         expect(markup).toContain('aria-label="重新分析本次请求"');
-        expect(markup).toContain("仅在你确认后重新请求");
+        expect(markup).not.toContain("仅在你确认后重新请求");
+    });
+
+    it("keeps failed media feedback under the single assistant logo", () => {
+        const userMessage: CreativeMessage = {
+            id: "failed-user",
+            conversationId: "conversation-one",
+            runId: "failed-run",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "生成一段视频",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const assistantMessage: CreativeMessage = {
+            id: "failed-assistant",
+            conversationId: "conversation-one",
+            runId: "failed-run",
+            sequence: 2,
+            role: "assistant",
+            status: "failed",
+            content: "模型请求失败",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[userMessage, assistantMessage]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "failed-run": {
+                            id: "failed-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: userMessage.id,
+                            assistantMessageId: assistantMessage.id,
+                            status: "failed",
+                            generationPreferences: { mode: "video" },
+                            assetIds: [],
+                            tasks: [],
+                        },
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryTask={vi.fn()}
+                    onRetryRun={vi.fn()}
+                    onRetrySubmission={vi.fn()}
+                    onEditMessage={vi.fn()}
+                    onRepeatMessage={vi.fn()}
+                    busy={false}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+
+        expect(markup).toContain('data-testid="creative-generation-failure"');
+        expect((markup.match(/aria-label="创作助手"/g) || []).length).toBe(1);
+        expect((markup.match(/data-testid="creative-assistant-avatar"/g) || []).length).toBe(1);
+        const failureMarkup = markup.slice(markup.indexOf('data-testid="creative-generation-failure"'));
+        expect(failureMarkup).not.toContain("size-12");
+        expect(failureMarkup).not.toContain("Sparkles");
+    });
+
+    it("uses the same compact identity spacing for ordinary text messages", () => {
+        const markup = renderMessages(
+            {
+                id: "text-user",
+                conversationId: "conversation-one",
+                sequence: 1,
+                role: "user",
+                status: "completed",
+                content: "你做什么的",
+                metadata: {},
+                createdAt: 1,
+                updatedAt: 1,
+            },
+            [],
+            {
+                id: "text-assistant",
+                conversationId: "conversation-one",
+                sequence: 2,
+                role: "assistant",
+                status: "completed",
+                content: "我是创作助手。",
+                metadata: {},
+                createdAt: 2,
+                updatedAt: 2,
+            },
+        );
+
+        expect(markup).toContain('data-testid="creative-assistant-avatar"');
+        expect(markup).toContain("size-11");
+        expect(markup).toContain("!size-8");
+        expect(markup).toContain("rounded-[14px]");
+        expect(markup).toContain("bg-[linear-gradient(135deg,#f3f1ff_0%,#ebeaff_100%)]");
+        expect(markup).toContain("1970");
     });
 });
 
-function renderMessages(message: CreativeMessage) {
+function renderMessages(message: CreativeMessage, assets: CreativeAsset[] = [], ...additionalMessages: CreativeMessage[]) {
     return renderToStaticMarkup(
         <App>
             <CreativeMessages
-                messages={[message]}
-                assets={[]}
+                messages={[message, ...additionalMessages]}
+                assets={assets}
                 loading={false}
                 projectLinks={{}}
                 projectErrors={{}}
@@ -254,6 +576,8 @@ function renderMessages(message: CreativeMessage) {
                 onRetryRun={vi.fn()}
                 onRetrySubmission={vi.fn()}
                 onEditMessage={vi.fn()}
+                onRepeatMessage={vi.fn()}
+                busy={false}
                 selectedAssetIds={[]}
                 onToggleAsset={vi.fn()}
             />
