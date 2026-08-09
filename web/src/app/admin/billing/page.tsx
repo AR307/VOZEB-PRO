@@ -47,6 +47,7 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
                 planName: currentUser.planName,
                 hasActivePlan: currentUser.hasActivePlan,
                 pointsBalance: currentUser.pointsBalance,
+                mfaEnabled: currentUser.mfaEnabled,
             }}
         >
             <main className="admin-console-page app-scroll-page bg-white text-stone-950 dark:bg-stone-950 dark:text-stone-100">

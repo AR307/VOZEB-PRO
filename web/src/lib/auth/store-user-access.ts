@@ -8,6 +8,7 @@ import { assertInstallToken, InstallTokenError } from "@/lib/server/install-toke
 import { adjustPermanentPointsInAuthDb, adjustPermanentPointsInPostgresTransaction, walletClock } from "@/lib/server/points-wallet-service";
 import { bindReferralRelationshipAfterRegistration, normalizeReferralCode } from "@/lib/server/referral-service";
 import { createRegistrationPolicyConsent } from "@/lib/registration-consent";
+import { verifyAdminMfaForLogin } from "@/lib/server/admin-mfa-service";
 
 import { hashPassword, verifyPasswordWithDummy } from "./password";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
@@ -292,7 +293,7 @@ export async function createUserByAdmin(input: { username: string; email?: strin
     });
 }
 
-export async function authenticateUser(input: { username: string; password: string }) {
+export async function authenticateUser(input: { username: string; password: string; totpCode?: string }) {
     const account = normalizeUsername(input.username);
     const accountEmail = normalizeEmail(input.username);
     if (isPostgresDatabaseEnabled()) {
@@ -302,6 +303,7 @@ export async function authenticateUser(input: { username: string; password: stri
         const passwordMatches = await verifyPasswordWithDummy(input.password, user?.passwordHash);
         if (!user || !passwordMatches) throw new AuthInputError("用户名或密码不正确");
         if (user.status !== "active") throw new AuthInputError("账号已被禁用");
+        verifyAdminMfaForLogin(user, input.totpCode);
 
         const lastLoginAt = new Date().toISOString();
         await repos.users.update(user.id, { lastLoginAt });
@@ -315,6 +317,7 @@ export async function authenticateUser(input: { username: string; password: stri
     const passwordMatches = await verifyPasswordWithDummy(input.password, user?.passwordHash);
     if (!user || !passwordMatches) throw new AuthInputError("用户名或密码不正确");
     if (user.status !== "active") throw new AuthInputError("账号已被禁用");
+    verifyAdminMfaForLogin(user, input.totpCode);
 
     await mutateAuthDb((nextDb) => {
         const nextUser = nextDb.users.find((item) => item.id === user.id);

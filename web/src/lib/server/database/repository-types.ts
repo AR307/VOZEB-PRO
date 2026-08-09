@@ -52,6 +52,8 @@ export type UserRecord = {
     planId: string;
     pointsBalance: number;
     passwordHash: string;
+    mfaSecretCiphertext?: string;
+    mfaEnabledAt?: string;
     registrationConsent?: RegistrationPolicyConsent;
     lastLoginAt?: string;
     createdAt: string;

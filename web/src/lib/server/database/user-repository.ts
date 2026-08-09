@@ -37,9 +37,11 @@ function nonNegativeNumber(value: unknown) {
     return Number.isFinite(number) ? Math.max(0, number) : 0;
 }
 
-type UserUpdatePatch = Partial<Omit<UserRecord, "id" | "createdAt" | "updatedAt" | "email" | "avatarStorageKey">> & {
+type UserUpdatePatch = Partial<Omit<UserRecord, "id" | "createdAt" | "updatedAt" | "email" | "avatarStorageKey" | "mfaSecretCiphertext" | "mfaEnabledAt">> & {
     email?: string | null;
     avatarStorageKey?: string | null;
+    mfaSecretCiphertext?: string | null;
+    mfaEnabledAt?: string | null;
 };
 
 export class UsersRepository {
@@ -307,8 +309,8 @@ export class UsersRepository {
     async create(user: UserRecord) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             RETURNING *
             `,
             [
@@ -324,6 +326,8 @@ export class UsersRepository {
                 user.planId,
                 user.pointsBalance,
                 user.passwordHash,
+                user.mfaSecretCiphertext || null,
+                user.mfaEnabledAt || null,
                 user.registrationConsent?.termsVersion || null,
                 user.registrationConsent?.termsUrl || null,
                 user.registrationConsent?.privacyVersion || null,
@@ -340,8 +344,8 @@ export class UsersRepository {
     async createWithNextAccountId(user: Omit<UserRecord, "accountId">) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
-            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             RETURNING *
             `,
             [
@@ -356,6 +360,8 @@ export class UsersRepository {
                 user.planId,
                 user.pointsBalance,
                 user.passwordHash,
+                user.mfaSecretCiphertext || null,
+                user.mfaEnabledAt || null,
                 user.registrationConsent?.termsVersion || null,
                 user.registrationConsent?.termsUrl || null,
                 user.registrationConsent?.privacyVersion || null,
@@ -372,6 +378,8 @@ export class UsersRepository {
     async update(id: string, patch: UserUpdatePatch) {
         const hasEmail = Object.prototype.hasOwnProperty.call(patch, "email");
         const hasAvatarStorageKey = Object.prototype.hasOwnProperty.call(patch, "avatarStorageKey");
+        const hasMfaSecret = Object.prototype.hasOwnProperty.call(patch, "mfaSecretCiphertext");
+        const hasMfaEnabledAt = Object.prototype.hasOwnProperty.call(patch, "mfaEnabledAt");
         const result = await this.db.query(
             `
             UPDATE users SET
@@ -386,11 +394,32 @@ export class UsersRepository {
                 points_balance = COALESCE($12, points_balance),
                 password_hash = COALESCE($13, password_hash),
                 last_login_at = COALESCE($14, last_login_at),
+                mfa_secret_ciphertext = CASE WHEN $15::boolean THEN $16 ELSE mfa_secret_ciphertext END,
+                mfa_enabled_at = CASE WHEN $17::boolean THEN $18 ELSE mfa_enabled_at END,
                 updated_at = now()
             WHERE id = $1
             RETURNING *
             `,
-            [id, patch.username, hasEmail, patch.email ?? null, patch.displayName, patch.bio, hasAvatarStorageKey, patch.avatarStorageKey ?? null, patch.role, patch.status, patch.planId, patch.pointsBalance, patch.passwordHash, patch.lastLoginAt],
+            [
+                id,
+                patch.username,
+                hasEmail,
+                patch.email ?? null,
+                patch.displayName,
+                patch.bio,
+                hasAvatarStorageKey,
+                patch.avatarStorageKey ?? null,
+                patch.role,
+                patch.status,
+                patch.planId,
+                patch.pointsBalance,
+                patch.passwordHash,
+                patch.lastLoginAt,
+                hasMfaSecret,
+                patch.mfaSecretCiphertext ?? null,
+                hasMfaEnabledAt,
+                patch.mfaEnabledAt ?? null,
+            ],
         );
         return result.rows[0] ? mapUser(result.rows[0]) : null;
     }
@@ -417,6 +446,11 @@ export class SessionsRepository {
     async create(session: SessionRecord) {
         const result = await this.db.query("INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING *", [session.id, session.userId, session.tokenHash, session.createdAt, session.expiresAt]);
         return mapSession(result.rows[0]);
+    }
+
+    async deleteByUserIdExcept(userId: string, sessionId: string) {
+        const result = await this.db.query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2", [userId, sessionId]);
+        return result.rowCount || 0;
     }
 
     async getByTokenHash(tokenHash: string) {

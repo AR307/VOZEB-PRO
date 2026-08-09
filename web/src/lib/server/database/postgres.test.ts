@@ -101,6 +101,8 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("account_id bigint NOT NULL DEFAULT nextval('vozeb_pro_user_account_id_seq')");
         expect(ddl).toContain("terms_version text");
         expect(ddl).toContain("policy_accepted_at timestamptz");
+        expect(ddl).toContain("mfa_secret_ciphertext text");
+        expect(ddl).toContain("CONSTRAINT users_mfa_enabled_secret CHECK");
         expect(ddl).toContain("CONSTRAINT users_registration_consent_complete CHECK");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_users_account_id_idx ON vozeb_pro_users (account_id)");
         expect(ddl).toContain("webhook_secret_ciphertext text NOT NULL DEFAULT ''");

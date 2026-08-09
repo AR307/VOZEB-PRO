@@ -4,7 +4,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, ShieldCheck, UserRound } from "lucide-react";
 import { App, Button, Checkbox, Input } from "antd";
 
 import { SiteLogo } from "@/components/layout/site-logo";
@@ -54,6 +54,8 @@ export function AuthForm({
     const [emailCode, setEmailCode] = useState("");
     const [displayName, setDisplayName] = useState("");
     const [password, setPassword] = useState("");
+    const [totpCode, setTotpCode] = useState("");
+    const [mfaRequired, setMfaRequired] = useState(false);
     const [referralCode, setReferralCode] = useState(initialReferralCode);
     const [policyAccepted, setPolicyAccepted] = useState(false);
     const [submitting, setSubmitting] = useState(false);
@@ -76,13 +78,19 @@ export function AuthForm({
                     emailCode,
                     displayName,
                     password,
+                    totpCode: !isRegister && mfaRequired ? totpCode : undefined,
                     referralCode: isRegister && !firstUser ? referralCode : undefined,
                     referralSource,
                     policyAccepted: isRegister && !firstUser ? policyAccepted : undefined,
                     installToken: firstUser ? installToken.trim() : undefined,
                 }),
             });
-            const payload = (await response.json()) as { user?: LocalUser; error?: string };
+            const payload = (await response.json()) as { user?: LocalUser; error?: string; mfaRequired?: boolean };
+            if (!isRegister && payload.mfaRequired) {
+                setMfaRequired(true);
+                message.info("请输入身份验证器动态码");
+                return;
+            }
             if (!response.ok || !payload.user) throw new Error(payload.error || (isRegister ? "注册失败" : "登录失败"));
             setUser(payload.user);
             message.success(isRegister ? "注册成功" : "登录成功");
@@ -152,7 +160,11 @@ export function AuthForm({
                         size="large"
                         prefix={<UserRound className="size-4 text-stone-500" />}
                         value={username}
-                        onChange={(event) => setUsername(event.target.value)}
+                        onChange={(event) => {
+                            setUsername(event.target.value);
+                            setMfaRequired(false);
+                            setTotpCode("");
+                        }}
                         placeholder={isRegister ? "设置登录用户名" : "输入用户名或已绑定邮箱"}
                         autoComplete="username"
                         disabled={submitting || disabled}
@@ -223,13 +235,35 @@ export function AuthForm({
                         size="large"
                         prefix={<LockKeyhole className="size-4 text-stone-500" />}
                         value={password}
-                        onChange={(event) => setPassword(event.target.value)}
+                        onChange={(event) => {
+                            setPassword(event.target.value);
+                            setMfaRequired(false);
+                            setTotpCode("");
+                        }}
                         placeholder={isRegister ? "至少 8 位" : "请输入密码"}
                         autoComplete={isRegister ? "new-password" : "current-password"}
                         disabled={submitting || disabled}
                         required
                     />
                 </label>
+
+                {!isRegister && mfaRequired ? (
+                    <label className="block space-y-3">
+                        <span className="text-sm font-medium text-stone-700 dark:text-stone-200">动态验证码</span>
+                        <Input
+                            size="large"
+                            prefix={<ShieldCheck className="size-4 text-stone-500" />}
+                            value={totpCode}
+                            autoFocus
+                            autoComplete="one-time-code"
+                            inputMode="numeric"
+                            placeholder="输入身份验证器动态码"
+                            disabled={submitting}
+                            onChange={(event) => setTotpCode(event.target.value)}
+                            required
+                        />
+                    </label>
+                ) : null}
 
                 {isRegister && !firstUser ? (
                     <Checkbox checked={policyAccepted} disabled={submitting || disabled} onChange={(event) => setPolicyAccepted(event.target.checked)}>
@@ -257,7 +291,7 @@ export function AuthForm({
                     icon={<ArrowRight className="size-4" />}
                     iconPlacement="end"
                 >
-                    {firstUser ? "创建管理员并进入后台" : isRegister ? "注册并开始创作" : "登录并继续"}
+                    {firstUser ? "创建管理员并进入后台" : isRegister ? "注册并开始创作" : mfaRequired ? "验证并登录" : "登录并继续"}
                 </Button>
 
                 <div className="auth-switch-link pt-2 text-center text-sm text-stone-500 dark:text-stone-400">

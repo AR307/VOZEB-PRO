@@ -126,6 +126,8 @@ CREATE TABLE IF NOT EXISTS users (
     plan_id text NOT NULL DEFAULT 'free' REFERENCES entitlement_plans(id),
     points_balance numeric(18, 2) NOT NULL DEFAULT 0,
     password_hash text NOT NULL,
+    mfa_secret_ciphertext text,
+    mfa_enabled_at timestamptz,
     terms_version text,
     terms_url text,
     privacy_version text,
@@ -136,6 +138,7 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT users_role CHECK (role IN ('admin', 'user')),
     CONSTRAINT users_status CHECK (status IN ('active', 'disabled')),
+    CONSTRAINT users_mfa_enabled_secret CHECK (mfa_enabled_at IS NULL OR mfa_secret_ciphertext IS NOT NULL),
     CONSTRAINT users_registration_consent_complete CHECK (
         (terms_version IS NULL AND terms_url IS NULL AND privacy_version IS NULL AND privacy_url IS NULL AND policy_accepted_at IS NULL)
         OR
@@ -147,6 +150,8 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_storage_key text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS account_id bigint;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret_ciphertext text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled_at timestamptz;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_url text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_version text;
@@ -187,6 +192,9 @@ BEGIN
             OR
             (terms_version IS NOT NULL AND terms_url IS NOT NULL AND privacy_version IS NOT NULL AND privacy_url IS NOT NULL AND policy_accepted_at IS NOT NULL)
         );
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_mfa_enabled_secret') THEN
+        ALTER TABLE users ADD CONSTRAINT users_mfa_enabled_secret CHECK (mfa_enabled_at IS NULL OR mfa_secret_ciphertext IS NOT NULL);
     END IF;
 END;
 $$;

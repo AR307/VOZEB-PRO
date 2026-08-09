@@ -13,6 +13,18 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 `POST /api/auth/register` 的公开注册请求必须显式提交 `policyAccepted: true`。服务端不接受客户端提供协议版本，而是在创建用户的同一事务中读取当前站点条款/隐私链接与版本并保存同意时间；未同意时返回 `400`，管理员代建账号不会生成用户同意记录。首次安装管理员仍由一次性安装令牌保护，不属于公开注册协议流程。
 
+## 管理员 MFA
+
+`POST /api/auth/login` 保留现有兼容响应。管理员密码正确且已启用 MFA、但请求未提交 `totpCode` 时返回 `401` 与 `{ error, mfaRequired: true }`，此时不得创建 Session；普通用户和未启用 MFA 的管理员不进入该挑战。动态码错误仍返回 `401`，只有密码和 TOTP 都通过后才返回用户并设置 Session Cookie。
+
+`/api/auth/mfa` 使用 `{ code, data, msg }` 并统一设置 `Cache-Control: private, no-store`：
+
+- `POST`：当前管理员提交 `currentPassword`，验证后生成 TOTP Secret 与 `otpauth://` URI；Secret 只在本次设置响应中返回，服务器只保存加密密文。
+- `PATCH`：提交 `token`，在当前 Session 内验证并启用 MFA；保留当前 Session，撤销同一管理员的其他 Session。
+- `DELETE`：提交 `currentPassword` 与 `token`，验证后清除 MFA；保留当前 Session，撤销其他 Session。
+
+登录、设置、启用、关闭和失败操作写入脱敏审计；响应、日志和审计不得包含密码、Secret 或动态码。MFA 管理复用认证限流配置，不增加独立的固定重试或等待常数。
+
 促销与优惠券新增接口使用 `{ code, data, msg }`，其中成功时 `code = 0`，业务数据位于 `data`，失败时 `data = null` 且 HTTP 状态与 `code` 一致：
 
 - `GET /api/billing/coupons`、`POST /api/billing/coupons/claim`

@@ -489,6 +489,7 @@ function user(id: string) {
         planName: "免费",
         hasActivePlan: false,
         pointsBalance: 0,
+        mfaEnabled: false,
     };
 }
 

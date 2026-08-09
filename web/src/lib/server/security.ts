@@ -22,6 +22,8 @@ export type GenerationRateLimitType = "text" | "image" | "video" | "audio" | "ag
 export type AuthRateLimitDimension = "ip" | "account" | "device" | "global";
 export type AuthRateLimitResult = RateLimitResult & { dimension?: AuthRateLimitDimension };
 
+export const AUTH_LOGIN_RATE_LIMIT: RateLimitConfig = { maxRequests: 8, windowMs: 15 * 60 * 1000 };
+
 const generationRateLimits: Record<GenerationRateLimitType, RateLimitConfig> = {
     agent: { maxRequests: 10, windowMs: 60 * 1000 },
     image: { maxRequests: 20, windowMs: 60 * 1000 },

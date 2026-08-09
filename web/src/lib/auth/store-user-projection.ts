@@ -76,6 +76,7 @@ function buildPublicUser(user: StoredUser, plan: { id: string; name: string; has
         permanentPointsBalance: normalizePoints(wallet.permanentPoints, 0),
         dailyPointsBalance: Math.max(0, normalizePoints(wallet.dailyPoints, 0)),
         dailyPointsExpiresAt: wallet.dailyPointsExpiresAt,
+        mfaEnabled: Boolean(user.mfaEnabledAt && user.mfaSecretCiphertext),
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         lastLoginAt: user.lastLoginAt,

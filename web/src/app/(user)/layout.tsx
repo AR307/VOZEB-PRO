@@ -37,6 +37,7 @@ export default async function UserLayout({ children }: { children: ReactNode }) 
                 permanentPointsBalance: user.permanentPointsBalance,
                 dailyPointsBalance: user.dailyPointsBalance,
                 dailyPointsExpiresAt: user.dailyPointsExpiresAt,
+                mfaEnabled: user.mfaEnabled,
             }}
         >
             <AppWorkspaceShell>{children}</AppWorkspaceShell>

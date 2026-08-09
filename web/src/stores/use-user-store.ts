@@ -19,6 +19,7 @@ export type LocalUser = {
     permanentPointsBalance?: number;
     dailyPointsBalance?: number;
     dailyPointsExpiresAt?: string;
+    mfaEnabled: boolean;
 };
 
 type UserStore = {

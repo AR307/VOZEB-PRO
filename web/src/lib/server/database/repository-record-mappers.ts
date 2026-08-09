@@ -87,6 +87,8 @@ export function mapUser(row: Record<string, unknown>): UserRecord {
         planId: stringValue(row.plan_id),
         pointsBalance: numberValue(row.points_balance),
         passwordHash: stringValue(row.password_hash),
+        mfaSecretCiphertext: optionalString(row.mfa_secret_ciphertext),
+        mfaEnabledAt: optionalIso(row.mfa_enabled_at),
         registrationConsent: normalizeRegistrationPolicyConsent({
             termsVersion: row.terms_version,
             termsUrl: row.terms_url,

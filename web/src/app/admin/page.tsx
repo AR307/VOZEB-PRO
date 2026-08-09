@@ -43,6 +43,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                 planName: currentUser.planName,
                 hasActivePlan: currentUser.hasActivePlan,
                 pointsBalance: currentUser.pointsBalance,
+                mfaEnabled: currentUser.mfaEnabled,
             }}
         >
             <main className="admin-console-page app-scroll-page relative bg-white text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">

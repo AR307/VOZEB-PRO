@@ -13,6 +13,7 @@ import { downloadUserDataExport } from "@/services/api/user-data-export";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
 import { AccountDeletionPanel } from "./account-deletion-panel";
+import { AdminMfaPanel } from "./admin-mfa-panel";
 import { CouponWalletSection } from "./profile-coupon-wallet";
 import { ProfileReferralCenter } from "./profile-referral-center";
 
@@ -306,6 +307,8 @@ export default function ProfilePage() {
                                         onSendEmailCode={() => void sendEmailCode()}
                                         onSave={() => void saveEmail()}
                                     />
+
+                                    <AdminMfaPanel />
 
                                     <div className="max-w-xl space-y-4 border-t border-stone-200 pt-5 dark:border-stone-800">
                                         <div>

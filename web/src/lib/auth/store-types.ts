@@ -356,6 +356,7 @@ export type PublicUser = {
     permanentPointsBalance: number;
     dailyPointsBalance: number;
     dailyPointsExpiresAt: string;
+    mfaEnabled: boolean;
     createdAt: string;
     updatedAt: string;
     lastLoginAt?: string;
@@ -371,9 +372,11 @@ export type PublicUserSummary = {
     totalPointsBalance: number;
 };
 
-export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "hasActivePlan" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt"> & {
+export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "hasActivePlan" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt" | "mfaEnabled"> & {
     avatarStorageKey?: string;
     passwordHash: string;
+    mfaSecretCiphertext?: string;
+    mfaEnabledAt?: string;
     registrationConsent?: RegistrationPolicyConsent;
 };
 

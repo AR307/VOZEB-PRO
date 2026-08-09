@@ -4,6 +4,7 @@ import type { NextResponse } from "next/server";
 import { deleteSession, getPublicUsersByIds, getUserBySession, sessionMaxAgeSeconds, type AuthSettings, type PublicUser } from "./store";
 import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
+import { parseSessionCookie } from "./store-normalizers";
 
 const SESSION_COOKIE_NAME = "vozeb_pro_session";
 
@@ -25,6 +26,10 @@ export async function getCurrentUser(request?: Request) {
 
 export async function clearCurrentSession() {
     await deleteSession(await getSessionCookieValue());
+}
+
+export async function getCurrentSessionId() {
+    return parseSessionCookie(await getSessionCookieValue())?.id;
 }
 
 export function setSessionCookie(response: NextResponse, value: string, request?: Request) {
@@ -91,6 +96,7 @@ export function serializeCurrentUser(user: CurrentUser) {
         permanentPointsBalance: user.permanentPointsBalance,
         dailyPointsBalance: user.dailyPointsBalance,
         dailyPointsExpiresAt: user.dailyPointsExpiresAt,
+        mfaEnabled: user.mfaEnabled,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         lastLoginAt: user.lastLoginAt,
