@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { QueryExecutor } from "./postgres";
-import { UsersRepository } from "./user-repository";
+import { EmailCodesRepository, SessionsRepository, UsersRepository } from "./user-repository";
 
 describe("UsersRepository security fields", () => {
     it("persists and returns the accepted policy snapshot with a new account id", async () => {
@@ -38,6 +38,7 @@ describe("UsersRepository security fields", () => {
             displayName: "新用户",
             bio: "",
             role: "user",
+            adminPermissions: [],
             status: "active",
             planId: "free",
             pointsBalance: 0,
@@ -49,7 +50,7 @@ describe("UsersRepository security fields", () => {
 
         const [statement, values] = query.mock.calls[0];
         expect(statement).toContain("terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at");
-        expect(values?.slice(13, 18)).toEqual(["2.0", "/terms", "3.0", "/privacy", acceptedAt]);
+        expect(values?.slice(14, 19)).toEqual(["2.0", "/terms", "3.0", "/privacy", acceptedAt]);
         expect(user.registrationConsent).toEqual({ termsVersion: "2.0", termsUrl: "/terms", privacyVersion: "3.0", privacyUrl: "/privacy", acceptedAt });
     });
 
@@ -82,6 +83,7 @@ describe("UsersRepository security fields", () => {
             displayName: "管理员",
             bio: "",
             role: "admin",
+            adminPermissions: ["administrators.manage"],
             status: "active",
             planId: "free",
             pointsBalance: 0,
@@ -94,8 +96,32 @@ describe("UsersRepository security fields", () => {
         await repository.update("admin-one", { mfaSecretCiphertext: null, mfaEnabledAt: null });
 
         expect(query.mock.calls[0][0]).toContain("mfa_secret_ciphertext, mfa_enabled_at");
-        expect(query.mock.calls[0][1]?.slice(12, 14)).toEqual(["encrypted-secret", "2026-08-09T01:00:00.000Z"]);
-        expect(query.mock.calls[1][0]).toContain("mfa_secret_ciphertext = CASE WHEN $15::boolean");
-        expect(query.mock.calls[1][1]?.slice(14)).toEqual([true, null, true, null]);
+        expect(query.mock.calls[0][1]?.slice(13, 15)).toEqual(["encrypted-secret", "2026-08-09T01:00:00.000Z"]);
+        expect(query.mock.calls[1][0]).toContain("mfa_secret_ciphertext = CASE WHEN $17::boolean");
+        expect(query.mock.calls[1][1]?.slice(16)).toEqual([true, null, true, null]);
+    });
+});
+
+describe("technical expiry repositories", () => {
+    it("deletes expired sessions through a stable bounded candidate query", async () => {
+        const query = vi.fn(async (_statement: string, _values?: unknown[]) => ({ rows: [], rowCount: 2 }));
+        const now = new Date("2026-08-09T12:00:00.000Z");
+
+        await expect(new SessionsRepository({ query } as unknown as QueryExecutor).pruneExpired(now, 30)).resolves.toBe(2);
+
+        expect(query.mock.calls[0][0]).toContain("ORDER BY expires_at ASC, id ASC");
+        expect(query.mock.calls[0][0]).toContain("LIMIT $2");
+        expect(query.mock.calls[0][1]).toEqual([now.toISOString(), 30]);
+    });
+
+    it("deletes expired or consumed email codes through a stable bounded candidate query", async () => {
+        const query = vi.fn(async (_statement: string, _values?: unknown[]) => ({ rows: [], rowCount: 3 }));
+        const now = new Date("2026-08-09T12:00:00.000Z");
+
+        await expect(new EmailCodesRepository({ query } as unknown as QueryExecutor).pruneExpired(now, 40)).resolves.toBe(3);
+
+        expect(query.mock.calls[0][0]).toContain("expires_at <= $1 OR consumed_at IS NOT NULL");
+        expect(query.mock.calls[0][0]).toContain("ORDER BY COALESCE(consumed_at, expires_at) ASC, id ASC");
+        expect(query.mock.calls[0][1]).toEqual([now.toISOString(), 40]);
     });
 });

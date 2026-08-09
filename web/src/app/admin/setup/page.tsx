@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, Check, ChevronRight, Circle, Database, KeyRound,
 
 import { AuthUserHydrator } from "@/components/auth/auth-user-hydrator";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { hasAnyAdminPermission } from "@/lib/admin-permissions";
 import { getAdminSetupSummary, type AdminSetupAccent, type AdminSetupStepStatus } from "@/lib/server/admin-setup-status";
 import { getAuthenticatedPageAccess } from "@/lib/server/page-access";
 
@@ -26,7 +27,7 @@ export default async function AdminSetupPage() {
         redirect("/login?next=/admin/setup");
     }
     const currentUser = access.user;
-    if (currentUser.role !== "admin") redirect("/");
+    if (!hasAnyAdminPermission(currentUser, ["system.manage", "upstream.manage", "commerce.manage", "billing.manage"])) redirect("/");
 
     const setup = await getAdminSetupSummary();
     const nextStep = setup.steps.find((step) => step.status !== "done") || setup.steps[setup.steps.length - 1];
@@ -41,6 +42,7 @@ export default async function AdminSetupPage() {
                 displayName: currentUser.displayName,
                 bio: currentUser.bio,
                 role: currentUser.role,
+                adminPermissions: currentUser.adminPermissions,
                 status: currentUser.status,
                 planId: currentUser.planId,
                 planName: currentUser.planName,

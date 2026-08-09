@@ -428,7 +428,33 @@ describe("split Postgres repositories", () => {
         expect(sql).toContain("free_daily_points_enabled");
         expect(sql).not.toContain("daily_plan_points_enabled");
         expect(params[3]).toBe(false);
-        expect(params[16]).toBe(20);
+        expect(params[18]).toBe(20);
+    });
+
+    it("persists generation cost controls as structured settings", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const generationCostControl = { maxPointsPerTask: 2.5, dailyUserPointSpend: 20, dailyTotalPointSpend: 100 };
+        const { executor, query } = mockExecutor([[{ id: "default", generation_cost_control: generationCostControl, created_at: timestamp, updated_at: timestamp }]]);
+
+        const settings = await createPostgresRepositories(executor).settings.updateSettings({ generationCostControl });
+        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
+
+        expect(settings.generationCostControl).toEqual(generationCostControl);
+        expect(sql).toContain("generation_cost_control = COALESCE($9, generation_cost_control)");
+        expect(params[8]).toEqual(JSON.stringify(generationCostControl));
+    });
+
+    it("persists bounded technical data lifecycle settings", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const dataLifecycle = { cleanupExpiredSessions: true, cleanupExpiredEmailCodes: true, cleanupExpiredGenerationTasks: false, cleanupExpiredTemporaryMedia: true, maintenanceBatchSize: 80 };
+        const { executor, query } = mockExecutor([[{ id: "default", data_lifecycle: dataLifecycle, created_at: timestamp, updated_at: timestamp }]]);
+
+        const settings = await createPostgresRepositories(executor).settings.updateSettings({ dataLifecycle });
+        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
+
+        expect(settings.dataLifecycle).toEqual(dataLifecycle);
+        expect(sql).toContain("data_lifecycle = COALESCE($10, data_lifecycle)");
+        expect(params[9]).toEqual(JSON.stringify(dataLifecycle));
     });
 
     it("preserves the product list boolean contract", async () => {

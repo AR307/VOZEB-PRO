@@ -4,13 +4,11 @@ const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     getAuthSettings: vi.fn(),
     safeRecordAuditLog: vi.fn(async () => undefined),
-    verifyAdminSensitiveAction: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings, isAuthInputError: vi.fn(() => false) }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin" })), safeRecordAuditLog: mocks.safeRecordAuditLog }));
-vi.mock("@/lib/server/admin-mfa-service", () => ({ verifyAdminSensitiveAction: mocks.verifyAdminSensitiveAction }));
 
 import { POST } from "./route";
 
@@ -19,9 +17,8 @@ const savedChannel = { id: "saved", name: "已保存", apiKey: "test-secret-valu
 describe("admin channel API key route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["upstream.manage"] });
         mocks.getAuthSettings.mockResolvedValue({ systemChannels: [savedChannel] });
-        mocks.verifyAdminSensitiveAction.mockResolvedValue(undefined);
     });
 
     it("reveals one saved key only to an admin and disables response caching", async () => {
@@ -30,7 +27,6 @@ describe("admin channel API key route", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ apiKey: "test-secret-value" });
         expect(response.headers.get("cache-control")).toContain("no-store");
-        expect(mocks.verifyAdminSensitiveAction).toHaveBeenCalledWith("admin", { currentPassword: "admin-password", totpCode: "123456" });
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(
             expect.objectContaining({
                 action: "admin.settings.channel_api_key.view",
@@ -69,11 +65,7 @@ describe("admin channel API key route", () => {
 });
 
 function request() {
-    return new Request("http://localhost/api/admin/settings/channels/saved/api-key", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ currentPassword: "admin-password", totpCode: "123456" }),
-    });
+    return new Request("http://localhost/api/admin/settings/channels/saved/api-key", { method: "POST" });
 }
 
 function context(id: string) {

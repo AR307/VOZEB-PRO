@@ -68,6 +68,7 @@ function buildPublicUser(user: StoredUser, plan: { id: string; name: string; has
         bio: user.bio,
         avatarUrl: user.avatarStorageKey ? userAvatarUrl(user.id, user.updatedAt) : undefined,
         role: user.role,
+        adminPermissions: [...user.adminPermissions],
         status: user.status,
         planId: plan.id,
         planName: plan.name,

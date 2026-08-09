@@ -79,7 +79,6 @@ import {
     encryptAuthDbSecretsForStorage,
     decryptAuthSettingsSecrets,
     encryptAuthSettingsSecrets,
-    pruneExpiredSessions,
     resolveDefaultPlan,
     resolveUserPlan,
     assertEntitlementUsageAllowed,

@@ -1,21 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+    getCurrentUser: vi.fn(),
     getAuthSettings: vi.fn(),
     setAuthSettings: vi.fn(),
     safeRecordAuditLog: vi.fn(async () => undefined),
-    verifyAdminSensitiveAction: vi.fn(),
 }));
 
-vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin", role: "admin" })) }));
+vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/auth/store")>();
     return { ...actual, getAuthSettings: mocks.getAuthSettings, setAuthSettings: mocks.setAuthSettings };
 });
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin" })), safeRecordAuditLog: mocks.safeRecordAuditLog }));
-vi.mock("@/lib/server/admin-mfa-service", () => ({ verifyAdminSensitiveAction: mocks.verifyAdminSensitiveAction }));
 
-import { PATCH } from "./route";
+import { GET, PATCH } from "./route";
 
 const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
@@ -26,9 +25,9 @@ const savedSettings = {
 describe("admin settings model routing", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["system.manage", "billing.manage", "upstream.manage"] });
         mocks.getAuthSettings.mockResolvedValue(savedSettings);
         mocks.setAuthSettings.mockImplementation(async (patch) => ({ ...savedSettings, ...patch }));
-        mocks.verifyAdminSensitiveAction.mockResolvedValue(undefined);
     });
 
     it("saves a consistent channel, logical model, and default snapshot", async () => {
@@ -40,7 +39,6 @@ describe("admin settings model routing", () => {
             }),
         );
         expect(response.status).toBe(200);
-        expect(mocks.verifyAdminSensitiveAction).toHaveBeenCalledWith("admin", expect.objectContaining({ currentPassword: "admin-password", totpCode: "123456" }));
         expect(mocks.setAuthSettings).toHaveBeenCalledWith(
             expect.objectContaining({
                 systemChannels: [expect.objectContaining({ id: "one", apiKey: "saved-secret", webhookSecret: savedSettings.systemChannels[0].webhookSecret })],
@@ -93,8 +91,92 @@ describe("admin settings model routing", () => {
         expect(await response.json()).toEqual(expect.objectContaining({ error: expect.stringContaining("至少需要 32 个字符") }));
         expect(mocks.setAuthSettings).not.toHaveBeenCalled();
     });
+
+    it("accepts administrator-configured generation cost controls", async () => {
+        const generationCostControl = { maxPointsPerTask: 8.5, dailyUserPointSpend: 40, dailyTotalPointSpend: 200 };
+
+        const response = await PATCH(request({ generationCostControl }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith({ generationCostControl });
+        expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: { fields: ["generationCostControl"] } }));
+    });
+
+    it("accepts administrator-configured technical data lifecycle controls", async () => {
+        const dataLifecycle = { cleanupExpiredSessions: true, cleanupExpiredEmailCodes: true, cleanupExpiredGenerationTasks: false, cleanupExpiredTemporaryMedia: true, maintenanceBatchSize: 80 };
+
+        const response = await PATCH(request({ dataLifecycle }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith({ dataLifecycle });
+        expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: { fields: ["dataLifecycle"] } }));
+    });
+
+    it("allows a system administrator to save only system settings", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "system-admin", role: "admin", status: "active", adminPermissions: ["system.manage"] });
+        const dataLifecycle = { cleanupExpiredSessions: true, cleanupExpiredEmailCodes: true, cleanupExpiredGenerationTasks: true, cleanupExpiredTemporaryMedia: true, maintenanceBatchSize: 60 };
+
+        const response = await PATCH(request({ registrationEnabled: false, dataLifecycle }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith({ registrationEnabled: false, dataLifecycle });
+    });
+
+    it("allows an upstream administrator to save only generation settings", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "upstream-admin", role: "admin", status: "active", adminPermissions: ["upstream.manage"] });
+        const generationConcurrency = { agent: 2, image: 2, video: 1, audio: 2, text: 4, render: 1 };
+
+        const response = await PATCH(request({ generationConcurrency }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith({ generationConcurrency });
+    });
+
+    it("rejects a mixed settings patch when the administrator lacks one required duty", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "system-admin", role: "admin", status: "active", adminPermissions: ["system.manage"] });
+
+        const response = await PATCH(request({ registrationEnabled: false, generationConcurrency: { agent: 2 } }));
+
+        expect(response.status).toBe(403);
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
+    it("rejects accounts without an administrator duty before reading settings", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "user", role: "user", status: "active", adminPermissions: [] });
+
+        const response = await PATCH(request({ registrationEnabled: false }));
+
+        expect(response.status).toBe(403);
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
+    it("does not return full upstream configuration to a system-only administrator", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "system-admin", role: "admin", status: "active", adminPermissions: ["system.manage"] });
+
+        const response = await GET();
+        const payload = (await response.json()) as { settings: { systemChannels: Array<{ baseUrl: string; advancedConfig?: unknown }>; agentSkills: unknown[] } };
+
+        expect(response.status).toBe(200);
+        expect(payload.settings.systemChannels[0]).toMatchObject({ baseUrl: "" });
+        expect(payload.settings.systemChannels[0].advancedConfig).toBeUndefined();
+        expect(payload.settings.agentSkills).toEqual([]);
+    });
+
+    it("does not return system mail configuration to an upstream-only administrator", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "upstream-admin", role: "admin", status: "active", adminPermissions: ["upstream.manage"] });
+        mocks.getAuthSettings.mockResolvedValue({ ...savedSettings, mail: { provider: "SMTP", host: "smtp.internal", port: 465, secure: true, username: "admin", password: "mail-secret", fromEmail: "admin@example.com", fromName: "Admin" } });
+
+        const response = await GET();
+        const payload = (await response.json()) as { settings: { mail: { host: string; password: string } } };
+
+        expect(response.status).toBe(200);
+        expect(payload.settings.mail.host).not.toBe("smtp.internal");
+        expect(payload.settings.mail.password).toBe("");
+    });
 });
 
 function request(body: unknown) {
-    return new Request("http://localhost/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...(body as object), currentPassword: "admin-password", totpCode: "123456" }) });
+    return new Request("http://localhost/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }

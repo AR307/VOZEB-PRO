@@ -81,6 +81,7 @@ const baseUser = {
     displayName: "测试用户",
     bio: "",
     role: "user",
+    adminPermissions: [],
     status: "active",
     planId: "existing-plan",
     pointsBalance: 100,

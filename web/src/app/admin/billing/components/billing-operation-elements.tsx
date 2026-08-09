@@ -10,7 +10,6 @@ import { AlertTriangle, CheckCircle2, CircleDollarSign, Copy, CreditCard, FileTe
 import { DEFAULT_ALIPAY_PAYMENT_MODE, getAlipayPaymentModePresentation, type PaymentConfigRequirement, type PaymentConfigSummary, type PaymentProviderConfig, type PaymentProviderConfigField } from "@/lib/payment-config-types";
 import type { AdminBillingSummary as BillingSummary } from "@/lib/admin-billing-types";
 import type { BillingOrder, BillingOrderStatus, BillingProduct } from "@/services/api/billing";
-import { useAdminSensitiveAction } from "@/hooks/use-admin-sensitive-action";
 import { BillingReconciliationImport } from "./billing-reconciliation-import";
 
 export function ReconciliationPanel({ reconciliationIssues, summary, onImport }: { reconciliationIssues: number; summary: BillingSummary | null; onImport: () => void }) {
@@ -76,7 +75,6 @@ export function ProductFact({ label, value }: { label: string; value: string }) 
 
 export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh, onCopy }: { paymentConfig: PaymentConfigSummary | null; loading: boolean; embedded?: boolean; onRefresh: () => Promise<void> | void; onCopy: (value: string) => void }) {
     const { message } = App.useApp();
-    const { requestSensitiveAction, sensitiveActionModal } = useAdminSensitiveAction();
     const [form] = Form.useForm<Record<string, string | boolean>>();
     const providers = paymentConfig?.providers || [];
     const [activeProviderId, setActiveProviderId] = useState<PaymentProviderConfig["id"]>("stripe");
@@ -102,18 +100,12 @@ export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh
         if (!activeProvider) return;
         const value = await form.validateFields();
         const fieldValues = Object.fromEntries(activeProvider.fields.map((field) => [field.key, normalizePaymentFormValue(value[field.key])]));
-        const proof = await requestSensitiveAction({
-            title: "保存支付配置",
-            description: `将更新“${activeProvider.name}”的启用状态、商户信息与支付凭据。`,
-            confirmText: "验证并保存",
-        });
-        if (!proof) return;
         setSaving(true);
         try {
             const response = await fetch("/api/admin/billing/payment-config", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ providerId: activeProvider.id, enabled: value.enabled === true, values: fieldValues, ...proof }),
+                body: JSON.stringify({ providerId: activeProvider.id, enabled: value.enabled === true, values: fieldValues }),
             });
             const payload = (await response.json().catch(() => null)) as { error?: string } | null;
             if (!response.ok) throw new Error(payload?.error || "保存支付配置失败");
@@ -283,7 +275,6 @@ export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh
                     ) : null}
                 </div>
             </section>
-            {sensitiveActionModal}
         </>
     );
 }

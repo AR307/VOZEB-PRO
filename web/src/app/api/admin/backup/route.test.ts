@@ -6,15 +6,13 @@ const mocks = vi.hoisted(() => ({
     restoreAdminBackupData: vi.fn(),
     listDataDirectory: vi.fn(async () => []),
     audit: vi.fn(),
-    verifyAdminSensitiveAction: vi.fn(),
 }));
 
-vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin-one", role: "admin" })) }));
+vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["system.manage"] })) }));
 vi.mock("@/lib/auth/store-normalizers", () => ({ encryptAuthDbSecretsForStorage: vi.fn((value) => value) }));
 vi.mock("@/lib/server/admin-backup-policy", () => ({ mergeAuthBackupSecrets: mocks.mergeAuthBackupSecrets, sanitizeAuthBackup: vi.fn() }));
 vi.mock("@/lib/server/admin-backup-store", () => ({ readAdminBackupData: mocks.readAdminBackupData, restoreAdminBackupData: mocks.restoreAdminBackupData }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin-one" })), safeRecordAuditLog: mocks.audit }));
-vi.mock("@/lib/server/admin-mfa-service", () => ({ verifyAdminSensitiveAction: mocks.verifyAdminSensitiveAction }));
 vi.mock("@/lib/server/database", () => ({ getDatabaseProvider: vi.fn(() => "file") }));
 vi.mock("@/lib/server/data-adapter", () => ({
     copyDataFile: vi.fn(),
@@ -30,7 +28,6 @@ import { POST } from "./route";
 describe("POST /api/admin/backup", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.verifyAdminSensitiveAction.mockResolvedValue(undefined);
         mocks.listDataDirectory.mockResolvedValue([]);
         mocks.readAdminBackupData.mockResolvedValue({
             auth: { users: [{ id: "admin-one" }], settings: {} },
@@ -66,7 +63,6 @@ describe("POST /api/admin/backup", () => {
         const response = await POST(backupRequest({ backupType: "account-config", files: { auth } }));
 
         expect(response.status).toBe(200);
-        expect(mocks.verifyAdminSensitiveAction).toHaveBeenCalledWith("admin-one", { currentPassword: "admin-password", totpCode: "123456" });
         expect(mocks.mergeAuthBackupSecrets).toHaveBeenCalledWith(auth, expect.any(Object));
         expect(mocks.restoreAdminBackupData).toHaveBeenCalledWith(expect.any(Object), { mode: "account-config" });
         expect(mocks.audit).toHaveBeenCalledWith(
@@ -81,7 +77,5 @@ describe("POST /api/admin/backup", () => {
 function backupRequest(value: unknown) {
     const formData = new FormData();
     formData.set("file", new File([JSON.stringify(value)], "backup.json", { type: "application/json" }));
-    formData.set("currentPassword", "admin-password");
-    formData.set("totpCode", "123456");
     return new Request("http://localhost/api/admin/backup", { method: "POST", body: formData });
 }

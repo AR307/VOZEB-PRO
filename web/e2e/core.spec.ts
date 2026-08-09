@@ -64,12 +64,14 @@ test("admin site form persists a plain contact email and the friend-link delete 
         await emailInput.fill("owner@example.com");
         await expect(emailInput).toHaveValue("owner@example.com");
         await page.getByRole("button", { name: "保存网站设置" }).click();
+        await expect(page.getByLabel("当前密码")).toHaveCount(0);
         await expect(page.getByText("网站信息已保存")).toBeVisible();
         await expect(emailInput).toHaveValue("mailto:owner@example.com");
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await expect(emailInput).toHaveValue("mailto:owner@example.com");
         await page.getByRole("button", { name: "删除友情链接" }).click();
+        await expect(page.getByLabel("当前密码")).toHaveCount(0);
         await expect(page.getByText("友情链接已删除")).toBeVisible();
         await expect(page.getByText("暂无友情链接。")).toBeVisible();
 
@@ -83,6 +85,33 @@ test("admin site form persists a plain contact email and the friend-link delete 
         expect(persisted.socials.email.url).toBe("mailto:owner@example.com");
     } finally {
         const restored = await request.patch("/api/admin/settings", { data: { site: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
+test("admin data lifecycle settings persist without password re-verification", async ({ page, request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { dataLifecycle: { maintenanceBatchSize: number } } }).settings.dataLifecycle;
+    const nextBatchSize = before.maintenanceBatchSize < 500 ? before.maintenanceBatchSize + 1 : before.maintenanceBatchSize - 1;
+
+    try {
+        await page.goto("/admin?section=settings", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        const batchInput = page.getByRole("spinbutton", { name: /单类每批处理数量/ });
+        await expect(batchInput).toHaveValue(String(before.maintenanceBatchSize));
+        await batchInput.fill(String(nextBatchSize));
+        await page.getByRole("button", { name: "保存系统设置" }).click();
+        await expect(page.getByLabel("当前密码")).toHaveCount(0);
+        await expect(page.getByText("系统设置已保存", { exact: true })).toBeVisible();
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(batchInput).toHaveValue(String(nextBatchSize));
+        const persistedResponse = await request.get("/api/admin/settings");
+        expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
+        expect(((await persistedResponse.json()) as { settings: { dataLifecycle: { maintenanceBatchSize: number } } }).settings.dataLifecycle.maintenanceBatchSize).toBe(nextBatchSize);
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { dataLifecycle: before } });
         expect(restored.ok(), await restored.text()).toBe(true);
     }
 });
@@ -195,6 +224,7 @@ test("new Agent Skill is saved before leaving the administrator page", async ({ 
         await page.getByLabel("Skill 名称").fill(skillName);
         await page.getByLabel("执行规则").fill("保持用户需求不变，按当前工作台能力规划并执行。");
         await page.getByRole("button", { name: "添加并保存" }).click();
+        await expect(page.getByLabel("当前密码")).toHaveCount(0);
         await expect(page.getByText("Agent Skill 已添加并保存", { exact: true })).toBeVisible();
 
         await page.goto("/create");

@@ -2,12 +2,12 @@ import { redirect } from "next/navigation";
 
 import { AuthUserHydrator } from "@/components/auth/auth-user-hydrator";
 import { AdminDashboard } from "@/components/admin/admin-dashboard";
-import { parseAdminSection } from "@/components/admin/admin-sections";
+import { parseAdminSection, resolveAdminSection } from "@/components/admin/admin-sections";
 import { AdminReturnButton } from "@/components/admin/admin-return-button";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { getAuthSettings, getPublicUserSummary } from "@/lib/auth/store";
 import { getAdminSetupSummary } from "@/lib/server/admin-setup-status";
-import { serializeAdminSettings } from "@/lib/server/admin-channel-config";
+import { serializeAdminSettingsForUser } from "@/lib/server/admin-channel-config";
 import { getAuthenticatedPageAccess } from "@/lib/server/page-access";
 
 type AdminPageProps = {
@@ -16,7 +16,7 @@ type AdminPageProps = {
 
 export default async function AdminPage({ searchParams }: AdminPageProps) {
     const params = searchParams ? await searchParams : {};
-    const initialSection = parseAdminSection(params.section);
+    const requestedSection = parseAdminSection(params.section);
     const access = await getAuthenticatedPageAccess();
     if (!access.user) {
         if (!access.install.database.healthy || access.install.firstAdminRequired) redirect("/install");
@@ -24,6 +24,8 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
     }
     const currentUser = access.user;
     if (currentUser.role !== "admin") redirect("/");
+    const initialSection = resolveAdminSection(currentUser, requestedSection);
+    if (!initialSection) redirect("/");
 
     const [settings, userSummary] = await Promise.all([getAuthSettings(), getPublicUserSummary()]);
     const setup = await getAdminSetupSummary({ settings, userSummary });
@@ -38,6 +40,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                 displayName: currentUser.displayName,
                 bio: currentUser.bio,
                 role: currentUser.role,
+                adminPermissions: currentUser.adminPermissions,
                 status: currentUser.status,
                 planId: currentUser.planId,
                 planName: currentUser.planName,
@@ -50,7 +53,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                 <AdminDashboard
                     initialUsers={[]}
                     initialUserSummary={userSummary}
-                    initialSettings={serializeAdminSettings(settings)}
+                    initialSettings={serializeAdminSettingsForUser(settings, currentUser)}
                     initialPromptCount={0}
                     currentUser={currentUser}
                     initialSection={initialSection}

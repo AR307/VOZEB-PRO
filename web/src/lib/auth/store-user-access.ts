@@ -9,6 +9,7 @@ import { adjustPermanentPointsInAuthDb, adjustPermanentPointsInPostgresTransacti
 import { bindReferralRelationshipAfterRegistration, normalizeReferralCode } from "@/lib/server/referral-service";
 import { createRegistrationPolicyConsent } from "@/lib/registration-consent";
 import { verifyAdminMfaForLogin } from "@/lib/server/admin-mfa-service";
+import { ALL_ADMIN_PERMISSIONS, hasAdminPermission, hasAllAdminPermissions, normalizeAdminPermissions, type AdminPermission } from "@/lib/admin-permissions";
 
 import { hashPassword, verifyPasswordWithDummy } from "./password";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
@@ -67,6 +68,7 @@ export async function createUser(input: { username: string; email?: string; emai
                 displayName,
                 bio: "",
                 role: "user",
+                adminPermissions: [],
                 status: "active",
                 planId: resolveDefaultPlan(settings.entitlements).id,
                 pointsBalance: 0,
@@ -123,6 +125,7 @@ export async function createUser(input: { username: string; email?: string; emai
             displayName,
             bio: "",
             role: "user",
+            adminPermissions: [],
             status: "active",
             planId: resolveDefaultPlan(db.settings.entitlements).id,
             pointsBalance: 0,
@@ -176,6 +179,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
                 displayName,
                 bio: "",
                 role: "admin",
+                adminPermissions: [...ALL_ADMIN_PERMISSIONS],
                 status: "active",
                 planId: resolveDefaultPlan(settings.entitlements).id,
                 pointsBalance: 0,
@@ -200,6 +204,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
             displayName,
             bio: "",
             role: "admin",
+            adminPermissions: [...ALL_ADMIN_PERMISSIONS],
             status: "active",
             planId: resolveDefaultPlan(db.settings.entitlements).id,
             pointsBalance: 0,
@@ -212,7 +217,18 @@ export async function createFirstAdmin(input: { username: string; email?: string
     });
 }
 
-export async function createUserByAdmin(input: { username: string; email?: string; displayName?: string; password: string; role?: UserRole; status?: UserStatus; pointsBalance?: number; planId?: string }) {
+export async function createUserByAdmin(input: {
+    actorId: string;
+    username: string;
+    email?: string;
+    displayName?: string;
+    password: string;
+    role?: UserRole;
+    adminPermissions?: AdminPermission[];
+    status?: UserStatus;
+    pointsBalance?: number;
+    planId?: string;
+}) {
     const username = normalizeUsername(input.username);
     const email = normalizeEmail(input.email);
     const displayName = normalizeDisplayName(input.displayName || username);
@@ -226,6 +242,8 @@ export async function createUserByAdmin(input: { username: string; email?: strin
         return withPostgresTransaction(async (client) => {
             await lockAuthMutation(client);
             const repos = createPostgresRepositories(client);
+            const actor = await repos.users.getById(input.actorId, true);
+            assertCanCreateManagedUser(actor, input);
             const settings = await readPostgresAuthSettings(client);
             assertNoIdentityConflict(await repos.users.findIdentityConflict({ username, email: email || undefined }), username, email);
             const plan = resolvePlanById(settings.entitlements, input.planId);
@@ -239,6 +257,7 @@ export async function createUserByAdmin(input: { username: string; email?: strin
                 displayName,
                 bio: "",
                 role: input.role === "admin" ? "admin" : "user",
+                adminPermissions: input.role === "admin" ? normalizeAdminPermissions(input.adminPermissions) : [],
                 status: "active",
                 planId: plan.id,
                 pointsBalance: 0,
@@ -264,6 +283,8 @@ export async function createUserByAdmin(input: { username: string; email?: strin
     }
 
     return mutateAuthDb(async (db) => {
+        const actor = db.users.find((user) => user.id === input.actorId);
+        assertCanCreateManagedUser(actor, input);
         if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) throw new AuthInputError("用户名已存在");
         if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
 
@@ -279,6 +300,7 @@ export async function createUserByAdmin(input: { username: string; email?: strin
             displayName,
             bio: "",
             role: input.role === "admin" ? "admin" : "user",
+            adminPermissions: input.role === "admin" ? normalizeAdminPermissions(input.adminPermissions) : [],
             status: "active",
             planId: plan.id,
             pointsBalance: 0,
@@ -415,4 +437,20 @@ function assertNoIdentityConflict(conflict: StoredUser | null, username: string,
     if (!conflict) return;
     if (conflict.username.toLowerCase() === username.toLowerCase()) throw new AuthInputError("用户名已存在");
     if (email && conflict.email?.toLowerCase() === email.toLowerCase()) throw new AuthInputError("邮箱已被注册");
+}
+
+function assertCanCreateManagedUser(actor: StoredUser | null | undefined, input: { role?: UserRole; adminPermissions?: AdminPermission[]; pointsBalance?: number; planId?: string }) {
+    if (input.role === "admin") {
+        assertAdminPermission(actor, "administrators.manage");
+        const permissions = normalizeAdminPermissions(input.adminPermissions);
+        if (!permissions.length) throw new AuthInputError("管理员至少需要一项职责权限");
+        if (!hasAllAdminPermissions(actor, permissions)) throw new AuthInputError("不能授予超出当前管理员职责范围的权限", 403);
+    } else {
+        assertAdminPermission(actor, "users.manage");
+    }
+    if ((Number(input.pointsBalance) || 0) !== 0 || input.planId !== undefined) assertAdminPermission(actor, "billing.manage");
+}
+
+function assertAdminPermission(actor: StoredUser | null | undefined, permission: AdminPermission) {
+    if (!hasAdminPermission(actor, permission)) throw new AuthInputError("当前管理员没有执行此操作的职责权限", 403);
 }

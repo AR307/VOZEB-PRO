@@ -15,14 +15,12 @@ describe("admin backup API", () => {
     it("downloads the backup through the administrator endpoint", async () => {
         vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { headers: { "content-type": "application/json", "content-disposition": 'attachment; filename="backup.json"' } })));
 
-        const result = await downloadAdminBackup({ currentPassword: "admin-password", totpCode: "123456" });
+        const result = await downloadAdminBackup();
 
         expect(result.fileName).toBe("backup.json");
         expect(await result.blob.text()).toBe("{}");
         expect(fetch).toHaveBeenCalledWith("/api/admin/backup/export", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ currentPassword: "admin-password", totpCode: "123456" }),
             cache: "no-store",
         });
     });
@@ -32,14 +30,13 @@ describe("admin backup API", () => {
         vi.stubGlobal("fetch", fetchMock);
         const file = new File(["{}"], "backup.json", { type: "application/json" });
 
-        const result = await importAdminBackup(file, { currentPassword: "admin-password", totpCode: "123456" });
+        const result = await importAdminBackup(file);
 
         const init = fetchMock.mock.calls[0][1] as RequestInit;
         expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/backup");
         expect(init.method).toBe("POST");
         expect((init.body as FormData).get("file")).toBe(file);
-        expect((init.body as FormData).get("currentPassword")).toBe("admin-password");
-        expect((init.body as FormData).get("totpCode")).toBe("123456");
+        expect(Array.from((init.body as FormData).keys())).toEqual(["file"]);
         expect(result.imported).toEqual(["auth"]);
     });
 });

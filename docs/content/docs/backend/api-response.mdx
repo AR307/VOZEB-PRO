@@ -25,12 +25,14 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 登录、设置、启用、关闭和失败操作写入脱敏审计；响应、日志和审计不得包含密码、Secret 或动态码。MFA 管理复用认证限流配置，不增加独立的固定重试或等待常数。
 
-## 管理员逐次复核与登录记录
+## 管理员职责权限与登录记录
 
-管理员高风险接口在现有 Session/角色鉴权之外，每次都要求 `{ currentPassword, totpCode? }`。已启用 MFA 时 `totpCode` 必填；服务端在读取密钥、导出备份或调用写服务前完成验证，不提供固定时间窗内复用的二次授权。当前覆盖系统设置、用户增删改、支付配置、人工收款、退款、对象存储配置/删除/迁移、渠道 API Key、备份导出与恢复。密码、TOTP 与临时密钥不得进入业务 payload、全局状态、浏览器持久化或审计 metadata。
+管理员完成普通登录或可选 TOTP 登录挑战后，后台业务接口统一使用当前 Session、显式职责权限与脱敏审计，不再为支付、用户、系统设置、模型渠道与密钥、对象存储或业务备份逐次要求 `{ currentPassword, totpCode }`。权限注册表包含 13 项职责和 8 个预设；页面入口、可见字段、请求 payload 与 Route Handler 使用同一职责边界。管理员只能授予自身已有的职责，也不能修改或删除职责范围高于自己的管理员。
 
-- `POST /api/admin/backup/export`：JSON 提交身份复核证明，返回 `private, no-store` 的脱敏业务备份。
-- `POST /api/admin/backup`：multipart 同时提交 JSON 备份文件与身份复核证明；验证通过后才解析和恢复业务数据。
+`GET/PATCH /api/admin/settings` 的返回也按当前职责收敛：没有 `system.manage` 时不下发 SMTP 与数据维护配置，没有 `upstream.manage` 时不下发渠道地址、高级协议、内部 Skill 或成本保护配置；财务计价界面只获得列出模型所需的脱敏渠道摘要。
+
+- `POST /api/admin/backup/export`：要求 `system.manage`，无请求体，返回 `private, no-store` 的脱敏业务备份。
+- `POST /api/admin/backup`：要求 `system.manage`，multipart 只提交 JSON 备份文件；校验后解析和恢复业务数据。
 - `GET /api/auth/login-events?page=<n>&pageSize=<n>`：只返回当前登录用户的成功登录事件分页 `{ items, total, page, pageSize }`，按新到旧排序并禁止缓存。事件字段为 `{ id, ip?, userAgent?, createdAt }`；IP 与 User-Agent 来自可信审计边界，缺失时保持缺失，不使用内部 UUID 或伪造设备名。
 
 登录成功响应可选返回 `loginSecurityNotice`，只在相对上次成功登录发生网络或设备标识变化时提示；提醒不阻止已通过密码/MFA 的登录，也不新增固定时间窗、等待或自动重试规则。
@@ -119,7 +121,7 @@ description: 当前接口响应事实与管理员敏感配置契约
 - 更新渠道时，空 `apiKey` 表示保留已保存密钥；只有显式清除操作才删除凭据。
 - 模型拉取和渠道健康检查应提交渠道 ID，由服务端读取已保存凭据；临时输入的新密钥仅用于当前保存或测试请求。
 - 返回客户端或写入日志前必须过滤 Authorization、API Key 和上游可能回显的敏感字段。
-- `POST /api/admin/settings/channels/{id}/api-key` 只在本次当前密码/MFA 复核通过后返回指定渠道 `{ apiKey }`；接口使用 `private, no-store`，成功与失败审计均不得包含密钥或证明字段。GET 不再承担密钥查看。
+- `POST /api/admin/settings/channels/{id}/api-key` 只允许具备 `upstream.manage` 的当前管理员 Session 返回指定渠道 `{ apiKey }`；接口使用 `private, no-store`，成功与失败审计均不得包含密钥。GET 不承担密钥查看，关闭编辑器后前端必须清除临时明文。
 
 新增敏感配置时应沿用相同原则：浏览器只接收“是否已配置”状态，真实值只在服务端解密和使用。
 
@@ -166,6 +168,8 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 
 文本规划根据模型级或渠道级预设直接选择 Chat、Responses、Gemini 或自定义协议，同一候选不会因协议猜测产生第二次上游请求。所有文本候选统一允许 3 分钟，文本模型能力档案不覆盖该上限；失败、超时、429 或 5xx 后调用方自动尝试下一个逻辑模型绑定，当前进程根据近期成功率、延迟和短期冷却状态排序候选。结构化规划不额外写死协议输出 token 上限，继续遵循后台模型与渠道的真实能力配置。
 
+协议回归必须从完整注册表和供应商预置表生成能力矩阵，并通过本地 TCP 接口验证请求路径、鉴权、响应解析、异步查询和二进制媒体。后台当前不再展示但服务端仍能恢复的旧协议也必须保留回归；本地接口成功只证明应用适配契约，不能作为真实供应商账号、额度、质量、计费或 SLA 证据。
+
 用户明确要求“建立画布项目”或“建立短剧项目”时，Chat 规划可返回 `projectHandoff`。运行完成前 SSE 发送一次 `project.handoff`，数据包含稳定 `id/sourceRunId/conversationId`、目标 `surface`、标题、摘要、风格、比例、稳定 `assetIds` 和完整资产信息；`run.completed.data.projectHandoff` 与助手消息 metadata 保存同一份交接。客户端必须使用交接 ID 幂等落地 Canvas 本地项目或服务端短剧项目，SSE 重放不得重复创建。
 
 ## 短剧项目与生成运营
@@ -182,6 +186,7 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 
 - `POST /api/maintenance/generation-tasks/run`：使用 `Authorization: Bearer <VOZEB_PRO_WORKER_TOKEN>` 领取一个有界恢复批次；可通过 `x-vozeb-pro-worker-id` 同步心跳。
 - `POST /api/maintenance/generation-tasks/heartbeat`：使用相同 Worker Bearer Token 和必填 `x-vozeb-pro-worker-id` 上报心跳。
+- `POST /api/maintenance/data-lifecycle/run`：使用 `Authorization: Bearer <VOZEB_PRO_MAINTENANCE_TOKEN>` 执行一个管理员配置的有界批次，只处理已过期 Session、已过期或已使用邮箱验证码、超过自身 `expires_at` 的生成任务，以及到期且全站引用数为零的临时媒体；返回各类删除数量、媒体字节数和被引用阻止的媒体摘要。
 - `POST /api/generation-webhooks/{channelId}`：接收不超过 1MB 的 JSON；要求稳定的 `x-vozeb-pro-event-id`、5 分钟误差内的 `x-vozeb-pro-timestamp` 和 `x-vozeb-pro-signature`。签名使用当前渠道独立密钥，对 `JSON.stringify([channelId, timestamp, eventId]) + "\n" + rawBody` 生成 HMAC-SHA256 十六进制摘要。
 - `POST /api/admin/generation-operations/{type}/{id}/review`：管理员处理 `needs_review` 的 `text/image/video/audio` 任务，动作仅允许 `resume_upstream`、`provide_result` 或 `confirm_failed`。
 

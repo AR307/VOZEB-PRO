@@ -1,5 +1,3 @@
-import type { AdminSensitiveActionProof } from "@/lib/admin-sensitive-action";
-
 export type AdminBackupImportResult = {
     ok: true;
     imported: string[];
@@ -9,11 +7,9 @@ export type AdminBackupImportResult = {
 
 export const ADMIN_BACKUP_MAX_BYTES = 30 * 1024 * 1024;
 
-export async function downloadAdminBackup(proof: AdminSensitiveActionProof) {
+export async function downloadAdminBackup() {
     const response = await fetch("/api/admin/backup/export", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(proof),
         cache: "no-store",
     });
     if (!response.ok) throw new Error(await readBackupError(response, "导出备份失败"));
@@ -23,11 +19,9 @@ export async function downloadAdminBackup(proof: AdminSensitiveActionProof) {
     };
 }
 
-export async function importAdminBackup(file: File, proof: AdminSensitiveActionProof) {
+export async function importAdminBackup(file: File) {
     const body = new FormData();
     body.set("file", file);
-    body.set("currentPassword", proof.currentPassword);
-    if (proof.totpCode) body.set("totpCode", proof.totpCode);
     const response = await fetch("/api/admin/backup", { method: "POST", body });
     const payload = (await response.json().catch(() => null)) as AdminBackupImportResult | { error?: string } | null;
     if (!response.ok || !payload || !("ok" in payload)) throw new Error((payload && "error" in payload && payload.error) || "导入备份失败");

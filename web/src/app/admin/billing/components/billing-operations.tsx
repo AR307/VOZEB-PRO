@@ -9,18 +9,16 @@ import { AlertTriangle, CheckCircle2, CircleDollarSign, Copy, CreditCard, FileTe
 
 import type { PaymentConfigRequirement, PaymentConfigSummary, PaymentProviderConfig, PaymentProviderConfigField } from "@/lib/payment-config-types";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
-import { useAdminSensitiveAction } from "@/hooks/use-admin-sensitive-action";
-import type { AdminSensitiveActionProof } from "@/lib/admin-sensitive-action";
 import type { AdminBillingSummary as BillingSummary } from "@/lib/admin-billing-types";
 import type { BillingOrder, BillingOrderStatus, BillingProduct } from "@/services/api/billing";
+import { allowedAdminBillingTabs, type AdminBillingTab } from "@/lib/admin-permissions";
+import { useUserStore } from "@/stores/use-user-store";
 import { BillingReconciliationImport } from "./billing-reconciliation-import";
 import { CouponTemplatePanel } from "./coupon-template-panel";
 import { PromotionCampaignPanel } from "./promotion-campaign-panel";
 
-type BillingTab = "orders" | "products" | "promotions" | "coupons" | "payments";
-
 const PAGE_SIZE = 20;
-const tabOptions: Array<{ label: string; value: BillingTab }> = [
+const tabOptions: Array<{ label: string; value: AdminBillingTab }> = [
     { label: "订单运营", value: "orders" },
     { label: "套餐商品", value: "products" },
     { label: "促销活动", value: "promotions" },
@@ -94,11 +92,13 @@ import {
     formatTime,
 } from "./billing-operation-elements";
 
-export function BillingOperations({ initialTab = "orders", initialPaymentConfig, embedded = false, hideTabs = false }: { initialTab?: BillingTab; initialPaymentConfig?: PaymentConfigSummary; embedded?: boolean; hideTabs?: boolean }) {
+export function BillingOperations({ initialTab = "orders", initialPaymentConfig, embedded = false, hideTabs = false }: { initialTab?: AdminBillingTab; initialPaymentConfig?: PaymentConfigSummary; embedded?: boolean; hideTabs?: boolean }) {
     const { message, modal } = App.useApp();
-    const { requestSensitiveAction, sensitiveActionModal } = useAdminSensitiveAction();
+    const currentUser = useUserStore((state) => state.user);
+    const allowedTabs = useMemo(() => allowedAdminBillingTabs(currentUser), [currentUser]);
+    const availableTabOptions = useMemo(() => tabOptions.filter((option) => allowedTabs.includes(option.value)), [allowedTabs]);
     const [productForm] = Form.useForm<ProductFormValue>();
-    const [activeTab, setActiveTab] = useState<BillingTab>(initialTab);
+    const [activeTab, setActiveTab] = useState<AdminBillingTab>(initialTab);
     const [summary, setSummary] = useState<BillingSummary | null>(null);
     const [orders, setOrders] = useState<BillingOrder[]>([]);
     const [products, setProducts] = useState<BillingProduct[]>([]);
@@ -178,28 +178,29 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
     }, [endDate, message, page, startDate, status, submittedKeyword]);
 
     useEffect(() => {
-        if (activeTab === "orders" || activeTab === "products" || activeTab === "promotions" || activeTab === "coupons") void loadProducts();
-    }, [activeTab, loadProducts]);
+        if (allowedTabs.includes(activeTab) && (activeTab === "orders" || activeTab === "products" || activeTab === "promotions" || activeTab === "coupons")) void loadProducts();
+    }, [activeTab, allowedTabs, loadProducts]);
 
     useEffect(() => {
-        if (activeTab === "orders") void loadDashboard();
-    }, [activeTab, loadDashboard]);
+        if (allowedTabs.includes(activeTab) && activeTab === "orders") void loadDashboard();
+    }, [activeTab, allowedTabs, loadDashboard]);
 
     useEffect(() => {
-        setActiveTab(initialTab);
-    }, [initialTab]);
+        const nextTab = allowedTabs.includes(initialTab) ? initialTab : allowedTabs[0];
+        if (nextTab) setActiveTab(nextTab);
+    }, [allowedTabs, initialTab]);
 
     useEffect(() => {
-        if (activeTab === "payments" && !paymentConfig) void loadPaymentConfig();
-    }, [activeTab, loadPaymentConfig, paymentConfig]);
+        if (allowedTabs.includes(activeTab) && activeTab === "payments" && !paymentConfig) void loadPaymentConfig();
+    }, [activeTab, allowedTabs, loadPaymentConfig, paymentConfig]);
 
-    const runOrderAction = async (order: BillingOrder, action: "complete" | "close" | "refund", reason?: string, proof?: AdminSensitiveActionProof) => {
+    const runOrderAction = async (order: BillingOrder, action: "complete" | "close" | "refund", reason?: string) => {
         setActionOrderId(`${action}:${order.id}`);
         try {
             const response = await fetch(`/api/admin/billing/orders/${order.id}/${action}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(action === "complete" ? { provider: order.provider || "manual", channel: "admin-manual", providerTradeId: order.providerOrderId || order.orderNo, ...proof } : { reason, ...proof }),
+                body: JSON.stringify(action === "complete" ? { provider: order.provider || "manual", channel: "admin-manual", providerTradeId: order.providerOrderId || order.orderNo } : { reason }),
             });
             const payload = (await response.json().catch(() => null)) as { error?: string } | null;
             if (!response.ok) throw new Error(payload?.error || "订单操作失败");
@@ -212,19 +213,15 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
         }
     };
 
-    const authorizeOrderAction = async (order: BillingOrder, action: "complete" | "refund", reason?: string) => {
-        const proof = await requestSensitiveAction({
-            title: action === "complete" ? "确认订单收款" : "确认订单退款",
-            description: action === "complete" ? "确认后会开通套餐并发放积分。请先核实支付商或线下收款记录。" : "确认后会执行退款流程并撤回对应权益，请先核实支付商退款状态。",
-            confirmText: action === "complete" ? "验证并确认收款" : "验证并退款",
-            danger: action === "refund",
-        });
-        if (proof) await runOrderAction(order, action, reason, proof);
-    };
-
     const confirmOrderAction = (order: BillingOrder, action: "complete" | "close" | "refund") => {
         if (action === "complete") {
-            void authorizeOrderAction(order, action);
+            modal.confirm({
+                title: "确认这笔订单已收款？",
+                content: "确认后会开通套餐并发放积分，请先核实支付商或线下收款记录。",
+                okText: "确认收款",
+                cancelText: "取消",
+                onOk: () => runOrderAction(order, action),
+            });
             return;
         }
 
@@ -244,10 +241,7 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
             okText: action === "close" ? "关闭订单" : "标记退款",
             cancelText: "取消",
             okButtonProps: { danger: action === "refund" },
-            onOk: () => {
-                if (action === "close") return runOrderAction(order, action, reason);
-                queueMicrotask(() => void authorizeOrderAction(order, action, reason));
-            },
+            onOk: () => runOrderAction(order, action, reason),
         });
     };
 
@@ -438,14 +432,14 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                     <Segmented
                         block
                         value={activeTab}
-                        options={tabOptions}
-                        onChange={(value) => setActiveTab(value as BillingTab)}
+                        options={availableTabOptions}
+                        onChange={(value) => setActiveTab(value as AdminBillingTab)}
                         className="[&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-w-0 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!text-center"
                     />
                 </section>
             ) : null}
 
-            {activeTab === "orders" ? (
+            {allowedTabs.includes(activeTab) && activeTab === "orders" ? (
                 <>
                     <section className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <Metric title="实收金额" value={formatMoney(summary?.orders.paidAmountCents || 0)} icon={<CircleDollarSign className="size-4" />} tone="emerald" />
@@ -536,7 +530,7 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                 </>
             ) : null}
 
-            {activeTab === "products" ? (
+            {allowedTabs.includes(activeTab) && activeTab === "products" ? (
                 <>
                     <section className="grid min-w-0 items-start gap-4">
                         <div
@@ -688,12 +682,13 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                 </>
             ) : null}
 
-            {activeTab === "promotions" ? <PromotionCampaignPanel products={products} productsLoading={productsLoading} /> : null}
+            {allowedTabs.includes(activeTab) && activeTab === "promotions" ? <PromotionCampaignPanel products={products} productsLoading={productsLoading} /> : null}
 
-            {activeTab === "coupons" ? <CouponTemplatePanel products={products} productsLoading={productsLoading} /> : null}
+            {allowedTabs.includes(activeTab) && activeTab === "coupons" ? <CouponTemplatePanel products={products} productsLoading={productsLoading} /> : null}
 
-            {activeTab === "payments" ? <PaymentConfigPanel paymentConfig={paymentConfig} loading={paymentConfigLoading} embedded={embedded} onRefresh={loadPaymentConfig} onCopy={(value) => void copyText(value, message)} /> : null}
-            {sensitiveActionModal}
+            {allowedTabs.includes(activeTab) && activeTab === "payments" ? (
+                <PaymentConfigPanel paymentConfig={paymentConfig} loading={paymentConfigLoading} embedded={embedded} onRefresh={loadPaymentConfig} onCopy={(value) => void copyText(value, message)} />
+            ) : null}
         </div>
     );
 }

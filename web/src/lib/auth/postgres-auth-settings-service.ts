@@ -35,6 +35,8 @@ export async function updatePostgresAuthSettings(patch: Partial<AuthSettings>) {
             allowUserApiConfig: encrypted.allowUserApiConfig,
             modelPointCosts: asJson(encrypted.modelPointCosts),
             generationPointMultipliers: asJson(encrypted.generationPointMultipliers),
+            generationCostControl: asJson(encrypted.generationCostControl),
+            dataLifecycle: asJson(encrypted.dataLifecycle),
             entitlementsEnabled: encrypted.entitlements.enabled,
             defaultPlanId: encrypted.entitlements.defaultPlanId,
             generationConcurrency: asJson(encrypted.generationConcurrency),

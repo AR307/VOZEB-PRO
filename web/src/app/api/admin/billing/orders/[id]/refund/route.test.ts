@@ -2,14 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
-    verifyAdminSensitiveAction: vi.fn(),
     refundBillingOrder: vi.fn(),
     audit: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", () => ({ isAuthInputError: vi.fn((error) => Boolean(error && typeof error === "object" && "authStatus" in error)) }));
-vi.mock("@/lib/server/admin-mfa-service", () => ({ verifyAdminSensitiveAction: mocks.verifyAdminSensitiveAction }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin-one" })), safeRecordAuditLog: mocks.audit }));
 vi.mock("@/lib/server/billing-service", () => ({ refundBillingOrder: mocks.refundBillingOrder, isBillingInputError: vi.fn(() => false) }));
 
@@ -18,19 +16,16 @@ import { POST } from "./route";
 describe("POST /api/admin/billing/orders/:id/refund", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
-        mocks.verifyAdminSensitiveAction.mockResolvedValue(undefined);
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["billing.manage"] });
         mocks.refundBillingOrder.mockResolvedValue({ order: { id: "order-one", orderNo: "VP-1", userId: "user-one", status: "refunded", amountCents: 1000, currency: "CNY" } });
     });
 
-    it("passes only refund fields to the billing service after identity verification", async () => {
-        const response = await POST(request({ reason: "用户申请", currentPassword: "admin-password", totpCode: "123456", rawPayload: { currentPassword: "nested-password" } }), context());
+    it("passes only refund fields to the billing service", async () => {
+        const response = await POST(request({ reason: "用户申请", rawPayload: { unexpected: "nested-value" } }), context());
 
         expect(response.status).toBe(200);
-        expect(mocks.verifyAdminSensitiveAction).toHaveBeenCalledOnce();
         expect(mocks.refundBillingOrder).toHaveBeenCalledWith("order-one", { reason: "用户申请", operatorUserId: "admin-one" });
-        expect(JSON.stringify(mocks.refundBillingOrder.mock.calls)).not.toContain("admin-password");
-        expect(JSON.stringify(mocks.refundBillingOrder.mock.calls)).not.toContain("nested-password");
+        expect(JSON.stringify(mocks.refundBillingOrder.mock.calls)).not.toContain("nested-value");
     });
 });
 

@@ -11,7 +11,6 @@ import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannel
 import { capabilityLabel, channelDetectedCapabilities, channelModelCapability } from "@/lib/model-routing-config";
 import { normalizeModelId } from "@/lib/model-capability";
 import { revealAdminChannelApiKey } from "@/services/api/admin-settings";
-import { useAdminSensitiveAction } from "@/hooks/use-admin-sensitive-action";
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
 import { applyModelProtocol, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, channelSupportsModelCatalog, emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 
@@ -30,7 +29,6 @@ export function createDefaultChannelAdvancedConfig(): SystemChannelAdvancedConfi
 
 export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onFetchModels }: { channel: SystemModelChannel; fetching: boolean; onChange: (patch: Partial<SystemModelChannel>) => void; onDelete: () => void; onFetchModels: () => void }) {
     const { message } = App.useApp();
-    const { requestSensitiveAction, sensitiveActionModal } = useAdminSensitiveAction();
     const [exampleText, setExampleText] = useState("");
     const [revealedApiKey, setRevealedApiKey] = useState("");
     const [apiKeyVisible, setApiKeyVisible] = useState(false);
@@ -101,15 +99,9 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
         }
         if (!channel.hasApiKey) return;
 
-        const proof = await requestSensitiveAction({
-            title: "查看渠道 API Key",
-            description: `将临时显示“${channel.name || "未命名渠道"}”已保存的 API Key，关闭显示后会立即从页面状态清除。`,
-            confirmText: "验证并查看",
-        });
-        if (!proof) return;
         setApiKeyLoading(true);
         try {
-            setRevealedApiKey(await revealAdminChannelApiKey(channel.id, proof));
+            setRevealedApiKey(await revealAdminChannelApiKey(channel.id));
             setApiKeyVisible(true);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "读取 API Key 失败");
@@ -385,7 +377,6 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                     </div>
                 </details>
             </div>
-            {sensitiveActionModal}
         </>
     );
 }

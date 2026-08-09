@@ -1,9 +1,9 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { isAuthInputError } from "@/lib/auth/store";
-import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { completeBillingOrderPayment, isBillingInputError } from "@/lib/server/billing-service";
 
@@ -17,7 +17,7 @@ type RouteContext = {
 export async function POST(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "billing.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     try {
         const { id } = await context.params;
@@ -27,10 +27,7 @@ export async function POST(request: Request, context: RouteContext) {
             providerTradeId?: unknown;
             providerPaymentId?: unknown;
             paidAt?: unknown;
-            currentPassword?: unknown;
-            totpCode?: unknown;
         }>(request);
-        await verifyAdminSensitiveAction(currentUser.id, body);
         const result = await completeBillingOrderPayment({
             orderId: id,
             provider: body.provider,

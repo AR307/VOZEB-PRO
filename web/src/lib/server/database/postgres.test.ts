@@ -10,7 +10,7 @@ vi.mock("pg", () => ({
     Pool: mocks.pool,
 }));
 
-import { ensurePostgresSchema, initializePostgresSchema, withPostgresTransaction } from "./postgres";
+import { ensurePostgresSchema, initializePostgresSchema, postgresQuery, withPostgresTransaction } from "./postgres";
 
 describe("PostgreSQL schema lifecycle", () => {
     beforeEach(() => {
@@ -87,6 +87,12 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(mocks.query.mock.calls[0]?.[0]).not.toContain("CREATE TABLE");
     });
 
+    it("prefixes SQL identifiers without rewriting ordinary string literals", async () => {
+        await postgresQuery("SELECT 'users' AS target_type, $$users.read$$ AS permission FROM users WHERE action = 'users.read'");
+
+        expect(mocks.query).toHaveBeenCalledWith("SELECT 'users' AS target_type, $$users.read$$ AS permission FROM vozeb_pro_users WHERE action = 'users.read'", undefined);
+    });
+
     it("executes schema DDL only through explicit initialization", async () => {
         await initializePostgresSchema();
 
@@ -99,11 +105,19 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_generation_worker_heartbeats");
         expect(ddl).toContain("CREATE SEQUENCE IF NOT EXISTS vozeb_pro_user_account_id_seq");
         expect(ddl).toContain("account_id bigint NOT NULL DEFAULT nextval('vozeb_pro_user_account_id_seq')");
+        expect(ddl).toMatch(/SELECT setval\(\s*'vozeb_pro_user_account_id_seq'/);
+        expect(ddl).toContain("users.read");
+        expect(ddl).toContain("users.manage");
+        expect(ddl).not.toContain("vozeb_pro_users.read");
+        expect(ddl).not.toContain("vozeb_pro_users.manage");
         expect(ddl).toContain("terms_version text");
         expect(ddl).toContain("policy_accepted_at timestamptz");
         expect(ddl).toContain("mfa_secret_ciphertext text");
         expect(ddl).toContain("CONSTRAINT users_mfa_enabled_secret CHECK");
         expect(ddl).toContain("CONSTRAINT users_registration_consent_complete CHECK");
+        expect(ddl).toContain("ALTER TABLE vozeb_pro_users ADD CONSTRAINT users_admin_permissions_array");
+        expect(ddl).toContain("conname = 'vozeb_pro_local_media_assets_storage_provider_check'");
+        expect(ddl).toContain("ADD CONSTRAINT vozeb_pro_local_media_assets_storage_provider_check CHECK");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_users_account_id_idx ON vozeb_pro_users (account_id)");
         expect(ddl).toContain("webhook_secret_ciphertext text NOT NULL DEFAULT ''");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_generation_tasks_channel_upstream_idx ON vozeb_pro_generation_tasks (channel_id, upstream_task_id)");

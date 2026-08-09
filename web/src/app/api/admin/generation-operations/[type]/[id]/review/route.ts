@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
@@ -8,7 +9,7 @@ import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 export async function POST(request: Request, { params }: { params: Promise<{ type: string; id: string }> }) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (user.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(user, "generation.manage")) return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     const { type, id } = await params;
     if (!isReviewableType(type)) return NextResponse.json({ code: 400, data: null, msg: "任务类型不支持人工确认" }, { status: 400 });
     const parsed = await readJsonBodyResult<Omit<GenerationTaskReviewInput, "origin"> | null>(request);

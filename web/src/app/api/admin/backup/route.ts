@@ -1,11 +1,10 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { isAuthInputError } from "@/lib/auth/store";
 import { encryptAuthDbSecretsForStorage } from "@/lib/auth/store-normalizers";
 import { mergeAuthBackupSecrets } from "@/lib/server/admin-backup-policy";
 import { readAdminBackupData, restoreAdminBackupData, type AdminBackupData } from "@/lib/server/admin-backup-store";
-import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { getDatabaseProvider } from "@/lib/server/database";
 import { copyDataFile, ensureDataDirectory, listDataDirectory, removeDataPath, resolveDataPath, writeJsonDataFile } from "@/lib/server/data-adapter";
@@ -28,7 +27,7 @@ const RESTORE_IMPORT_BACKUP_PATTERN = /^\d{4}-\d{2}-\d{2}T.+Z$/;
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "system.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     const contentType = request.headers.get("content-type") || "";
     if (!contentType.toLowerCase().includes("multipart/form-data")) return NextResponse.json({ error: "备份上传格式不正确" }, { status: 400 });
@@ -43,23 +42,6 @@ export async function POST(request: Request) {
     const file = formData.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "请选择要导入的备份文件" }, { status: 400 });
     if (file.size > MAX_IMPORT_BYTES) return NextResponse.json({ error: "备份文件过大，请确认文件是否正确" }, { status: 400 });
-    try {
-        await verifyAdminSensitiveAction(currentUser.id, {
-            currentPassword: formData.get("currentPassword"),
-            totpCode: formData.get("totpCode"),
-        });
-    } catch (error) {
-        await safeRecordAuditLog({
-            action: "admin.backup.restore",
-            status: "failure",
-            actor: auditActorFromRequest(request, currentUser),
-            target: { type: "backup" },
-            metadata: { error: error instanceof Error ? error.message : "unknown" },
-        });
-        if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
-        console.error("Admin backup identity verification failed", error);
-        return NextResponse.json({ error: "身份复核失败" }, { status: 500 });
-    }
 
     let parsed: unknown;
     try {

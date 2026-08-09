@@ -4,7 +4,7 @@ import { runCustomImageTask, pollCustomImageTask } from "@/app/api/image-tasks/i
 import { runOpenAiImageTask } from "@/app/api/image-tasks/image-task-openai";
 import { createUpstream } from "@/app/api/video-generation-tasks/video-generation-route";
 import type { SystemChannelProtocol } from "@/lib/auth/store-types";
-import { emptyAdvancedConfig, protocolModelConfig } from "@/lib/channel-protocol-registry";
+import { channelProtocolDefinitions, emptyAdvancedConfig, protocolModelConfig, registeredChannelProtocolDefinitions } from "@/lib/channel-protocol-registry";
 import type { SystemGenerationChannelConfig } from "@/lib/server/generation-channel";
 import type { ImageTask } from "@/lib/server/image-task-store";
 import type { VideoTask } from "@/lib/server/video-task-store";
@@ -12,6 +12,10 @@ import { queryVideoTaskUpstream } from "@/lib/server/video-task-runtime";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 
 const MULTIPLIERS = { imageQuality: { auto: 1, high: 1 }, videoQuality: { "720": 1, "1080": 1 }, videoSeconds: { "5": 1, "8": 1 } };
+const STRICT_IMAGE_PROTOCOLS = registeredChannelProtocolDefinitions.filter((definition) => definition.strict && definition.operations.image);
+const STRICT_VIDEO_PROTOCOLS = registeredChannelProtocolDefinitions.filter((definition) => definition.strict && definition.operations.video);
+const ADVANCED_IMAGE_PROTOCOLS = channelProtocolDefinitions.filter((definition) => !definition.strict && definition.capabilities.includes("image"));
+const ADVANCED_VIDEO_PROTOCOLS = channelProtocolDefinitions.filter((definition) => !definition.strict && definition.capabilities.includes("video"));
 
 describe("active media protocols over TCP fixtures", () => {
     let fixture: ReturnType<typeof createProtocolFixtureServer>;
@@ -32,48 +36,45 @@ describe("active media protocols over TCP fixtures", () => {
         await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
     });
 
-    it.each([
-        ["openai", "/v1", "mock-image", "openai", "/v1/images/generations"],
-        ["sub2api", "/v1", "mock-image", "openai", "/v1/images/generations"],
-        ["newapi", "/v1", "mock-image", "openai", "/v1/images/generations"],
-        ["stable-diffusion", "", "mock-image", "declarative", "/sdapi/v1/txt2img"],
-        ["yumeng", "", "seedream_5.0Pro", "declarative", "/v2/model-center/tasks"],
-        ["custom", "", "custom-image-model", "declarative", "/custom/images"],
-    ] as const)("completes %s image creation with its declared request shape", async (protocol, basePath, model, kind, expectedCreatePath) => {
-        const baseUrl = `${origin}${basePath}`;
-        const task = imageTask(baseUrl, model, protocol, kind === "declarative" ? imageConfig(protocol) : undefined);
-        const result = kind === "declarative" ? await runCustomImageTask(task, origin, origin, "", protocol === "yumeng") : await runOpenAiImageTask(task, origin, origin, "", true);
+    it.each(STRICT_IMAGE_PROTOCOLS)("completes $id image creation with its registered request shape", async (definition) => {
+        const model = definition.builtInModels?.find((item) => item.capability === "image")?.id || "mock-image";
+        const operation = definition.operations.image!;
+        const baseUrl = operation.createPath === "/images/generations" ? `${origin}/v1` : origin;
+        const task = imageTask(baseUrl, model, definition.id, imageConfig(definition.id));
+        const declarative = definition.id === "stable-diffusion" || definition.id === "yumeng";
+        const result = declarative ? await runCustomImageTask(task, origin, origin, "", definition.id === "yumeng") : await runOpenAiImageTask(task, origin, origin, "", true);
         const resolved = result.pending ? await pollCustomImageTask(task, result.pending.id, result.pending.pollBaseUrl, "") : result;
         expect(resolved.dataUrl || resolved.remoteUrl).toBeTruthy();
         expect(fixture.requests[0]?.method).toBe("POST");
-        expect(fixture.requests[0]?.path).toBe(expectedCreatePath);
+        expect(fixture.requests[0]?.path).toBe(new URL(`${baseUrl}${operation.createPath}`).pathname);
     });
 
-    it.each([
-        ["openai", "/v1", "mock-video", "/v1/videos"],
-        ["sub2api", "/v1", "mock-video", "/v1/videos"],
-        ["newapi", "/v1", "mock-video", "/v1/videos"],
-        ["seedance", "", "seedance-video", "/contents/generations/tasks"],
-        ["volcengine-video", "/api/v3", "seedance-video", "/api/v3/contents/generations/tasks"],
-        ["yumeng", "", "seedance-2.5", "/v2/model-center/tasks"],
-        ["custom", "", "custom-video-model", "/custom/videos"],
-    ] as const)("completes %s video creation and polling without path fallback", async (protocol, basePath, model, expectedCreatePath) => {
-        const baseUrl = `${origin}${basePath}`;
-        const config = videoConfig(protocol, baseUrl, model);
-        const upstream = await createUpstream("user-live", "", "", config, "animate a blue logo", { videoSeconds: 5, size: "16:9", vquality: "720", videoGenerateAudio: false }, [], MULTIPLIERS, `video-${protocol}`);
-        expect(fixture.requests[0]?.path).toBe(expectedCreatePath);
+    it.each(STRICT_VIDEO_PROTOCOLS)("completes $id video creation and polling without path fallback", async (definition) => {
+        const model = definition.builtInModels?.find((item) => item.capability === "video")?.id || "mock-video";
+        const createPath = definition.operations.video!.createPath!;
+        const config = videoConfig(definition.id, origin, model);
+        const upstream = await createUpstream("user-live", "", "", config, "animate a blue logo", { videoSeconds: 5, size: "16:9", vquality: "720", videoGenerateAudio: false }, [], MULTIPLIERS, `video-${definition.id}`);
+        expect(fixture.requests[0]?.path).toBe(createPath.replace(":model", model));
         expect(upstream.id).toBeTruthy();
         const result = await queryVideoTaskUpstream({ config, upstream, userId: "user-live" } as unknown as VideoTask, "", "");
         expect(result).toMatchObject({ state: "result_ready", resultUrl: expect.stringContaining("/media/fixture.mp4") });
         expect(fixture.requests).toHaveLength(2);
     });
 
-    it("completes the Gemini Veo operation protocol", async () => {
-        const config = videoConfig("gemini", `${origin}/v1beta`, "veo-3.1-generate-preview");
-        const upstream = await createUpstream("user-live", "", "", config, "animate a blue logo", { videoSeconds: 5, size: "16:9", vquality: "720", videoGenerateAudio: false }, [], MULTIPLIERS, "video-gemini");
-        expect(fixture.requests[0]?.path).toBe("/v1beta/models/veo-3.1-generate-preview:predictLongRunning");
+    it.each(ADVANCED_IMAGE_PROTOCOLS)("completes configured $id image creation", async (definition) => {
+        const baseUrl = definition.id === "custom" ? origin : `${origin}/v1`;
+        const task = imageTask(baseUrl, "mock-image", definition.id, imageConfig(definition.id));
+        const image = definition.id === "custom" ? await runCustomImageTask(task, origin, origin, "", true) : await runOpenAiImageTask(task, origin, origin, "", true);
+        expect(image.dataUrl || image.remoteUrl).toBeTruthy();
+        expect(fixture.requests[0]?.path).toBe(definition.id === "custom" ? "/custom/images" : "/v1/images/generations");
+    });
+
+    it.each(ADVANCED_VIDEO_PROTOCOLS)("completes configured $id video creation and polling", async (definition) => {
+        const config = videoConfig(definition.id, origin, "mock-video");
+        const upstream = await createUpstream("user-live", "", "", config, "animate a blue logo", { videoSeconds: 5, size: "16:9", vquality: "720", videoGenerateAudio: false }, [], MULTIPLIERS, `video-${definition.id}`);
         const result = await queryVideoTaskUpstream({ config, upstream, userId: "user-live" } as unknown as VideoTask, "", "");
         expect(result).toMatchObject({ state: "result_ready", resultUrl: expect.stringContaining("/media/fixture.mp4") });
+        expect(fixture.requests.map((request) => request.path)).toEqual([definition.id === "custom" ? "/custom/videos" : "/videos", expect.stringMatching(definition.id === "custom" ? /^\/custom\/results\// : /^\/videos\//)]);
     });
 });
 
@@ -107,7 +108,9 @@ function imageConfig(protocol: string) {
         };
     }
     if (protocol === "yumeng") return { ...emptyAdvancedConfig(), ...protocolModelConfig("yumeng", "image") };
-    return protocol === "custom" ? { ...emptyAdvancedConfig(), protocol: "custom" as const, createPath: "/custom/images", requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}"}', resultField: "data.image_url" } : undefined;
+    if (protocol === "custom") return { ...emptyAdvancedConfig(), protocol: "custom" as const, createPath: "/custom/images", requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}"}', resultField: "data.image_url" };
+    const strict = protocolModelConfig(protocol as SystemChannelProtocol, "image");
+    return strict ? { ...emptyAdvancedConfig(), ...strict } : { ...emptyAdvancedConfig(), protocol: protocol as SystemChannelProtocol };
 }
 
 function videoConfig(protocol: SystemChannelProtocol, baseUrl: string, model: string): SystemGenerationChannelConfig {
@@ -124,6 +127,13 @@ function videoConfig(protocol: SystemChannelProtocol, baseUrl: string, model: st
                   resultField: "data.video_url",
                   statusField: "data.status",
               }
-            : undefined);
+            : {
+                  ...emptyAdvancedConfig(),
+                  protocol,
+                  createPath: "/videos",
+                  queryPath: "/videos/:task_id",
+                  resultField: "video_url",
+                  statusField: "status",
+              });
     return { apiSource: "system", baseUrl, apiKey: "system", apiFormat: protocol === "gemini" ? "gemini" : "openai", model, logicalModel: model, channelId: `fixture-${protocol}`, advancedConfig };
 }

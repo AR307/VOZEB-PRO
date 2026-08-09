@@ -35,8 +35,9 @@ import {
     WalletCards,
     X,
 } from "lucide-react";
-import type { AdminSectionKey } from "@/components/admin/admin-sections";
+import { canAccessAdminSection, type AdminSectionKey } from "@/components/admin/admin-sections";
 import { SiteLogo } from "@/components/layout/site-logo";
+import type { PublicUser } from "@/lib/auth/store";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 type AdminSection = { key: AdminSectionKey; label: string; description: string; shortDescription: string; icon: ReactNode };
@@ -50,6 +51,7 @@ export function AdminSectionNav({
     onDesktopToggle,
     onMobileToggle,
     onMobileClose,
+    currentUser,
 }: {
     activeKey: AdminSectionKey;
     onChange: (key: AdminSectionKey) => void;
@@ -58,8 +60,10 @@ export function AdminSectionNav({
     onDesktopToggle: () => void;
     onMobileToggle: () => void;
     onMobileClose: () => void;
+    currentUser: PublicUser;
 }) {
-    const activeGroup = adminSectionGroups.find((group) => group.items.some((section) => section.key === activeKey));
+    const allowedGroups = adminSectionGroups.map((group) => ({ ...group, items: group.items.filter((section) => canAccessAdminSection(currentUser, section.key)) })).filter((group) => group.items.length);
+    const activeGroup = allowedGroups.find((group) => group.items.some((section) => section.key === activeKey));
     const activeGroupTitle = activeGroup?.title;
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -135,7 +139,7 @@ export function AdminSectionNav({
                     </button>
                 </div>
                 <div className="admin-section-nav-list flex flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-3 py-4">
-                    {adminSectionGroups.map((group) => {
+                    {allowedGroups.map((group) => {
                         const collapsed = Boolean(collapsedGroups[group.title]) && !desktopCollapsed;
                         return (
                             <div key={group.title} className="admin-section-nav-group block min-w-0">
@@ -180,7 +184,7 @@ export const adminSections: AdminSection[] = [
     { key: "site", label: "站点资料", description: "管理前台网站标题、Logo、SEO 标题、描述和关键词。", shortDescription: "品牌与 SEO", icon: <Globe2 className="size-4" /> },
     { key: "channels", label: "模型渠道", description: "添加上游接口、拉取模型、测试可用性并设置默认模型。", shortDescription: "上游接口", icon: <PlugZap className="size-4" /> },
     { key: "skills", label: "Agent Skills", description: "管理 Agent 专业能力、触发词、来源和执行规则。", shortDescription: "专业能力", icon: <Sparkles className="size-4" /> },
-    { key: "settings", label: "基础设置", description: "管理注册策略、邮箱服务和生成默认值。", shortDescription: "账号与生成", icon: <SlidersHorizontal className="size-4" /> },
+    { key: "settings", label: "基础设置", description: "管理注册、邮箱、生成与数据维护。", shortDescription: "账号与生成", icon: <SlidersHorizontal className="size-4" /> },
     { key: "accountDeletion", label: "注销申请", description: "查看用户账号注销申请，完成身份核验、受理或拒绝并保留审计记录。", shortDescription: "用户权利请求", icon: <UserRoundX className="size-4" /> },
     { key: "mediaStorage", label: "本地媒体", description: "查看服务器图片、视频和音频文件，管理临时期限与长期存储。", shortDescription: "文件与期限", icon: <HardDrive className="size-4" /> },
     { key: "externalStorage", label: "外部存储", description: "配置 S3 兼容存储，迁移本地媒体并管理外部对象。", shortDescription: "S3 与 OSS", icon: <Cloud className="size-4" /> },

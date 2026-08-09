@@ -5,7 +5,6 @@ const mocks = vi.hoisted(() => ({
     getPublicUsersByIds: vi.fn(),
     listExternalStorageFiles: vi.fn(),
     deleteExternalStorageFiles: vi.fn(),
-    verifyAdminSensitiveAction: vi.fn(),
     audit: vi.fn(),
 }));
 
@@ -15,7 +14,6 @@ vi.mock("@/lib/server/object-storage-service", () => ({
     deleteExternalStorageFiles: mocks.deleteExternalStorageFiles,
     listExternalStorageFiles: mocks.listExternalStorageFiles,
 }));
-vi.mock("@/lib/server/admin-mfa-service", () => ({ verifyAdminSensitiveAction: mocks.verifyAdminSensitiveAction }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin" })), safeRecordAuditLog: mocks.audit }));
 
 import { DELETE, GET } from "./route";
@@ -23,24 +21,22 @@ import { DELETE, GET } from "./route";
 describe("GET /api/admin/object-storage/files", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["system.manage"] });
         mocks.listExternalStorageFiles.mockResolvedValue({ items: [{ key: "media/image.webp", ownerUserId: "user-one" }], bucket: "media", prefix: "vozeb-pro/" });
         mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", accountId: "0001", username: "creator", displayName: "创作者" }]);
-        mocks.verifyAdminSensitiveAction.mockResolvedValue(undefined);
         mocks.deleteExternalStorageFiles.mockResolvedValue({ deleted: 1, blocked: [] });
     });
 
-    it("verifies and audits destructive object deletion", async () => {
+    it("audits destructive object deletion", async () => {
         const response = await DELETE(
             new Request("http://localhost/api/admin/object-storage/files", {
                 method: "DELETE",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ keys: ["media/image.webp"], currentPassword: "admin-password", totpCode: "123456" }),
+                body: JSON.stringify({ keys: ["media/image.webp"] }),
             }),
         );
 
         expect(response.status).toBe(200);
-        expect(mocks.verifyAdminSensitiveAction).toHaveBeenCalledWith("admin", expect.objectContaining({ currentPassword: "admin-password", totpCode: "123456" }));
         expect(mocks.deleteExternalStorageFiles).toHaveBeenCalledWith(["media/image.webp"]);
         expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.object-storage.files.delete", metadata: { requested: 1, deleted: 1, blocked: 0 } }));
     });

@@ -110,16 +110,6 @@ type PromptFormValue = {
     preview?: string;
 };
 
-type UserEditorValue = {
-    username?: string;
-    displayName: string;
-    email?: string;
-    password?: string;
-    role: UserRole;
-    status: UserStatus;
-    pointsBalance: number;
-};
-
 const PROMPT_PAGE_SIZE = 20;
 const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 const CDK_PAGE_SIZE = 20;
@@ -144,6 +134,7 @@ import {
     clampInteger,
 } from "./admin-dashboard-elements";
 import { useAdminDashboardController } from "./use-admin-dashboard-controller";
+import { AdminUserEditorModal } from "./admin-user-editor-modal";
 
 const AdminSiteSection = dynamic(() => import("./admin-configuration-sections").then((module) => module.AdminSiteSection), { loading: AdminSectionLoading });
 const AdminSettingsSection = dynamic(() => import("./admin-configuration-sections").then((module) => module.AdminSettingsSection), { loading: AdminSectionLoading });
@@ -188,7 +179,6 @@ export function AdminDashboard(props: AdminDashboardProps) {
         setupSummary,
         headerActions,
         message,
-        sensitiveActionModal,
         promptForm,
         userForm,
         logoInputRef,
@@ -380,6 +370,8 @@ export function AdminDashboard(props: AdminDashboardProps) {
         deleteChannel,
         updateGenerationConcurrency,
         updateGenerationDefaults,
+        updateGenerationCostControl,
+        updateDataLifecycle,
         updateModelPointCost,
         updateGenerationPointMultiplier,
         deleteGenerationPointMultiplier,
@@ -415,6 +407,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
             {mobileNavOpen ? <button type="button" className="admin-section-nav-backdrop lg:hidden" aria-label="收起后台侧边栏" onClick={() => setMobileNavOpen(false)} /> : null}
             <AdminSectionNav
                 activeKey={activeSection}
+                currentUser={currentUser}
                 onChange={setActiveSection}
                 mobileOpen={mobileNavOpen}
                 desktopCollapsed={desktopNavCollapsed}
@@ -562,65 +555,10 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     </div>
                 </Form>
             </Modal>
-            <Modal
-                title={creatingUser ? "新增用户" : editingUser ? `用户管理：${editingUser.displayName}` : "用户管理"}
-                open={creatingUser || Boolean(editingUser)}
-                okText={creatingUser ? "新增" : "保存"}
-                cancelText="取消"
-                confirmLoading={creatingUser ? updatingUserId === "__new__" : Boolean(editingUser && updatingUserId === editingUser.id)}
-                onOk={() => userForm.submit()}
-                onCancel={closeUserEditor}
-            >
-                <Form form={userForm} layout="vertical" requiredMark={false} onFinish={saveUserEditor}>
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <Form.Item label="用户名" name="username" rules={[{ required: creatingUser, message: "请输入用户名" }]}>
-                            <Input disabled={!creatingUser} placeholder="用于登录的账号" />
-                        </Form.Item>
-                        <Form.Item label="显示昵称" name="displayName" rules={[{ required: true, message: "请输入显示昵称" }]}>
-                            <Input placeholder="显示在顶部账号菜单" />
-                        </Form.Item>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <Form.Item label="绑定邮箱" name="email">
-                            <Input placeholder="可留空" />
-                        </Form.Item>
-                        <Form.Item
-                            label={creatingUser ? "登录密码" : "重置密码"}
-                            name="password"
-                            rules={[{ required: creatingUser, message: "请输入登录密码" }]}
-                            extra={creatingUser ? "至少 8 位，创建后用户可自行修改。" : "留空则不修改密码；填写后该用户需要重新登录。"}
-                        >
-                            <Input.Password placeholder="至少 8 位" />
-                        </Form.Item>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-3">
-                        <Form.Item label="角色" name="role" rules={[{ required: true, message: "请选择角色" }]}>
-                            <Select
-                                options={[
-                                    { value: "user", label: "普通用户" },
-                                    { value: "admin", label: "管理员" },
-                                ]}
-                            />
-                        </Form.Item>
-                        <Form.Item label="账号状态" name="status" rules={[{ required: true, message: "请选择状态" }]}>
-                            <Select
-                                disabled={editingUser?.id === currentUser.id}
-                                options={[
-                                    { value: "active", label: "可用" },
-                                    { value: "disabled", label: "禁用" },
-                                ]}
-                            />
-                        </Form.Item>
-                        <Form.Item label="永久积分" name="pointsBalance" extra={editingUser ? "每日积分由系统自动结算" : undefined} rules={[{ required: true, message: "请输入永久积分" }]}>
-                            <InputNumber className="!w-full" min={0} precision={2} />
-                        </Form.Item>
-                    </div>
-                </Form>
-            </Modal>
+            <AdminUserEditorModal controller={controller} />
             <Modal title="生成日志详情" open={Boolean(viewingGenerationLog)} footer={null} onCancel={() => setViewingGenerationLog(null)} width={860}>
                 {viewingGenerationLog ? <GenerationLogDetail log={viewingGenerationLog} /> : null}
             </Modal>
-            {sensitiveActionModal}
             <Modal title="CDK 明细" open={Boolean(viewingCdkCode)} footer={null} onCancel={() => setViewingCdkCode(null)} width={760}>
                 {viewingCdkCode ? (
                     <div className="space-y-3">

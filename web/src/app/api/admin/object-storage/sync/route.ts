@@ -1,10 +1,9 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBodyResult } from "@/lib/auth/request";
-import { isAuthInputError } from "@/lib/auth/store";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
-import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { migrateLocalMediaToObjectStorage } from "@/lib/server/object-storage-service";
 
 export const runtime = "nodejs";
@@ -13,12 +12,11 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (user.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
-    const parsed = await readJsonBodyResult<{ limit?: unknown; currentPassword?: unknown; totpCode?: unknown }>(request);
+    if (!hasAdminPermission(user, "system.manage")) return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    const parsed = await readJsonBodyResult<{ limit?: unknown }>(request);
     if (!parsed.ok) return NextResponse.json({ code: parsed.status, data: null, msg: parsed.message }, { status: parsed.status });
     const body = parsed.data;
     try {
-        await verifyAdminSensitiveAction(user.id, body);
         const data = await migrateLocalMediaToObjectStorage(Number(body.limit) || 20);
         await safeRecordAuditLog({
             action: "admin.object-storage.migrate",
@@ -35,7 +33,6 @@ export async function POST(request: Request) {
             target: { type: "object_storage", id: "primary" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isAuthInputError(error)) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
         console.error("Local media migration failed", error);
         return NextResponse.json({ code: 500, data: null, msg: error instanceof Error ? error.message : "本地媒体迁移失败" }, { status: 500 });
     }

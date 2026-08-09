@@ -10,6 +10,7 @@ const user = (pointsBalance: number): LocalUser => ({
     displayName: "测试用户",
     bio: "",
     role: "user",
+    adminPermissions: [],
     status: "active",
     planId: "free",
     planName: "免费版",

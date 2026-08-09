@@ -146,7 +146,7 @@ const yumengVideoOperation: ProtocolOperation = {
     supportsReferenceAudio: true,
 };
 
-const definitions: ChannelProtocolDefinition[] = [
+export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] = [
     {
         id: "openai",
         label: "OpenAI",
@@ -319,10 +319,10 @@ const definitions: ChannelProtocolDefinition[] = [
 
 const retiredProtocolIds = new Set<SystemChannelProtocol>(["vozeb-recommended", "seedance-special", "globalaiopc"]);
 
-export const channelProtocolDefinitions = definitions.filter((definition) => !retiredProtocolIds.has(definition.id));
+export const channelProtocolDefinitions = registeredChannelProtocolDefinitions.filter((definition) => !retiredProtocolIds.has(definition.id));
 
 export function channelProtocolDefinition(protocol: SystemChannelProtocol) {
-    return definitions.find((item) => item.id === protocol) || definitions.at(-1)!;
+    return registeredChannelProtocolDefinitions.find((item) => item.id === protocol) || registeredChannelProtocolDefinitions.at(-1)!;
 }
 
 export function channelProtocolOptions() {

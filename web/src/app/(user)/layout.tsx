@@ -29,6 +29,7 @@ export default async function UserLayout({ children }: { children: ReactNode }) 
                 bio: user.bio,
                 avatarUrl: user.avatarUrl,
                 role: user.role,
+                adminPermissions: user.adminPermissions,
                 status: user.status,
                 planId: user.planId,
                 planName: user.planName,

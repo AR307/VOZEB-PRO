@@ -112,16 +112,6 @@ export type PromptFormValue = {
     preview?: string;
 };
 
-export type UserEditorValue = {
-    username?: string;
-    displayName: string;
-    email?: string;
-    password?: string;
-    role: UserRole;
-    status: UserStatus;
-    pointsBalance: number;
-};
-
 export const PROMPT_PAGE_SIZE = 20;
 export const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 export const CDK_PAGE_SIZE = 20;
@@ -215,6 +205,26 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             generationDefaults: {
                 ...current.generationDefaults,
                 [key]: value,
+            },
+        }));
+    };
+
+    const updateGenerationCostControl = (key: keyof AuthSettings["generationCostControl"], value: number | null) => {
+        setSettings((current) => ({
+            ...current,
+            generationCostControl: {
+                ...current.generationCostControl,
+                [key]: toNumberOrZero(value),
+            },
+        }));
+    };
+
+    const updateDataLifecycle = (key: keyof AuthSettings["dataLifecycle"], value: boolean | number) => {
+        setSettings((current) => ({
+            ...current,
+            dataLifecycle: {
+                ...current.dataLifecycle,
+                [key]: key === "maintenanceBatchSize" ? clampInteger(value, 1, 500, current.dataLifecycle.maintenanceBatchSize) : value,
             },
         }));
     };
@@ -441,6 +451,8 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         updateFreeDailyPoints,
         updateGenerationConcurrency,
         updateGenerationDefaults,
+        updateGenerationCostControl,
+        updateDataLifecycle,
         updateModelPointCost,
         updateGenerationPointMultiplier,
         deleteGenerationPointMultiplier,

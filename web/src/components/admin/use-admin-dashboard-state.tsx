@@ -117,6 +117,8 @@ export type UserEditorValue = {
     email?: string;
     password?: string;
     role: UserRole;
+    adminPermissions: PublicUser["adminPermissions"];
+    permissionPreset?: string;
     status: UserStatus;
     pointsBalance: number;
 };
@@ -239,11 +241,11 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     const stats = useMemo(() => ({ total: userSummary.total, active: userSummary.active, admins: userSummary.admins, disabled: userSummary.disabled }), [userSummary]);
     const settingsSummary = useMemo(
         () => ({
-            totalChannels: settings.systemChannels.length,
-            enabledChannels: settings.systemChannels.filter((channel) => channel.enabled).length,
-            models: uniqueList(settings.systemChannels.flatMap((channel) => channel.models)).length,
+            totalChannels: setupSummary?.totalChannels ?? settings.systemChannels.length,
+            enabledChannels: setupSummary?.enabledChannels ?? settings.systemChannels.filter((channel) => channel.enabled).length,
+            models: setupSummary?.modelCount ?? uniqueList(settings.systemChannels.flatMap((channel) => channel.models)).length,
         }),
-        [settings.systemChannels],
+        [settings.systemChannels, setupSummary?.enabledChannels, setupSummary?.modelCount, setupSummary?.totalChannels],
     );
     const walletSummary = useMemo(
         () => ({

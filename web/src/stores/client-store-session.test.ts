@@ -484,6 +484,7 @@ function user(id: string) {
         displayName: id,
         bio: "",
         role: "user" as const,
+        adminPermissions: [],
         status: "active" as const,
         planId: "free",
         planName: "免费",

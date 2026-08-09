@@ -26,7 +26,9 @@ export type AdminSetupSummary = {
     percent: number;
     users: number;
     admins: number;
+    totalChannels: number;
     enabledChannels: number;
+    modelCount: number;
     enabledProducts: number;
     enabledPlanProducts: number;
     databaseProvider: "file" | "postgres";
@@ -144,7 +146,9 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
         percent: Math.round((completed / steps.length) * 100),
         users: userSummary.total,
         admins,
+        totalChannels: settings.systemChannels.length,
         enabledChannels,
+        modelCount: channelModels.size,
         enabledProducts,
         enabledPlanProducts,
         databaseProvider,

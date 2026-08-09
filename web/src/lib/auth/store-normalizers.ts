@@ -23,6 +23,8 @@ import {
     type GenerationConcurrencySettings,
     type GenerationDefaultSettings,
     type GenerationPointMultipliers,
+    type GenerationCostControlSettings,
+    type DataLifecycleSettings,
     type EntitlementPlanLimits,
     type EntitlementPlan,
     type EntitlementSettings,
@@ -77,6 +79,7 @@ import {
 export { normalizeApiPath, normalizeSystemChannelAdvancedConfig, textOrEmpty } from "./store-normalizers-channel";
 import { currentQuotaDate, hashToken, normalizeEmail, normalizeUserBio } from "./store-auth-utils";
 import { normalizeRegistrationPolicyConsent } from "@/lib/registration-consent";
+import { ALL_ADMIN_PERMISSIONS, isFullAdminPermissions, normalizeAdminPermissions } from "@/lib/admin-permissions";
 
 export { currentQuotaDate, hashToken, normalizeDisplayName, normalizeEmail, normalizeUserBio, normalizeUsername, parseSessionCookie, randomNumericCode, validateEmail, validatePassword, validateUsername } from "./store-auth-utils";
 
@@ -87,6 +90,7 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
     const users = Array.isArray(db.users)
         ? db.users.map((user) => {
               const legacyUser = user as Partial<StoredUser> & { quota?: Partial<LegacyUserQuota> };
+              const role = user.role === "admin" ? "admin" : "user";
               const requestedAccountId = parseAccountId(legacyUser.accountId);
               while (usedAccountIds.has(nextGeneratedAccountId)) nextGeneratedAccountId += 1;
               const accountId = requestedAccountId && !usedAccountIds.has(requestedAccountId) ? requestedAccountId : nextGeneratedAccountId;
@@ -94,6 +98,8 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
               nextGeneratedAccountId = Math.max(nextGeneratedAccountId, accountId + 1);
               return {
                   ...user,
+                  role,
+                  adminPermissions: role === "admin" ? normalizeAdminPermissions(legacyUser.adminPermissions) : [],
                   accountId: formatAccountId(accountId),
                   bio: normalizeUserBio(legacyUser.bio),
                   registrationConsent: normalizeRegistrationPolicyConsent(legacyUser.registrationConsent),
@@ -102,8 +108,12 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
               } as StoredUser;
           })
         : [];
+    const activeAdministrators = users.filter((user) => user.role === "admin" && user.status === "active");
+    if (activeAdministrators.length && !activeAdministrators.some((user) => isFullAdminPermissions(user.adminPermissions))) {
+        activeAdministrators.sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.id.localeCompare(right.id))[0].adminPermissions = [...ALL_ADMIN_PERMISSIONS];
+    }
     const configuredNextAccountId = parseAccountId(db.nextUserAccountId) || 1;
-    return pruneExpiredSessions({
+    return {
         version: 1,
         nextUserAccountId: Math.max(configuredNextAccountId, nextGeneratedAccountId),
         users,
@@ -113,14 +123,9 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
         dailyPlanPointWallets: Array.isArray(db.dailyPlanPointWallets) ? db.dailyPlanPointWallets.map(normalizeDailyPlanPointWallet).filter((item) => item.userId && item.date) : [],
         emailCodes: Array.isArray(db.emailCodes) ? db.emailCodes.map(normalizeEmailCode).filter((item) => item.email) : [],
         cdkCodes: Array.isArray(db.cdkCodes) ? db.cdkCodes.map(normalizeCdkCodeRecord).filter((item) => item.codeHash) : [],
-        announcements: Array.isArray(db.announcements)
-            ? db.announcements
-                  .map(normalizeAnnouncement)
-                  .filter((item) => item.title && item.content)
-                  .slice(0, 200)
-            : [],
+        announcements: Array.isArray(db.announcements) ? db.announcements.map(normalizeAnnouncement).filter((item) => item.title && item.content) : [],
         settings,
-    });
+    };
 }
 
 export function emptyDb(): AuthDatabase {
@@ -156,18 +161,6 @@ export function encryptAuthSettingsSecrets(settings: AuthSettings): AuthSettings
             webhookSecret: encryptSecretValue(channel.webhookSecret || ""),
         })),
     };
-}
-
-export function pruneExpiredSessions(db: AuthDatabase) {
-    const now = Date.now();
-    db.sessions = db.sessions.filter((session) => Date.parse(session.expiresAt) > now);
-    const minQuotaUsageDate = new Date(now - 1000 * 60 * 60 * 24 * 45).toISOString().slice(0, 10);
-    db.quotaUsage = db.quotaUsage.filter((usage) => usage.date >= minQuotaUsageDate);
-    db.pointRecords = (db.pointRecords || []).slice(-10000);
-    db.emailCodes = (db.emailCodes || []).filter((item) => !item.consumedAt && Date.parse(item.expiresAt) > now);
-    db.cdkCodes = db.cdkCodes || [];
-    db.announcements = (db.announcements || []).slice(0, 200);
-    return db;
 }
 
 export function resolveInitialUserPoints(db: Pick<AuthDatabase, "settings">, plan = resolveDefaultPlan(db.settings.entitlements)) {
@@ -238,6 +231,10 @@ export function countActiveAdmins(db: AuthDatabase, excludingUserId?: string) {
     return db.users.filter((user) => user.id !== excludingUserId && user.role === "admin" && user.status === "active").length;
 }
 
+export function countActiveFullAdmins(db: AuthDatabase, excludingUserId?: string) {
+    return db.users.filter((user) => user.id !== excludingUserId && user.role === "admin" && user.status === "active" && isFullAdminPermissions(user.adminPermissions)).length;
+}
+
 export function normalizeSettings(settings: AuthSettings): AuthSettings {
     const systemChannels = Array.isArray(settings.systemChannels) ? settings.systemChannels.map(normalizeSystemChannel).filter((channel) => channel.name || channel.baseUrl || channel.models.length) : [];
     const logicalModels = normalizeLogicalModels(settings.logicalModels, systemChannels);
@@ -251,6 +248,8 @@ export function normalizeSettings(settings: AuthSettings): AuthSettings {
         allowUserApiConfig: false,
         modelPointCosts: normalizeModelPointCosts(settings.modelPointCosts),
         generationPointMultipliers: normalizeGenerationPointMultipliers(settings.generationPointMultipliers),
+        generationCostControl: normalizeGenerationCostControl(settings.generationCostControl),
+        dataLifecycle: normalizeDataLifecycle(settings.dataLifecycle),
         entitlements: normalizeEntitlementSettings(settings.entitlements),
         generationConcurrency: normalizeGenerationConcurrency(settings.generationConcurrency),
         generationDefaults: normalizeGenerationDefaults(settings.generationDefaults),
@@ -418,6 +417,24 @@ export function normalizeGenerationConcurrency(settings: Partial<GenerationConcu
         audio: Math.max(1, Math.min(10, Math.floor(Number(settings?.audio) || DEFAULT_SETTINGS.generationConcurrency.audio))),
         text: Math.max(1, Math.min(20, Math.floor(Number(settings?.text) || DEFAULT_SETTINGS.generationConcurrency.text))),
         render: Math.max(1, Math.min(5, Math.floor(Number(settings?.render) || DEFAULT_SETTINGS.generationConcurrency.render))),
+    };
+}
+
+export function normalizeGenerationCostControl(settings: Partial<GenerationCostControlSettings> | undefined): GenerationCostControlSettings {
+    return {
+        maxPointsPerTask: Math.max(0, normalizePointAmount(settings?.maxPointsPerTask, 0)),
+        dailyUserPointSpend: Math.max(0, normalizePointAmount(settings?.dailyUserPointSpend, 0)),
+        dailyTotalPointSpend: Math.max(0, normalizePointAmount(settings?.dailyTotalPointSpend, 0)),
+    };
+}
+
+export function normalizeDataLifecycle(settings: Partial<DataLifecycleSettings> | undefined): DataLifecycleSettings {
+    return {
+        cleanupExpiredSessions: settings?.cleanupExpiredSessions !== false,
+        cleanupExpiredEmailCodes: settings?.cleanupExpiredEmailCodes !== false,
+        cleanupExpiredGenerationTasks: settings?.cleanupExpiredGenerationTasks !== false,
+        cleanupExpiredTemporaryMedia: settings?.cleanupExpiredTemporaryMedia !== false,
+        maintenanceBatchSize: Math.max(1, Math.min(500, Math.floor(Number(settings?.maintenanceBatchSize) || 100))),
     };
 }
 

@@ -14,7 +14,7 @@ import { GET, POST } from "./route";
 describe("/api/admin/billing/coupon-templates", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["commerce.manage"] });
         mocks.listCouponTemplates.mockResolvedValue({ items: [{ id: "template-one" }], total: 1, page: 1, pageSize: 20 });
         mocks.readJsonBody.mockResolvedValue({ name: "新客券" });
         mocks.saveCouponTemplate.mockResolvedValue({ id: "template-one", name: "新客券", enabled: true, claimable: true });

@@ -1,5 +1,7 @@
 export type UserRole = "admin" | "user";
 export type UserStatus = "active" | "disabled";
+export type { AdminPermission } from "@/lib/admin-permissions";
+import type { AdminPermission } from "@/lib/admin-permissions";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
 import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
@@ -180,6 +182,20 @@ export type GenerationPointMultipliers = {
     videoSeconds: Record<string, number>;
 };
 
+export type GenerationCostControlSettings = {
+    maxPointsPerTask: number;
+    dailyUserPointSpend: number;
+    dailyTotalPointSpend: number;
+};
+
+export type DataLifecycleSettings = {
+    cleanupExpiredSessions: boolean;
+    cleanupExpiredEmailCodes: boolean;
+    cleanupExpiredGenerationTasks: boolean;
+    cleanupExpiredTemporaryMedia: boolean;
+    maintenanceBatchSize: number;
+};
+
 export type EntitlementPlanLimits = {
     dailyPointSpend: number;
     dailyApiCalls: number;
@@ -348,6 +364,7 @@ export type PublicUser = {
     bio: string;
     avatarUrl?: string;
     role: UserRole;
+    adminPermissions: AdminPermission[];
     status: UserStatus;
     planId: string;
     planName: string;
@@ -454,6 +471,8 @@ export type AuthSettings = {
     allowUserApiConfig: boolean;
     modelPointCosts: ModelPointCosts;
     generationPointMultipliers: GenerationPointMultipliers;
+    generationCostControl: GenerationCostControlSettings;
+    dataLifecycle: DataLifecycleSettings;
     entitlements: EntitlementSettings;
     generationConcurrency: GenerationConcurrencySettings;
     generationDefaults: GenerationDefaultSettings;

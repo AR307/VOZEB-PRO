@@ -26,7 +26,9 @@ import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-s
 import { GenerationSubmissionUncertainError } from "./generation-submission-error";
 import { createAudioTaskUpstreamStep } from "./audio-task-runtime";
 import type { AudioTask } from "./audio-task-store";
-import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
+import { emptyAdvancedConfig, protocolModelConfig, registeredChannelProtocolDefinitions } from "@/lib/channel-protocol-registry";
+
+const AUDIO_PROTOCOLS = registeredChannelProtocolDefinitions.filter((definition) => definition.capabilities.includes("audio"));
 
 describe("audio task runtime submission safety", () => {
     let state: AudioTask;
@@ -96,67 +98,53 @@ describe("audio task runtime submission safety", () => {
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
     });
 
-    it("persists audio bytes returned by a live OpenAI-compatible fixture", async () => {
+    it.each(AUDIO_PROTOCOLS)("receives an audio response from the $id protocol over a local TCP interface", async (definition) => {
         const fixture = createProtocolFixtureServer();
         await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
         const address = fixture.server.address();
         if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
         const origin = `http://127.0.0.1:${address.port}`;
-        state = {
-            ...audioTask(),
-            config: { baseUrl: `${origin}/v1`, apiKey: "fixture-key", apiFormat: "openai", model: "mock-audio", channelId: "fixture-audio", voice: "alloy", format: "wav", speed: "1" },
-            candidateConfigs: [],
-        };
-
-        try {
-            await expect(createAudioTaskUpstreamStep(state, "http://internal")).resolves.toEqual({ state: "completed" });
-            expect(state).toMatchObject({ status: "success", result: { url: "/api/reference-assets/fixture-audio.wav", mimeType: "audio/wav" } });
-            expect(mocks.writeMedia).toHaveBeenCalledWith(expect.stringMatching(/^data:audio\/wav;base64,UklGR/), "audio", expect.objectContaining({ ownerUserId: "user-one", taskId: "audio-one" }));
-            expect(mocks.register).toHaveBeenCalledOnce();
-            expect(fixture.requests[0]).toMatchObject({ method: "POST", path: "/v1/audio/speech" });
-            expect(fixture.requests[0]?.headers.authorization).toBe("Bearer fixture-key");
-            expect(fixture.requests[0]?.headers["idempotency-key"]).toBe("audio-task:audio-one:attempt:1");
-            expect(fixture.requests[0]?.headers["x-client-request-id"]).toBe("audio-task:audio-one:attempt:1");
-        } finally {
-            await new Promise<void>((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
-        }
-    });
-
-    it("uses the exact custom audio template and configured result field", async () => {
-        const fixture = createProtocolFixtureServer();
-        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
-        const address = fixture.server.address();
-        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
-        const origin = "http://127.0.0.1:" + address.port;
+        const custom = definition.id === "custom";
+        const advancedConfig = custom
+            ? {
+                  ...emptyAdvancedConfig(),
+                  protocol: "custom" as const,
+                  createPath: "/custom/audio",
+                  requestTemplate: '{"deployment":"{{model}}","content":"{{input}}","speaker":"{{voice}}","rate":"{{speed}}"}',
+                  resultField: "data.audio_url",
+              }
+            : { ...emptyAdvancedConfig(), ...(protocolModelConfig(definition.id, "audio") || { protocol: definition.id }) };
         state = {
             ...audioTask(),
             config: {
                 baseUrl: origin,
                 apiKey: "fixture-key",
                 apiFormat: "openai",
-                model: "custom-audio",
-                channelId: "fixture-custom-audio",
-                voice: "nova",
+                model: `${definition.id}-audio`,
+                channelId: `fixture-${definition.id}-audio`,
+                voice: custom ? "nova" : "alloy",
                 format: "wav",
-                speed: "1.25",
-                advancedConfig: {
-                    ...emptyAdvancedConfig(),
-                    protocol: "custom",
-                    createPath: "/custom/audio",
-                    requestTemplate: '{"deployment":"{{model}}","content":"{{input}}","speaker":"{{voice}}","rate":"{{speed}}"}',
-                    resultField: "data.audio_url",
-                },
+                speed: custom ? "1.25" : "1",
+                advancedConfig,
             },
             candidateConfigs: [],
         };
 
         try {
-            await expect(createAudioTaskUpstreamStep(state, "")).resolves.toMatchObject({ state: "result_ready", resultUrl: expect.stringContaining("/media/fixture.wav") });
-            expect(fixture.requests).toHaveLength(1);
-            expect(fixture.requests[0]?.path).toBe("/custom/audio");
+            const result = await createAudioTaskUpstreamStep(state, "http://internal");
+            if (custom) {
+                expect(result).toMatchObject({ state: "result_ready", resultUrl: expect.stringContaining("/media/fixture.wav") });
+                expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toEqual({ deployment: "custom-audio", content: "test", speaker: "nova", rate: 1.25 });
+            } else {
+                expect(result).toEqual({ state: "completed" });
+                expect(state).toMatchObject({ status: "success", result: { url: "/api/reference-assets/fixture-audio.wav", mimeType: "audio/wav" } });
+                expect(mocks.writeMedia).toHaveBeenCalledWith(expect.stringMatching(/^data:audio\/wav;base64,UklGR/), "audio", expect.objectContaining({ ownerUserId: "user-one", taskId: "audio-one" }));
+                expect(mocks.register).toHaveBeenCalledOnce();
+            }
+            expect(fixture.requests[0]).toMatchObject({ method: "POST", path: custom ? "/custom/audio" : "/audio/speech" });
             expect(fixture.requests[0]?.headers.authorization).toBe("Bearer fixture-key");
             expect(fixture.requests[0]?.headers["idempotency-key"]).toBe("audio-task:audio-one:attempt:1");
-            expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toEqual({ deployment: "custom-audio", content: "test", speaker: "nova", rate: 1.25 });
+            expect(fixture.requests[0]?.headers["x-client-request-id"]).toBe("audio-task:audio-one:attempt:1");
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
         }

@@ -1,11 +1,9 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
-import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
-import { isAuthInputError } from "@/lib/auth/store";
 import { sanitizeAuthBackup } from "@/lib/server/admin-backup-policy";
 import { readAdminBackupData } from "@/lib/server/admin-backup-store";
-import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 
 export const runtime = "nodejs";
@@ -14,11 +12,9 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "system.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     try {
-        const proof = await readJsonBody<{ currentPassword?: unknown; totpCode?: unknown }>(request);
-        await verifyAdminSensitiveAction(currentUser.id, proof);
         const exportedAt = new Date().toISOString();
         const data = await readAdminBackupData();
         const backup = {
@@ -57,7 +53,6 @@ export async function POST(request: Request) {
             target: { type: "backup" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         console.error("Admin backup export failed", error);
         return NextResponse.json({ error: "导出备份失败" }, { status: 500 });
     }

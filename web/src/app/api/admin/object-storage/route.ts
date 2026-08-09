@@ -5,9 +5,9 @@ import { readJsonBodyResult } from "@/lib/auth/request";
 import { isAuthInputError } from "@/lib/auth/store";
 import type { ObjectStorageSettingsUpdate } from "@/lib/object-storage-contract";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
-import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { getObjectStorageAdminSettings, saveObjectStorageAdminSettings } from "@/lib/server/object-storage-config";
 import { checkConfiguredObjectStorage } from "@/lib/server/object-storage-service";
+import { hasAdminPermission } from "@/lib/admin-permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,12 +21,11 @@ export async function GET() {
 export async function PATCH(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "system.manage")) return NextResponse.json({ code: 403, data: null, msg: "当前管理员没有管理存储的职责权限" }, { status: 403 });
     try {
-        const parsed = await readJsonBodyResult<Partial<ObjectStorageSettingsUpdate> & { currentPassword?: unknown; totpCode?: unknown }>(request);
+        const parsed = await readJsonBodyResult<Partial<ObjectStorageSettingsUpdate>>(request);
         if (!parsed.ok) return NextResponse.json({ code: parsed.status, data: null, msg: parsed.message }, { status: parsed.status });
         const body = parsed.data;
-        await verifyAdminSensitiveAction(currentUser.id, body);
         const data = await saveObjectStorageAdminSettings({
             enabled: body.enabled === true,
             endpoint: stringValue(body.endpoint),
@@ -74,7 +73,7 @@ export async function POST() {
 async function requireAdmin() {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    return user.role === "admin" ? null : NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    return hasAdminPermission(user, "system.manage") ? null : NextResponse.json({ code: 403, data: null, msg: "当前管理员没有管理存储的职责权限" }, { status: 403 });
 }
 
 function stringValue(value: unknown) {

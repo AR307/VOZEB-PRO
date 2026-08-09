@@ -1,5 +1,6 @@
 import { formatAccountId } from "@/lib/account-id";
 import { normalizeRegistrationPolicyConsent } from "@/lib/registration-consent";
+import { normalizeAdminPermissions } from "@/lib/admin-permissions";
 
 import type {
     AnnouncementRecord,
@@ -83,6 +84,7 @@ export function mapUser(row: Record<string, unknown>): UserRecord {
         bio: stringValue(row.bio),
         avatarStorageKey: optionalString(row.avatar_storage_key),
         role: row.role === "admin" ? "admin" : "user",
+        adminPermissions: row.role === "admin" ? normalizeAdminPermissions(jsonValue(row.admin_permissions)) : [],
         status: row.status === "disabled" ? "disabled" : "active",
         planId: stringValue(row.plan_id),
         pointsBalance: numberValue(row.points_balance),

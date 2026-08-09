@@ -25,8 +25,39 @@ let fileMutationQueue = Promise.resolve();
 const concurrencyQueues = new Map<string, Promise<void>>();
 
 export async function createStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number) {
-    await cleanupStoredGenerationTasks();
     return insertTask(type, task, ttlMs);
+}
+
+export async function cleanupExpiredStoredGenerationTasks(input: { limit: number; now?: Date }) {
+    const now = input.now || new Date();
+    const limit = Math.max(1, Math.min(500, Math.floor(input.limit)));
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ id: string }>(
+            `WITH candidates AS (
+                SELECT id FROM generation_tasks
+                WHERE expires_at <= $1
+                ORDER BY expires_at ASC, id ASC
+                LIMIT $2
+            )
+            DELETE FROM generation_tasks
+            USING candidates
+            WHERE generation_tasks.id = candidates.id
+            RETURNING generation_tasks.id`,
+            [now.toISOString(), limit],
+        );
+        return result.rows.length;
+    }
+    return withGenerationTaskFileMutation(async (tasks) => {
+        const expiredIds = new Set(
+            tasks
+                .filter((task) => task.expiresAt <= now.getTime())
+                .toSorted((left, right) => left.expiresAt - right.expiresAt || left.id.localeCompare(right.id))
+                .slice(0, limit)
+                .map((task) => task.id),
+        );
+        return { tasks: tasks.filter((task) => !expiredIds.has(task.id)), result: expiredIds.size };
+    });
 }
 
 export async function getStoredGenerationTask<T>(type: GenerationTaskType, id: string): Promise<(T & GenerationTaskExecutionState) | null> {
@@ -637,15 +668,6 @@ function taskValues<T extends { id: string; userId: string; createdAt: number; u
         context.attemptNo ?? null,
         context.clientRequestId || null,
     ];
-}
-
-async function cleanupStoredGenerationTasks() {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        await postgresQuery("DELETE FROM generation_tasks WHERE expires_at <= now()");
-        return;
-    }
-    await mutateFileTasks((tasks) => tasks.filter((task) => task.expiresAt > Date.now()));
 }
 
 async function readFileTasks() {

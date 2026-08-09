@@ -6,7 +6,6 @@ import { saveAs } from "file-saver";
 import { DatabaseBackup, Download, FileJson2, HardDrive, ShieldCheck, Upload } from "lucide-react";
 
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { useAdminSensitiveAction } from "@/hooks/use-admin-sensitive-action";
 import { ADMIN_BACKUP_MAX_BYTES, downloadAdminBackup, importAdminBackup } from "@/services/api/admin-backup";
 
 const sectionLabels: Record<string, string> = {
@@ -16,23 +15,16 @@ const sectionLabels: Record<string, string> = {
 };
 
 export function AdminDataBackup() {
-    const { message } = App.useApp();
-    const { requestSensitiveAction, sensitiveActionModal } = useAdminSensitiveAction();
+    const { message, modal } = App.useApp();
     const inputRef = useRef<HTMLInputElement>(null);
     const [exporting, setExporting] = useState(false);
     const [importing, setImporting] = useState(false);
     const [lastImported, setLastImported] = useState<string[]>([]);
 
     const exportBackup = async () => {
-        const proof = await requestSensitiveAction({
-            title: "导出业务备份",
-            description: "将下载包含用户、权益与业务配置的脱敏备份。导出文件不会包含登录凭据或渠道密钥。",
-            confirmText: "验证并导出",
-        });
-        if (!proof) return;
         setExporting(true);
         try {
-            const backup = await downloadAdminBackup(proof);
+            const backup = await downloadAdminBackup();
             saveAs(backup.blob, backup.fileName);
             message.success("业务数据备份已导出");
         } catch (error) {
@@ -53,23 +45,25 @@ export function AdminDataBackup() {
             message.error("备份文件不能超过 30MB");
             return;
         }
-        void requestSensitiveAction({
+        modal.confirm({
             title: "恢复业务数据？",
-            description: `将从“${file.name}”恢复可识别的数据，并在服务器创建恢复前安全备份。当前敏感凭据不会被上传文件覆盖。`,
-            confirmText: "验证并恢复",
-            danger: true,
-        }).then(async (proof) => {
-            if (!proof) return;
-            setImporting(true);
-            try {
-                const result = await importAdminBackup(file, proof);
-                setLastImported(result.imported);
-                message.success("业务数据已恢复，请刷新后台确认最新状态");
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "导入备份失败");
-            } finally {
-                setImporting(false);
-            }
+            content: `将从“${file.name}”恢复可识别的数据，并在服务器创建恢复前安全备份。当前敏感凭据不会被上传文件覆盖。`,
+            okText: "确认恢复",
+            cancelText: "取消",
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                setImporting(true);
+                try {
+                    const result = await importAdminBackup(file);
+                    setLastImported(result.imported);
+                    message.success("业务数据已恢复，请刷新后台确认最新状态");
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "导入备份失败");
+                    throw error;
+                } finally {
+                    setImporting(false);
+                }
+            },
         });
     };
 
@@ -131,7 +125,6 @@ export function AdminDataBackup() {
                     </section>
                 </div>
             </Panel>
-            {sensitiveActionModal}
         </>
     );
 }

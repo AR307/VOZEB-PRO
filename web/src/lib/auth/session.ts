@@ -88,6 +88,7 @@ export function serializeCurrentUser(user: CurrentUser) {
         bio: user.bio,
         avatarUrl: user.avatarUrl,
         role: user.role,
+        adminPermissions: [...user.adminPermissions],
         status: user.status,
         planId: user.planId,
         planName: user.planName,

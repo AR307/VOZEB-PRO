@@ -4,30 +4,31 @@ import { AuthInputError, getAuthSettings, isAuthInputError, setAuthSettings, typ
 import { modelRoutingValidationErrors, normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
-import { mergeSystemChannelSecrets, serializeAdminSettings, systemChannelWebhookSecretValidationError } from "@/lib/server/admin-channel-config";
-import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
+import { mergeSystemChannelSecrets, serializeAdminSettingsForUser, systemChannelWebhookSecretValidationError } from "@/lib/server/admin-channel-config";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { invalidatePublicSiteSettings } from "@/lib/server/site-metadata";
 import { channelProtocolValidationErrors } from "@/lib/channel-protocol-registry";
+import { hasAllAdminPermissions, hasAnyAdminPermission, type AdminPermission } from "@/lib/admin-permissions";
 
 export const runtime = "nodejs";
 
 export async function GET() {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAnyAdminPermission(currentUser)) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
-    return NextResponse.json({ settings: serializeAdminSettings(await getAuthSettings()) });
+    return NextResponse.json({ settings: serializeAdminSettingsForUser(await getAuthSettings(), currentUser) });
 }
 
 export async function PATCH(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAnyAdminPermission(currentUser)) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     try {
-        const body = await readJsonBody<Partial<AuthSettings> & { currentPassword?: unknown; totpCode?: unknown }>(request);
-        await verifyAdminSensitiveAction(currentUser.id, body);
+        const body = await readJsonBody<Partial<AuthSettings>>(request);
+        const requiredPermissions = settingsPermissionsForPatch(body);
+        if (!hasAllAdminPermissions(currentUser, requiredPermissions)) return NextResponse.json({ error: "当前管理员没有修改这些设置的职责权限" }, { status: 403 });
         const currentSettings = await getAuthSettings();
         const patch: Partial<AuthSettings> = {};
         if (body.site) patch.site = body.site;
@@ -38,6 +39,8 @@ export async function PATCH(request: Request) {
         if (body.mail) patch.mail = body.mail;
         if (body.modelPointCosts && typeof body.modelPointCosts === "object") patch.modelPointCosts = body.modelPointCosts;
         if (body.generationPointMultipliers && typeof body.generationPointMultipliers === "object") patch.generationPointMultipliers = body.generationPointMultipliers;
+        if (body.generationCostControl && typeof body.generationCostControl === "object") patch.generationCostControl = body.generationCostControl;
+        if (body.dataLifecycle && typeof body.dataLifecycle === "object") patch.dataLifecycle = body.dataLifecycle;
         if (body.entitlements && typeof body.entitlements === "object") patch.entitlements = body.entitlements;
         if (body.generationConcurrency && typeof body.generationConcurrency === "object") patch.generationConcurrency = body.generationConcurrency;
         if (body.generationDefaults && typeof body.generationDefaults === "object") patch.generationDefaults = body.generationDefaults;
@@ -70,7 +73,7 @@ export async function PATCH(request: Request) {
             target: { type: "settings", id: "auth" },
             metadata: { fields: Object.keys(patch) },
         });
-        return NextResponse.json({ settings: serializeAdminSettings(settings) });
+        return NextResponse.json({ settings: serializeAdminSettingsForUser(settings, currentUser) });
     } catch (error) {
         await safeRecordAuditLog({
             action: "admin.settings.update",
@@ -83,4 +86,33 @@ export async function PATCH(request: Request) {
         console.error("Admin settings update failed", error);
         return NextResponse.json({ error: "更新设置失败" }, { status: 500 });
     }
+}
+
+const SETTINGS_PERMISSION_BY_FIELD = {
+    site: "system.manage",
+    registrationEnabled: "system.manage",
+    emailRegistrationEnabled: "system.manage",
+    mail: "system.manage",
+    dataLifecycle: "system.manage",
+    freeDailyPointsEnabled: "billing.manage",
+    freeDailyPoints: "billing.manage",
+    modelPointCosts: "billing.manage",
+    generationPointMultipliers: "billing.manage",
+    entitlements: "billing.manage",
+    generationCostControl: "upstream.manage",
+    generationConcurrency: "upstream.manage",
+    generationDefaults: "upstream.manage",
+    systemChannels: "upstream.manage",
+    logicalModels: "upstream.manage",
+    defaultModels: "upstream.manage",
+    agentSkills: "upstream.manage",
+} as const satisfies Partial<Record<keyof AuthSettings, AdminPermission>>;
+
+function settingsPermissionsForPatch(patch: Partial<AuthSettings>) {
+    const permissions: AdminPermission[] = [];
+    for (const key of Object.keys(patch)) {
+        const permission = SETTINGS_PERMISSION_BY_FIELD[key as keyof typeof SETTINGS_PERMISSION_BY_FIELD];
+        if (permission && !permissions.includes(permission)) permissions.push(permission);
+    }
+    return permissions;
 }

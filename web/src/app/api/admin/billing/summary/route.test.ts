@@ -34,7 +34,7 @@ describe("admin billing summary route", () => {
     });
 
     it("passes an optional date window to the summary service", async () => {
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["billing.read"] });
 
         const response = await GET(new NextRequest("http://localhost/api/admin/billing/summary?startDate=2026-07-01&endDate=2026-07-31"));
         const payload = await response.json();

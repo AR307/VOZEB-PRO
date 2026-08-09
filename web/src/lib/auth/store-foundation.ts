@@ -20,6 +20,8 @@ import {
     type GenerationConcurrencySettings,
     type GenerationDefaultSettings,
     type GenerationPointMultipliers,
+    type GenerationCostControlSettings,
+    type DataLifecycleSettings,
     type EntitlementPlanLimits,
     type EntitlementPlan,
     type EntitlementSettings,
@@ -113,6 +115,18 @@ export const DEFAULT_GENERATION_POINT_MULTIPLIERS: GenerationPointMultipliers = 
     videoQuality: { "480": 1, "720": 1, "1080": 1 },
     videoSeconds: { "-1": 1, "5": 1, "10": 1 },
 };
+export const DEFAULT_GENERATION_COST_CONTROL: GenerationCostControlSettings = {
+    maxPointsPerTask: 0,
+    dailyUserPointSpend: 0,
+    dailyTotalPointSpend: 0,
+};
+export const DEFAULT_DATA_LIFECYCLE: DataLifecycleSettings = {
+    cleanupExpiredSessions: true,
+    cleanupExpiredEmailCodes: true,
+    cleanupExpiredGenerationTasks: true,
+    cleanupExpiredTemporaryMedia: true,
+    maintenanceBatchSize: 100,
+};
 export const DEFAULT_ENTITLEMENT_LIMITS: EntitlementPlanLimits = {
     dailyPointSpend: 0,
     dailyApiCalls: 0,
@@ -146,6 +160,8 @@ export const DEFAULT_SETTINGS: AuthSettings = {
     allowUserApiConfig: false,
     modelPointCosts: {},
     generationPointMultipliers: DEFAULT_GENERATION_POINT_MULTIPLIERS,
+    generationCostControl: DEFAULT_GENERATION_COST_CONTROL,
+    dataLifecycle: DEFAULT_DATA_LIFECYCLE,
     entitlements: DEFAULT_ENTITLEMENT_SETTINGS,
     generationConcurrency: { agent: 2, image: 4, video: 1, audio: 2, text: 4, render: 1 },
     generationDefaults: {

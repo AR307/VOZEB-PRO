@@ -17,7 +17,7 @@ import { GET } from "./route";
 describe("/api/admin/referrals", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["commerce.manage"] });
         mocks.getAdminReferralOverview.mockResolvedValue({
             program: { enabled: false, inviterPoints: 100, inviteeRewardType: "points", inviteePoints: 50, minimumPaidCents: 0, coolingOffDays: 0 },
             stats: { clicks: 0, registrations: 0, qualified: 0, pending: 0, settled: 0, risky: 0 },

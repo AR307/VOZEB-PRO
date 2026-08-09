@@ -1,4 +1,5 @@
 import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
+import type { AdminPermission } from "@/lib/admin-permissions";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -48,6 +49,7 @@ export type UserRecord = {
     bio: string;
     avatarStorageKey?: string;
     role: UserRole;
+    adminPermissions: AdminPermission[];
     status: UserStatus;
     planId: string;
     pointsBalance: number;
@@ -122,6 +124,8 @@ export type AppSettingsRecord = {
     allowUserApiConfig: boolean;
     modelPointCosts: JsonValue;
     generationPointMultipliers: JsonValue;
+    generationCostControl: JsonValue;
+    dataLifecycle: JsonValue;
     entitlementsEnabled: boolean;
     defaultPlanId: string;
     generationConcurrency: JsonValue;

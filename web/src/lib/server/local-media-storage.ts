@@ -90,8 +90,8 @@ async function listRegisteredLocalMediaAssets(input: { page?: number; pageSize?:
     };
 }
 
-export async function cleanupExpiredLocalMediaAssets() {
-    const registered = await listExpiredLocalMediaRegistrations();
+export async function cleanupExpiredLocalMediaAssets(limit?: number) {
+    const registered = await listExpiredLocalMediaRegistrations(limit);
     const registeredResult = await deleteRegisteredMediaAssets(registered);
     if (getDatabaseProvider() === "postgres") return registeredResult;
     const registeredKeys = new Set(registered.map((asset) => asset.storageKey));

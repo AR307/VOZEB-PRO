@@ -112,16 +112,6 @@ export type PromptFormValue = {
     preview?: string;
 };
 
-export type UserEditorValue = {
-    username?: string;
-    displayName: string;
-    email?: string;
-    password?: string;
-    role: UserRole;
-    status: UserStatus;
-    pointsBalance: number;
-};
-
 export const PROMPT_PAGE_SIZE = 20;
 export const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 export const CDK_PAGE_SIZE = 20;
@@ -146,14 +136,21 @@ import {
     clampInteger,
 } from "./admin-dashboard-elements";
 
-import type { AdminDashboardState } from "./use-admin-dashboard-state";
+import type { AdminDashboardState, UserEditorValue } from "./use-admin-dashboard-state";
 import type { AdminDashboardDataActions } from "./use-admin-dashboard-data-actions";
 import type { AdminDashboardSettingsActions } from "./use-admin-dashboard-settings-actions";
+import { ADMIN_PERMISSION_PRESETS, adminPermissionSummary, hasAdminPermission, hasAllAdminPermissions, normalizeAdminPermissions } from "@/lib/admin-permissions";
 
 export function useAdminDashboardTableModel({ state, data, settingsActions }: { state: AdminDashboardState; data: AdminDashboardDataActions; settingsActions: AdminDashboardSettingsActions }) {
     const { currentUser, setupSummary, userForm, settings, updatingUserId, deletingPromptId, setViewingGenerationLog, setViewingCdkCode, editingUser, setEditingUser, creatingUser, setCreatingUser, activeSection } = state;
     const { updateUser, createUser, deleteUser, deletePrompt, deleteGenerationLogsByIds, deleteCdkById, copyCdkPlainCode } = data;
     const {} = settingsActions;
+    const canManageUsers = hasAdminPermission(currentUser, "users.manage");
+    const canManageAdministrators = hasAdminPermission(currentUser, "administrators.manage");
+    const canManageBilling = hasAdminPermission(currentUser, "billing.manage");
+    const canManageAdministratorRecord = (user: PublicUser) => canManageAdministrators && hasAllAdminPermissions(currentUser, user.adminPermissions);
+    const canEditUserRecord = (user: PublicUser) => canManageBilling || (user.role === "admin" ? canManageAdministratorRecord(user) : canManageUsers || canManageAdministrators);
+    const canDeleteUserRecord = (user: PublicUser) => user.id !== currentUser.id && (user.role === "admin" ? canManageAdministratorRecord(user) : canManageUsers);
 
     const openUserEditor = (user: PublicUser) => {
         setCreatingUser(false);
@@ -164,6 +161,8 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
             email: user.email || "",
             password: "",
             role: user.role,
+            adminPermissions: user.adminPermissions,
+            permissionPreset: ADMIN_PERMISSION_PRESETS.find((preset) => normalizeAdminPermissions(preset.permissions).join() === normalizeAdminPermissions(user.adminPermissions).join())?.key,
             status: user.status,
             pointsBalance: user.permanentPointsBalance,
         });
@@ -172,7 +171,19 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
     const openCreateUserEditor = () => {
         setEditingUser(null);
         setCreatingUser(true);
-        userForm.setFieldsValue({ username: "", displayName: "", email: "", password: "", role: "user", status: "active", pointsBalance: 0 });
+        const role = canManageUsers ? "user" : "admin";
+        const adminPermissions = role === "admin" ? normalizeAdminPermissions(currentUser.adminPermissions) : [];
+        userForm.setFieldsValue({
+            username: "",
+            displayName: "",
+            email: "",
+            password: "",
+            role,
+            adminPermissions,
+            permissionPreset: ADMIN_PERMISSION_PRESETS.find((preset) => normalizeAdminPermissions(preset.permissions).join() === adminPermissions.join())?.key,
+            status: "active",
+            pointsBalance: 0,
+        });
     };
 
     const closeUserEditor = () => {
@@ -188,13 +199,21 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
             return;
         }
         if (!editingUser) return;
+        const touchesAdministrator = editingUser.role === "admin" || value.role === "admin";
+        const targetWithinScope = editingUser.role !== "admin" || hasAllAdminPermissions(currentUser, editingUser.adminPermissions);
+        const canEditAccount = touchesAdministrator ? canManageAdministrators && targetWithinScope : canManageUsers;
         const user = await updateUser(editingUser.id, {
-            displayName: value.displayName,
-            email: value.email || "",
-            password: value.password || undefined,
-            role: value.role,
-            status: value.status,
-            pointsBalance: toNumberOrZero(value.pointsBalance),
+            ...(canEditAccount
+                ? {
+                      displayName: value.displayName,
+                      email: value.email || "",
+                      password: value.password || undefined,
+                      role: value.role,
+                      adminPermissions: value.role === "admin" ? value.adminPermissions : [],
+                      status: value.status,
+                  }
+                : {}),
+            ...(canManageBilling ? { pointsBalance: toNumberOrZero(value.pointsBalance) } : {}),
         });
         if (user) closeUserEditor();
     };
@@ -214,6 +233,7 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
                     <div className="mt-2 flex flex-wrap gap-1 sm:hidden">
                         <Tag color={record.role === "admin" ? "blue" : "default"}>{record.role === "admin" ? "管理员" : "普通用户"}</Tag>
                         <Tag color={record.status === "active" ? "green" : "red"}>{record.status === "active" ? "可用" : "已禁用"}</Tag>
+                        {record.role === "admin" ? <span className="self-center text-xs text-stone-500 dark:text-stone-400">{adminPermissionSummary(record.adminPermissions)}</span> : null}
                     </div>
                     <div className="mt-2 space-y-1 text-xs text-stone-500 sm:hidden dark:text-stone-400">
                         <div>
@@ -243,9 +263,14 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
         {
             title: "角色",
             dataIndex: "role",
-            width: 120,
+            width: 170,
             responsive: ["sm"],
-            render: (role: UserRole) => <Tag color={role === "admin" ? "blue" : "default"}>{role === "admin" ? "管理员" : "普通用户"}</Tag>,
+            render: (role: UserRole, record) => (
+                <div>
+                    <Tag color={role === "admin" ? "blue" : "default"}>{role === "admin" ? "管理员" : "普通用户"}</Tag>
+                    {role === "admin" ? <div className="mt-1.5 text-xs text-stone-500 dark:text-stone-400">{adminPermissionSummary(record.adminPermissions)}</div> : null}
+                </div>
+            ),
         },
         {
             title: "状态",
@@ -288,24 +313,25 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
         {
             title: "操作",
             width: 150,
-            render: (_, record) => (
-                <Space size={6}>
-                    <Button size="small" icon={<SlidersHorizontal className="size-3.5" />} loading={updatingUserId === record.id} onClick={() => openUserEditor(record)}>
-                        管理
-                    </Button>
-                    <Popconfirm title="删除该用户？" description="会同时清理该用户会话、积分、额度记录、生成日志和服务器副本。" okText="删除" cancelText="取消" onConfirm={() => void deleteUser(record.id)}>
-                        <Button
-                            size="small"
-                            danger
-                            disabled={record.id === currentUser.id}
-                            loading={updatingUserId === record.id}
-                            icon={<Trash2 className="size-3.5" />}
-                            aria-label={`删除用户 ${record.displayName}`}
-                            title={`删除用户 ${record.displayName}`}
-                        />
-                    </Popconfirm>
-                </Space>
-            ),
+            render: (_, record) => {
+                const canEdit = canEditUserRecord(record);
+                const canDelete = canDeleteUserRecord(record);
+                if (!canEdit && !canDelete) return <span className="text-xs text-stone-400">只读</span>;
+                return (
+                    <Space size={6}>
+                        {canEdit ? (
+                            <Button size="small" icon={<SlidersHorizontal className="size-3.5" />} loading={updatingUserId === record.id} onClick={() => openUserEditor(record)}>
+                                管理
+                            </Button>
+                        ) : null}
+                        {canDelete ? (
+                            <Popconfirm title="删除该用户？" description="会同时清理该用户会话、积分、额度记录、生成日志和服务器副本。" okText="删除" cancelText="取消" onConfirm={() => void deleteUser(record.id)}>
+                                <Button size="small" danger loading={updatingUserId === record.id} icon={<Trash2 className="size-3.5" />} aria-label={`删除用户 ${record.displayName}`} title={`删除用户 ${record.displayName}`} />
+                            </Popconfirm>
+                        ) : null}
+                    </Space>
+                );
+            },
         },
     ];
 

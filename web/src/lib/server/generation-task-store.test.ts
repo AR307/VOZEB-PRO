@@ -18,6 +18,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
 
 import { getDatabaseProvider, postgresQuery } from "@/lib/server/database";
 import {
+    cleanupExpiredStoredGenerationTasks,
     createStoredGenerationTask,
     getStoredGenerationTask,
     getStoredGenerationTaskByRequest,
@@ -39,6 +40,8 @@ type TestTask = {
 
 describe("mutateStoredGenerationTask", () => {
     beforeEach(() => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+        vi.mocked(postgresQuery).mockReset();
         const now = Date.now();
         mocks.records = [
             {
@@ -61,6 +64,31 @@ describe("mutateStoredGenerationTask", () => {
         ]);
 
         expect((mocks.records[0].payload as TestTask).events).toEqual(["first", "second"]);
+    });
+
+    it("removes only one stable bounded batch of expired file tasks", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+        const now = Date.now();
+        mocks.records = [
+            { id: "expired-new", userId: "user", type: "text", status: "success", payload: {}, createdAt: now - 2_000, updatedAt: now - 2_000, expiresAt: now - 1_000 },
+            { id: "active", userId: "user", type: "text", status: "success", payload: {}, createdAt: now, updatedAt: now, expiresAt: now + 1_000 },
+            { id: "expired-old", userId: "user", type: "text", status: "success", payload: {}, createdAt: now - 3_000, updatedAt: now - 3_000, expiresAt: now - 2_000 },
+        ];
+
+        await expect(cleanupExpiredStoredGenerationTasks({ limit: 1, now: new Date(now) })).resolves.toBe(1);
+        expect(mocks.records.map((record) => record.id)).toEqual(["expired-new", "active"]);
+    });
+
+    it("uses a bounded PostgreSQL delete for expired tasks", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [{ id: "expired" }], command: "DELETE", rowCount: 1, oid: 0, fields: [] });
+        const now = new Date("2026-08-09T12:00:00.000Z");
+
+        await expect(cleanupExpiredStoredGenerationTasks({ limit: 25, now })).resolves.toBe(1);
+        expect(vi.mocked(postgresQuery).mock.calls[0][0]).toContain("ORDER BY expires_at ASC, id ASC");
+        expect(vi.mocked(postgresQuery).mock.calls[0][0]).toContain("LIMIT $2");
+        expect(vi.mocked(postgresQuery).mock.calls[0][1]).toEqual([now.toISOString(), 25]);
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
     });
 
     it("serializes concurrency checks with task creation", async () => {

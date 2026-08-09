@@ -7,6 +7,7 @@ import {
     channelCredentialsReady,
     channelProtocolDefinition,
     channelProtocolDefinitions,
+    registeredChannelProtocolDefinitions,
     channelProtocolOptions,
     channelSupportsModelCatalog,
     channelProtocolValidationErrors,
@@ -76,7 +77,7 @@ describe("channel protocol registry", () => {
     });
 
     it("keeps every strict capability executable and every asynchronous video query explicit", () => {
-        const strict = channelProtocolDefinitions.filter((definition) => definition.strict);
+        const strict = registeredChannelProtocolDefinitions.filter((definition) => definition.strict);
 
         for (const definition of strict) {
             expect(Object.keys(definition.operations).sort(), definition.id).toEqual([...definition.capabilities].sort());
