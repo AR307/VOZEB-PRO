@@ -7,6 +7,7 @@ import { AuthUserHydrator } from "@/components/auth/auth-user-hydrator";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { getAuthenticatedPageAccess } from "@/lib/server/page-access";
 import { getPaymentConfigSummary } from "@/lib/server/payment-config-status";
+import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
 
 import { BillingOperations } from "./components/billing-operations";
 
@@ -95,7 +96,8 @@ function parseBillingTab(value: string | string[] | undefined): BillingTab {
 
 async function resolveRequestOrigin() {
     const requestHeaders = await headers();
-    const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "localhost:3000";
-    const protocol = requestHeaders.get("x-forwarded-proto") || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+    const trustForwarded = getTrustedProxyHops() > 0;
+    const host = (trustForwarded ? requestHeaders.get("x-forwarded-host")?.split(",")[0]?.trim() : "") || requestHeaders.get("host") || "localhost:3000";
+    const protocol = (trustForwarded ? requestHeaders.get("x-forwarded-proto")?.split(",")[0]?.trim() : "") || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
     return `${protocol}://${host}`;
 }

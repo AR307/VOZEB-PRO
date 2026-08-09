@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
 import { appStorageKey } from "@/lib/storage-keys";
@@ -56,7 +57,8 @@ export default async function RootLayout({
 }: Readonly<{
     children: React.ReactNode;
 }>) {
-    const site = await getPublicSiteSettings();
+    const [site, requestHeaders] = await Promise.all([getPublicSiteSettings(), headers()]);
+    const nonce = requestHeaders.get("x-nonce") || undefined;
     const base = siteMetadataBase();
     const websiteUrl = absoluteSiteUrl("/", base);
     const websiteStructuredData = buildWebsiteStructuredData({
@@ -69,7 +71,7 @@ export default async function RootLayout({
     return (
         <html lang="zh-CN" suppressHydrationWarning className="font-sans">
             <head>
-                <script id="theme-bootstrap" dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+                <script id="theme-bootstrap" nonce={nonce} dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
                 <link rel="icon" href="/favicon.ico" />
                 <link rel="shortcut icon" href="/favicon.ico" />
                 <link rel="apple-touch-icon" href="/favicon.ico" />
@@ -80,7 +82,7 @@ export default async function RootLayout({
                     fontFamily: '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif',
                 }}
             >
-                <script id="website-json-ld" type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(websiteStructuredData) }} />
+                <script id="website-json-ld" nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(websiteStructuredData) }} />
                 <AntdRegistry>
                     <AppProviders>{children}</AppProviders>
                 </AntdRegistry>

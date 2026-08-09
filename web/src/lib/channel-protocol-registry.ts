@@ -1,6 +1,7 @@
 import type { ApiCallFormat, LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelAuthMode, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store-types";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { SEEDANCE_SPECIAL_MODELS } from "@/lib/seedance-special";
+import { YUMENG_MODEL_CENTER_CREATE_PATH, YUMENG_MODEL_CENTER_MODELS, YUMENG_MODEL_CENTER_QUERY_PATH } from "@/lib/yumeng-model-center";
 
 type ProtocolOperation = Omit<SystemChannelModelConfig, "capability" | "source" | "protocol" | "apiFormat"> & {
     capability: LogicalModelCapability;
@@ -16,7 +17,7 @@ export type ChannelProtocolDefinition = {
     modelCatalogPaths: string[];
     capabilities: LogicalModelCapability[];
     operations: Partial<Record<LogicalModelCapability, ProtocolOperation>>;
-    builtInModels?: Array<{ id: string; label: string; capability: LogicalModelCapability }>;
+    builtInModels?: ReadonlyArray<{ id: string; label: string; capability: LogicalModelCapability }>;
     strict?: boolean;
     advanced?: boolean;
 };
@@ -81,7 +82,7 @@ const seedanceSpecialOperation: ProtocolOperation = {
     capability: "video",
     createPath: "/v1/seedance-special/videos",
     imageToVideoPath: "/v1/seedance-special/videos",
-    queryPath: "/v1/videos/:task_id",
+    queryPath: "/v1/result/:task_id",
     requestTemplate: '{"model":"{{model}}","ratio":"{{ratio}}","duration":"{{duration}}","generate_audio":true,"return_last_frame":false,"seed":-1,"content":"{{content}}"}',
     resultField: "video_url",
     statusField: "status",
@@ -118,6 +119,33 @@ const stableDiffusionOperation: ProtocolOperation = {
     supportsReferenceImage: true,
 };
 
+const yumengImageOperation: ProtocolOperation = {
+    capability: "image",
+    createPath: YUMENG_MODEL_CENTER_CREATE_PATH,
+    editPath: YUMENG_MODEL_CENTER_CREATE_PATH,
+    queryPath: YUMENG_MODEL_CENTER_QUERY_PATH,
+    requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","size":"{{size}}","watermark":false}',
+    resultField: "result_url / image_url",
+    statusField: "status",
+    referenceRule: "新版模型中心只接受上游可访问的参考图片 URL，使用 reference_images 字符串数组。",
+    supportsReferenceImage: true,
+};
+
+const yumengVideoOperation: ProtocolOperation = {
+    capability: "video",
+    createPath: YUMENG_MODEL_CENTER_CREATE_PATH,
+    imageToVideoPath: YUMENG_MODEL_CENTER_CREATE_PATH,
+    queryPath: YUMENG_MODEL_CENTER_QUERY_PATH,
+    requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}"}',
+    resultField: "result_url / video_url",
+    statusField: "status",
+    durationRange: "4-30 秒，具体范围以模型文档为准",
+    referenceRule: "新版模型中心使用 reference_images 与 reference_audios 字符串数组；参考素材必须是上游可访问的 URL，不支持参考视频。",
+    supportsReferenceImage: true,
+    supportsReferenceVideo: false,
+    supportsReferenceAudio: true,
+};
+
 const definitions: ChannelProtocolDefinition[] = [
     {
         id: "openai",
@@ -128,6 +156,18 @@ const definitions: ChannelProtocolDefinition[] = [
         modelCatalogPaths: ["/v1/models"],
         capabilities: ["text", "image", "video", "audio"],
         operations: openAiOperations,
+        strict: true,
+    },
+    {
+        id: "yumeng",
+        label: "昱梦",
+        description: "昱梦新版模型中心协议，统一提交和查询图片、视频异步任务。",
+        apiFormat: "openai",
+        authMode: "bearer",
+        modelCatalogPaths: [],
+        builtInModels: YUMENG_MODEL_CENTER_MODELS,
+        capabilities: ["image", "video"],
+        operations: { image: yumengImageOperation, video: yumengVideoOperation },
         strict: true,
     },
     {
@@ -277,14 +317,22 @@ const definitions: ChannelProtocolDefinition[] = [
     },
 ];
 
-export const channelProtocolDefinitions = definitions;
+const retiredProtocolIds = new Set<SystemChannelProtocol>(["vozeb-recommended", "seedance-special", "globalaiopc"]);
+
+export const channelProtocolDefinitions = definitions.filter((definition) => !retiredProtocolIds.has(definition.id));
 
 export function channelProtocolDefinition(protocol: SystemChannelProtocol) {
     return definitions.find((item) => item.id === protocol) || definitions.at(-1)!;
 }
 
 export function channelProtocolOptions() {
-    return definitions.map(({ id: value, label, description, advanced }) => ({ value, label, description, advanced }));
+    return channelProtocolDefinitions.map(({ id: value, label, description, advanced }) => ({ value, label, description, advanced }));
+}
+
+export function channelSupportsModelCatalog(channel: Pick<SystemModelChannel, "advancedConfig">) {
+    const advanced = channel.advancedConfig;
+    const paths = advanced?.modelCatalogPaths ?? channelProtocolDefinition(advanced?.protocol || "auto").modelCatalogPaths;
+    return paths.some((path) => Boolean(path.trim()));
 }
 
 export function protocolCatalogCapability(protocol: SystemChannelProtocol): LogicalModelCapability | undefined {

@@ -167,15 +167,16 @@ export async function createBillingOrder(input: { productId: string; provider: s
     });
 }
 
-export async function listBillingCoupons(input: { page?: number; pageSize?: number; status?: UserCouponStatus; productId?: string; quantity?: number } = {}) {
+export async function listBillingCoupons(input: { page?: number; pageSize?: number; status?: UserCouponStatus; productId?: string; quantity?: number; includeTemplates?: boolean } = {}) {
     const params = new URLSearchParams();
     if (input.page) params.set("page", String(input.page));
     if (input.pageSize) params.set("pageSize", String(input.pageSize));
     if (input.status) params.set("status", input.status);
     if (input.productId) params.set("productId", input.productId);
     if (input.quantity) params.set("quantity", String(input.quantity));
+    if (input.includeTemplates !== undefined) params.set("includeTemplates", String(input.includeTemplates));
     const query = params.toString();
-    return requestCommerce<{ coupons: UserCoupon[]; templates: CouponTemplate[]; total: number; page: number; pageSize: number }>(`/api/billing/coupons${query ? `?${query}` : ""}`);
+    return requestCommerce<{ coupons: UserCoupon[]; templates?: CouponTemplate[]; total: number; page: number; pageSize: number }>(`/api/billing/coupons${query ? `?${query}` : ""}`);
 }
 
 export async function claimBillingCoupon(input: { templateId?: string; code?: string }) {

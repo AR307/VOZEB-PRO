@@ -198,7 +198,7 @@ export const adminHelpArticles: AdminHelpArticle[] = [
         steps: [
             {
                 title: "添加并启用上游渠道",
-                description: "按五步向导选择协议、配置连接、获取模型、自动同步逻辑模型并复核启用；未知上游使用自定义协议助手生成可复核草稿。",
+                description: "按五步向导选择协议、配置连接、添加模型、自动同步逻辑模型并复核启用；没有公开目录时手动填写模型 ID，未知上游使用自定义协议助手生成可复核草稿。",
                 checks: ["SD2 与 Stable Diffusion 协议没有混用", "Base URL 不包含错误重复路径", "无鉴权协议不会强制要求 API Key", "对应用户工作台已完成真实调用", "密钥不会返回普通用户端"],
             },
             {

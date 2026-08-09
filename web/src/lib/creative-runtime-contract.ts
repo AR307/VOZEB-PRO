@@ -127,6 +127,7 @@ export type CreativeGenerationPreferences = {
         size?: string;
         quality?: string;
         seconds?: number;
+        count?: number;
         referenceMode?: CreativeVideoReferenceMode;
         firstFrameAssetId?: string;
         lastFrameAssetId?: string;
@@ -218,6 +219,8 @@ function normalizeVideoPreferences(value: unknown) {
     const rawQuality = typeof input.quality === "string" ? input.quality.trim().toLowerCase().replace(/p$/, "") : "";
     const quality = /^(?:auto|480|720|1080)$/.test(rawQuality) ? rawQuality : undefined;
     const seconds = Number(input.seconds);
+    const count = Number(input.count);
+    const normalizedCount = Number.isInteger(count) && count > 0 ? Math.min(10, count) : undefined;
     const referenceMode: CreativeVideoReferenceMode | undefined = input.referenceMode === "reference" || input.referenceMode === "first_frame" || input.referenceMode === "first_last" ? input.referenceMode : undefined;
     const firstFrameAssetId = optionalText(input.firstFrameAssetId, MAX_ID);
     const lastFrameAssetId = optionalText(input.lastFrameAssetId, MAX_ID);
@@ -227,11 +230,12 @@ function normalizeVideoPreferences(value: unknown) {
     if (referenceMode === "first_last" && (!firstFrameAssetId || !lastFrameAssetId)) throw new CreativeRuntimeInputError("首尾帧模式需要同时选择首帧和尾帧图片");
     if (firstFrameAssetId && lastFrameAssetId && firstFrameAssetId === lastFrameAssetId) throw new CreativeRuntimeInputError("首帧和尾帧不能使用同一张图片");
     if (input.referenceMode !== undefined && !referenceMode) throw new CreativeRuntimeInputError("视频参考方式不正确");
-    return size || quality || (Number.isInteger(seconds) && seconds > 0) || referenceMode || firstFrameAssetId || lastFrameAssetId
+    return size || quality || (Number.isInteger(seconds) && seconds > 0) || normalizedCount || referenceMode || firstFrameAssetId || lastFrameAssetId
         ? {
               ...(size ? { size } : {}),
               ...(quality ? { quality } : {}),
               ...(Number.isInteger(seconds) && seconds > 0 ? { seconds } : {}),
+              ...(normalizedCount ? { count: normalizedCount } : {}),
               ...(referenceMode ? { referenceMode } : {}),
               ...(firstFrameAssetId ? { firstFrameAssetId } : {}),
               ...(lastFrameAssetId ? { lastFrameAssetId } : {}),

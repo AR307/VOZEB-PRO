@@ -83,6 +83,19 @@ describe("audio task runtime submission safety", () => {
         expect(mocks.schedule).toHaveBeenLastCalledWith("audio", "audio-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "audio-upstream-one", channelId: "channel-one", lastUpstreamStatus: "submitted" }));
     });
 
+    it("does not persist an HTML fallback page as generated audio", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(new Response("<!doctype html><html><body>fallback</body></html>", { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }))
+            .mockResolvedValueOnce(Response.json({ audio_url: "https://cdn.example/result.mp3" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(createAudioTaskUpstreamStep(state, "http://internal")).resolves.toMatchObject({ state: "result_ready", resultUrl: "https://cdn.example/result.mp3" });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(mocks.writeMedia).not.toHaveBeenCalled();
+        expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
+    });
+
     it("persists audio bytes returned by a live OpenAI-compatible fixture", async () => {
         const fixture = createProtocolFixtureServer();
         await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));

@@ -13,9 +13,10 @@ describe("release workflow contract", () => {
         const parsed = parseDocument(source);
 
         expect(parsed.errors).toEqual([]);
+        const jobs = parsed.toJS().jobs;
         expect(source).not.toContain('branches: ["main"]');
         expect(source).toContain("quality:");
-        expect(source).toMatch(/build:\s+needs:\s+- quality\s+- meta/s);
+        expect(jobs.build.needs).toEqual(["quality", "security", "meta"]);
         expect(source).toContain("type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v')");
         expect(source).toContain("anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610");
         expect(source).toContain("cosign sign --yes");

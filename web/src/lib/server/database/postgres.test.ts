@@ -17,11 +17,41 @@ describe("PostgreSQL schema lifecycle", () => {
         delete (globalThis as Record<string, unknown>).__vozebProPostgresPool;
         delete (globalThis as Record<string, unknown>).__vozebProPostgresSchemaReady;
         process.env.DATABASE_URL = "postgres://vozeb:test@localhost:5432/vozeb";
-        mocks.query.mockReset();
-        mocks.connect.mockReset();
+        delete process.env.VOZEB_PRO_DATABASE_SSL;
+        delete process.env.VOZEB_PRO_DATABASE_SSL_CA;
+        delete process.env.VOZEB_PRO_DATABASE_SSL_REJECT_UNAUTHORIZED;
+        mocks.query.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mocks.connect.mockReset().mockResolvedValue({ query: mocks.query, release: vi.fn() });
         mocks.pool.mockReset().mockImplementation(function PoolMock() {
             return { query: mocks.query, connect: mocks.connect };
         });
+    });
+
+    it("verifies PostgreSQL TLS certificates by default and accepts an explicit CA", async () => {
+        process.env.VOZEB_PRO_DATABASE_SSL = "1";
+        process.env.VOZEB_PRO_DATABASE_SSL_CA = "-----BEGIN CERTIFICATE-----\\ncertificate\\n-----END CERTIFICATE-----";
+        mocks.query.mockResolvedValueOnce({ rows: [{ table_name: null }] });
+
+        await expect(ensurePostgresSchema()).rejects.toThrow("PostgreSQL schema has not been initialized");
+
+        expect(mocks.pool).toHaveBeenCalledWith(
+            expect.objectContaining({
+                ssl: {
+                    rejectUnauthorized: true,
+                    ca: "-----BEGIN CERTIFICATE-----\ncertificate\n-----END CERTIFICATE-----",
+                },
+            }),
+        );
+    });
+
+    it("only disables PostgreSQL certificate verification through an explicit override", async () => {
+        process.env.VOZEB_PRO_DATABASE_SSL = "1";
+        process.env.VOZEB_PRO_DATABASE_SSL_REJECT_UNAUTHORIZED = "0";
+        mocks.query.mockResolvedValueOnce({ rows: [{ table_name: null }] });
+
+        await expect(ensurePostgresSchema()).rejects.toThrow("PostgreSQL schema has not been initialized");
+
+        expect(mocks.pool).toHaveBeenCalledWith(expect.objectContaining({ ssl: { rejectUnauthorized: false } }));
     });
 
     it("serializes concurrent repository queries on one transaction client", async () => {
@@ -58,12 +88,13 @@ describe("PostgreSQL schema lifecycle", () => {
     });
 
     it("executes schema DDL only through explicit initialization", async () => {
-        mocks.query.mockResolvedValueOnce({ rows: [] });
-
         await initializePostgresSchema();
 
-        expect(mocks.query).toHaveBeenCalledTimes(1);
-        const ddl = String(mocks.query.mock.calls[0]?.[0]);
+        expect(mocks.query).toHaveBeenCalledTimes(4);
+        expect(mocks.query.mock.calls[0]?.[0]).toBe("BEGIN");
+        expect(mocks.query.mock.calls[1]).toEqual(["SELECT pg_advisory_xact_lock(hashtext($1))", ["vozeb-pro:schema"]]);
+        const ddl = String(mocks.query.mock.calls[2]?.[0]);
+        expect(mocks.query.mock.calls[3]?.[0]).toBe("COMMIT");
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_schema_migrations");
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_generation_worker_heartbeats");
         expect(ddl).toContain("CREATE SEQUENCE IF NOT EXISTS vozeb_pro_user_account_id_seq");
@@ -95,12 +126,13 @@ describe("PostgreSQL schema lifecycle", () => {
     });
 
     it("continues applying additive schema updates after the sentinel table exists", async () => {
-        mocks.query.mockResolvedValueOnce({ rows: [{ table_name: "vozeb_pro_users" }] }).mockResolvedValueOnce({ rows: [] });
+        mocks.query.mockResolvedValueOnce({ rows: [{ table_name: "vozeb_pro_users" }] });
 
         await ensurePostgresSchema();
 
-        expect(mocks.query).toHaveBeenCalledTimes(2);
+        expect(mocks.query).toHaveBeenCalledTimes(5);
         expect(mocks.query.mock.calls[0]?.[0]).toContain("to_regclass");
-        expect(mocks.query.mock.calls[1]?.[0]).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_schema_migrations");
+        expect(mocks.query.mock.calls[2]).toEqual(["SELECT pg_advisory_xact_lock(hashtext($1))", ["vozeb-pro:schema"]]);
+        expect(mocks.query.mock.calls[3]?.[0]).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_schema_migrations");
     });
 });

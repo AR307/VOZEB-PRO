@@ -240,7 +240,18 @@ export default function ProfilePage() {
                             />
                         ) : null}
 
-                        {activeSection === "coupons" ? <CouponWalletSection coupons={coupons.items} templates={coupons.templates} total={coupons.total} loading={coupons.loading} onRefresh={coupons.refresh} /> : null}
+                        {activeSection === "coupons" ? (
+                            <CouponWalletSection
+                                coupons={coupons.items}
+                                templates={coupons.templates}
+                                total={coupons.total}
+                                page={coupons.page}
+                                loading={coupons.loading}
+                                onRefresh={coupons.refresh}
+                                onPageChange={coupons.setPage}
+                                onClaimed={coupons.refreshAfterClaim}
+                            />
+                        ) : null}
 
                         {activeSection === "referrals" ? <ProfileReferralCenter /> : null}
 

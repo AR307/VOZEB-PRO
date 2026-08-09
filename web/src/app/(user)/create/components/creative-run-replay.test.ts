@@ -9,9 +9,14 @@ describe("creativeRunReplayPreferences", () => {
         expect(creativeRunReplayPreferences(run({ generationPreferences: { image: { size: "1:1", quality: "high" } }, tasks: [task("image", 4)] }))).toEqual({ image: { size: "1:1", quality: "high", count: 4 } });
     });
 
-    it("does not invent video batch support", () => {
+    it("preserves the actual video batch count for edit and regenerate", () => {
         const preferences = { mode: "video" as const, video: { size: "16:9", seconds: 5 } };
-        expect(creativeRunReplayPreferences(run({ generationPreferences: preferences, tasks: [task("video", 1)] }))).toEqual(preferences);
+        expect(creativeRunReplayPreferences(run({ generationPreferences: preferences, tasks: [task("video", 3)] }))).toEqual({ mode: "video", video: { size: "16:9", seconds: 5, count: 3 } });
+    });
+
+    it("keeps image and video counts separate in a mixed Agent run", () => {
+        const preferences = { image: { quality: "high" as const }, video: { seconds: 5 } };
+        expect(creativeRunReplayPreferences(run({ generationPreferences: preferences, tasks: [task("image", 2), task("video", 4)] }))).toEqual({ image: { quality: "high", count: 2 }, video: { seconds: 5, count: 4 } });
     });
 });
 

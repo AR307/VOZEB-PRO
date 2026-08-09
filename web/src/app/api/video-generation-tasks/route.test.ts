@@ -229,7 +229,8 @@ describe("video generation candidate failover", () => {
 
     it("forwards the authenticated maintenance worker identity to the internal system proxy", async () => {
         const token = "maintenance-token-used-by-generation-worker";
-        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", `${token}-maintenance`);
+        vi.stubEnv("VOZEB_PRO_WORKER_TOKEN", token);
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-worker", status: "queued" }));
 
         const response = await POST(

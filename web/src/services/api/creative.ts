@@ -56,8 +56,8 @@ export function getCreativeConversation(conversationId: string) {
     return request<{ conversation: CreativeConversation }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}`).then((data) => data.conversation);
 }
 
-export function listCreativeMessages(conversationId: string, beforeSequence?: number) {
-    const query = new URLSearchParams({ limit: "200" });
+export function listCreativeMessages(conversationId: string, beforeSequence?: number, limit = 100) {
+    const query = new URLSearchParams({ limit: String(limit) });
     if (beforeSequence) query.set("beforeSequence", String(beforeSequence));
     return request<{ messages: CreativeMessage[] }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}/messages?${query}`).then((data) => data.messages);
 }

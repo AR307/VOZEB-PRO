@@ -1,23 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, Input, Tag } from "antd";
+import { App, Button, Input, Pagination, Tag } from "antd";
 import { Clock3, Gift, RefreshCw, TicketPercent } from "lucide-react";
 
 import { claimBillingCoupon, type CouponTemplate, type UserCoupon } from "@/services/api/billing";
 import { CompactEmptyState } from "@/components/compact-empty-state";
 
-import { LoadingBlock, profilePrimaryButtonClass, profileSecondaryButtonClass } from "./profile-elements";
+import { COUPON_PAGE_SIZE, LoadingBlock, profilePrimaryButtonClass, profileSecondaryButtonClass } from "./profile-elements";
 
 type CouponWalletSectionProps = {
     coupons: UserCoupon[];
     templates: CouponTemplate[];
     total: number;
+    page: number;
     loading: boolean;
     onRefresh: () => Promise<void> | void;
+    onPageChange: (page: number) => void;
+    onClaimed: () => Promise<void> | void;
 };
 
-export function CouponWalletSection({ coupons, templates, total, loading, onRefresh }: CouponWalletSectionProps) {
+export function CouponWalletSection({ coupons, templates, total, page, loading, onRefresh, onPageChange, onClaimed }: CouponWalletSectionProps) {
     const { message } = App.useApp();
     const [code, setCode] = useState("");
     const [claiming, setClaiming] = useState("");
@@ -28,7 +31,7 @@ export function CouponWalletSection({ coupons, templates, total, loading, onRefr
             await claimBillingCoupon(input);
             message.success("优惠券已领取");
             setCode("");
-            await onRefresh();
+            await onClaimed();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "领取优惠券失败");
         } finally {
@@ -97,29 +100,36 @@ export function CouponWalletSection({ coupons, templates, total, loading, onRefr
                 {loading ? (
                     <LoadingBlock />
                 ) : coupons.length ? (
-                    <div className="grid gap-2 lg:grid-cols-2">
-                        {coupons.map((coupon) => (
-                            <article key={coupon.id} className="min-w-0 rounded-lg border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-900/40 sm:p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                        <div className="truncate text-sm font-semibold text-stone-950 dark:text-stone-100">{coupon.template?.name || "优惠券"}</div>
-                                        <div className="mt-1 font-mono text-xs text-stone-500 dark:text-stone-400">{coupon.template?.code || coupon.templateId}</div>
+                    <>
+                        <div className="grid gap-2 lg:grid-cols-2">
+                            {coupons.map((coupon) => (
+                                <article key={coupon.id} className="min-w-0 rounded-lg border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-900/40 sm:p-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="truncate text-sm font-semibold text-stone-950 dark:text-stone-100">{coupon.template?.name || "优惠券"}</div>
+                                            <div className="mt-1 font-mono text-xs text-stone-500 dark:text-stone-400">{coupon.template?.code || coupon.templateId}</div>
+                                        </div>
+                                        <div className="shrink-0 text-right">
+                                            <div className="text-lg font-semibold text-rose-700 dark:text-rose-200">{coupon.template ? discountLabel(coupon.template) : "-"}</div>
+                                            <Tag className="m-0 mt-1" color={couponStatusColor(coupon.status)}>
+                                                {couponStatusLabel(coupon.status)}
+                                            </Tag>
+                                        </div>
                                     </div>
-                                    <div className="shrink-0 text-right">
-                                        <div className="text-lg font-semibold text-rose-700 dark:text-rose-200">{coupon.template ? discountLabel(coupon.template) : "-"}</div>
-                                        <Tag className="m-0 mt-1" color={couponStatusColor(coupon.status)}>
-                                            {couponStatusLabel(coupon.status)}
-                                        </Tag>
+                                    <div className="mt-3 flex items-center gap-2 border-t border-stone-200 pt-3 text-xs text-stone-500 dark:border-stone-800 dark:text-stone-400">
+                                        <Clock3 className="size-3.5 shrink-0" />
+                                        <span>有效期至 {formatDate(coupon.expiresAt)}</span>
+                                        {coupon.template?.stackWithPromotion ? <span className="ml-auto shrink-0 text-emerald-700 dark:text-emerald-300">可叠加活动</span> : null}
                                     </div>
-                                </div>
-                                <div className="mt-3 flex items-center gap-2 border-t border-stone-200 pt-3 text-xs text-stone-500 dark:border-stone-800 dark:text-stone-400">
-                                    <Clock3 className="size-3.5 shrink-0" />
-                                    <span>有效期至 {formatDate(coupon.expiresAt)}</span>
-                                    {coupon.template?.stackWithPromotion ? <span className="ml-auto shrink-0 text-emerald-700 dark:text-emerald-300">可叠加活动</span> : null}
-                                </div>
-                            </article>
-                        ))}
-                    </div>
+                                </article>
+                            ))}
+                        </div>
+                        {total > COUPON_PAGE_SIZE ? (
+                            <div className="mt-4 flex justify-center sm:justify-end">
+                                <Pagination size="small" current={page} pageSize={COUPON_PAGE_SIZE} total={total} showLessItems showSizeChanger={false} disabled={loading} onChange={onPageChange} />
+                            </div>
+                        ) : null}
+                    </>
                 ) : (
                     <CompactEmptyState title="暂无优惠券" description="输入领取码或领取当前开放的优惠券后会显示在这里。" />
                 )}

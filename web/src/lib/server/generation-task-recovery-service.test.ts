@@ -205,7 +205,13 @@ describe("generation task recovery service", () => {
             "image",
             task.id,
             "worker-one",
-            expect.objectContaining({ executionPhase: "needs_review", upstreamTaskId: "upstream-one", nextPollAt: undefined, lastUpstreamStatus: expect.stringContaining("query_contract_invalid") }),
+            expect.objectContaining({
+                executionPhase: "needs_review",
+                upstreamTaskId: "upstream-one",
+                nextPollAt: undefined,
+                lastUpstreamStatus: expect.stringContaining("query_contract_invalid"),
+                resultPayload: { reviewReason: "图片任务查询路径返回了网页内容" },
+            }),
         );
         expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
         expect(mocks.refundImageTask).not.toHaveBeenCalled();
@@ -232,6 +238,30 @@ describe("generation task recovery service", () => {
             expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-one", channelId: "channel-one", queryPath: "/images/upstream-one", lastUpstreamStatus: "recovered_submitted" }),
         );
         expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
+    });
+
+    it("records why an interrupted image submission requires review", async () => {
+        const task = {
+            id: "image-interrupted",
+            userId: "user-one",
+            status: "running",
+            config: { channelId: "channel-one", apiFormat: "openai", advancedConfig: { protocol: "openai", queryPath: "" } },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "running", executionPhase: "submitting", resultPayload: { trace: "kept" } }]);
+        mocks.getImageTask.mockResolvedValue(task);
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.release).toHaveBeenCalledWith(
+            "image",
+            task.id,
+            "worker-one",
+            expect.objectContaining({
+                executionPhase: "needs_review",
+                resultPayload: { trace: "kept", reviewReason: "图片任务在提交阶段中断，未取得上游任务 ID" },
+            }),
+        );
+        expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
     });
 
     it("recovers an audio upstream identity already saved in the task payload", async () => {

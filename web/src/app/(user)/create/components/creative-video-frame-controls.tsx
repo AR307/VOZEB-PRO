@@ -10,6 +10,7 @@ import type { CreativeVideoReferenceMode, VideoReferenceRole } from "@/lib/video
 import { cn } from "@/lib/utils";
 
 type FrameRole = Extract<VideoReferenceRole, "first_frame" | "last_frame">;
+type FramePopoverPlacement = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
 
 export function CreativeVideoFrameControls({
     mode,
@@ -17,6 +18,7 @@ export function CreativeVideoFrameControls({
     firstFrameAssetId,
     lastFrameAssetId,
     uploading,
+    placement,
     onSelect,
     onUpload,
     onRemove,
@@ -26,6 +28,7 @@ export function CreativeVideoFrameControls({
     firstFrameAssetId?: string;
     lastFrameAssetId?: string;
     uploading: boolean;
+    placement: "topLeft" | "bottomLeft";
     onSelect: (role: FrameRole, assetId: string) => void;
     onUpload: (role: FrameRole) => void;
     onRemove: (role: FrameRole) => void;
@@ -33,11 +36,21 @@ export function CreativeVideoFrameControls({
     if (mode === "reference") return null;
     return (
         <div className="flex shrink-0 items-start gap-1" aria-label={mode === "first_last" ? "视频首尾帧" : "视频首帧"}>
-            <FrameSlot role="first_frame" label="首帧" assetId={firstFrameAssetId} images={images} uploading={uploading} onSelect={onSelect} onUpload={onUpload} onRemove={onRemove} />
+            <FrameSlot role="first_frame" label="首帧" assetId={firstFrameAssetId} images={images} uploading={uploading} placement={placement === "bottomLeft" ? "bottomLeft" : "topLeft"} onSelect={onSelect} onUpload={onUpload} onRemove={onRemove} />
             {mode === "first_last" ? (
                 <>
                     <ArrowLeftRight className="mt-7 size-3.5 shrink-0 text-[#9aa3ad] dark:text-[#7d8793]" aria-hidden="true" />
-                    <FrameSlot role="last_frame" label="尾帧" assetId={lastFrameAssetId} images={images} uploading={uploading} onSelect={onSelect} onUpload={onUpload} onRemove={onRemove} />
+                    <FrameSlot
+                        role="last_frame"
+                        label="尾帧"
+                        assetId={lastFrameAssetId}
+                        images={images}
+                        uploading={uploading}
+                        placement={placement === "bottomLeft" ? "bottomRight" : "topRight"}
+                        onSelect={onSelect}
+                        onUpload={onUpload}
+                        onRemove={onRemove}
+                    />
                 </>
             ) : null}
         </div>
@@ -50,6 +63,7 @@ function FrameSlot({
     assetId,
     images,
     uploading,
+    placement,
     onSelect,
     onUpload,
     onRemove,
@@ -59,6 +73,7 @@ function FrameSlot({
     assetId?: string;
     images: CreativeAsset[];
     uploading: boolean;
+    placement: FramePopoverPlacement;
     onSelect: (role: FrameRole, assetId: string) => void;
     onUpload: (role: FrameRole) => void;
     onRemove: (role: FrameRole) => void;
@@ -70,7 +85,7 @@ function FrameSlot({
         <div className="relative h-16 w-14 shrink-0">
             <Popover
                 trigger="click"
-                placement={role === "last_frame" ? "topRight" : "topLeft"}
+                placement={placement}
                 arrow={false}
                 destroyOnHidden
                 open={open}
@@ -125,7 +140,7 @@ function FrameSlot({
                         "relative grid size-14 place-items-center overflow-hidden rounded-lg border border-[#dfe4e8] bg-[#f1f3f5] text-[#84909c] shadow-[0_2px_8px_rgba(38,49,65,0.08)] transition hover:border-[#aeb8c2] hover:text-[#3f4a55] dark:border-[#3c444d] dark:bg-[#191c20] dark:text-[#9ea8b3] dark:hover:border-[#626d78] dark:hover:text-white",
                         role === "first_frame" ? "rotate-[-3deg]" : "rotate-[3deg]",
                     )}
-                    aria-label={asset ? `更换视频${label}` : `选择视频${label}`}
+                    aria-label={asset ? `更换视频${label}` : `添加视频${label}`}
                 >
                     {url ? (
                         <img src={imagePreviewUrl(url, 320)} alt={asset?.title || label} className="size-full object-cover" />
@@ -134,7 +149,7 @@ function FrameSlot({
                             <ImagePlus className="size-5" />
                         </span>
                     )}
-                    <span className="absolute inset-x-0 bottom-0 bg-black/45 px-1 py-0.5 text-center text-[9px] font-medium text-white">{label}</span>
+                    <span className="absolute inset-x-0 bottom-0 bg-black/45 px-1 py-0.5 text-center text-[9px] font-medium text-white">{asset ? label : `添加${label}`}</span>
                 </button>
             </Popover>
             {asset ? (

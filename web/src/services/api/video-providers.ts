@@ -213,11 +213,13 @@ export function compatibleVideoCreatePaths(config: AiConfig, model: string) {
     const globalPreset = globalAiOpcVideoPreset(config, model);
     if (globalPreset) return [globalPreset.createPath];
     const configuredPath = normalizeAdvancedVideoPath(config.advancedConfig?.createPath);
+    if (config.advancedConfig?.protocol === "yumeng") return configuredPath ? [configuredPath] : [];
     const defaultPaths = isGlobalAiOpcVideoConfig(config, model) ? [GLOBAL_AIOPC_VIDEO_CREATE_PATH, ...VIDEO_CREATE_PATHS.filter((path) => path !== GLOBAL_AIOPC_VIDEO_CREATE_PATH)] : VIDEO_CREATE_PATHS;
     return uniqueStrings([configuredPath, ...defaultPaths]);
 }
 
 export function isGlobalAiOpcVideoConfig(config: AiConfig, model: string) {
+    if (config.advancedConfig?.protocol === "yumeng") return false;
     if (config.advancedConfig?.protocol === "globalaiopc") return true;
     if (normalizeAdvancedVideoPath(config.advancedConfig?.createPath).toLowerCase().endsWith(GLOBAL_AIOPC_VIDEO_CREATE_PATH)) return true;
     const modelName = modelOptionName(model).toLowerCase();
@@ -257,6 +259,7 @@ export function compatibleVideoPollPaths(config: AiConfig, task: VideoGeneration
     const globalPreset = globalAiOpcVideoPreset(config, config.model);
     if (globalPreset?.queryPath) return [globalPreset.queryPath];
     const configuredPath = normalizeAdvancedVideoPath(config.advancedConfig?.queryPath);
+    if (config.advancedConfig?.protocol === "yumeng") return configuredPath ? [configuredPath] : [];
     const paths = task.pollPath === GLOBAL_AIOPC_VIDEO_CREATE_PATH ? [configuredPath, GLOBAL_AIOPC_VIDEO_RESULT_PATH, task.pollPath, ...VIDEO_CREATE_PATHS] : [configuredPath, task.pollPath || VIDEO_CREATE_PATHS[0], ...VIDEO_CREATE_PATHS];
     return uniqueStrings(paths);
 }
@@ -403,7 +406,8 @@ export async function buildCompatibleVideoPayloadVariants(config: AiConfig, mode
     if ((globalPreset || legacyGlobalAiOpc) && audioReferences.length && !referenceAudios.length) {
         throw new Error("当前渠道无法读取这个参考音频，请重新上传或更换渠道");
     }
-    const duration = globalPreset || legacyGlobalAiOpc ? normalizeGlobalAiOpcVideoDuration(config.videoSeconds) : normalizeCompatibleVideoDuration(config.videoSeconds);
+    const duration =
+        globalPreset || legacyGlobalAiOpc ? normalizeGlobalAiOpcVideoDuration(config.videoSeconds) : config.advancedConfig?.protocol === "yumeng" ? normalizeYumengVideoDuration(config.videoSeconds) : normalizeCompatibleVideoDuration(config.videoSeconds);
     const ratio = normalizeCompatibleVideoRatio(config.size);
     const quality = normalizeCompatibleVideoQuality(config.vquality);
     const size = normalizeVideoSize(config.size) || "1280x720";
@@ -436,6 +440,7 @@ export async function buildCompatibleVideoPayloadVariants(config: AiConfig, mode
         referenceVideos: publicReferenceVideos,
         referenceAudios: publicReferenceAudios,
     });
+    if (config.advancedConfig?.protocol === "yumeng") return templatePayloads;
     if (path === GLOBAL_AIOPC_VIDEO_CREATE_PATH) {
         const payloads = mediaPayloads.map((mediaPayload) => ({
             model: modelOptionName(model),
@@ -472,6 +477,11 @@ export async function buildCompatibleVideoPayloadVariants(config: AiConfig, mode
         { ...base, ...mediaPayload, seconds: String(duration) },
     ]);
     return uniquePayloads([...templatePayloads, ...payloads]);
+}
+
+function normalizeYumengVideoDuration(value: string) {
+    const seconds = Math.floor(Number(value) || 4);
+    return Math.max(4, Math.min(30, seconds));
 }
 
 function globalAiOpcVideoPreset(config: AiConfig, model: string) {

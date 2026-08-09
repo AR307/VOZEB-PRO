@@ -16,7 +16,13 @@ export async function GET(request: NextRequest) {
     if (user.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     try {
         const params = request.nextUrl.searchParams;
-        const result = await listCouponTemplates({ page: Number(params.get("page")) || 1, pageSize: Number(params.get("pageSize")) || 20, includeDisabled: true });
+        const result = await listCouponTemplates({
+            page: Number(params.get("page")) || 1,
+            pageSize: Number(params.get("pageSize")) || 20,
+            includeDisabled: params.get("includeDisabled") !== "false",
+            keyword: params.get("keyword") || undefined,
+            selectedId: params.get("selectedId") || undefined,
+        });
         return commerceOk({ templates: result.items, total: result.total, page: result.page, pageSize: result.pageSize });
     } catch (error) {
         return commerceError(error, "获取优惠券模板失败", "Admin list coupon templates failed");

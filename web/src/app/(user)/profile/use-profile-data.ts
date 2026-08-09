@@ -7,7 +7,7 @@ import { listBillingCoupons, listBillingOrders, listBillingProducts, type Billin
 import { listPointRecords, type PointRecord } from "@/services/api/points";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
-import { ORDER_PAGE_SIZE, RECORD_PAGE_SIZE, type ProfileSectionKey } from "./profile-elements";
+import { COUPON_PAGE_SIZE, ORDER_PAGE_SIZE, RECORD_PAGE_SIZE, type ProfileSectionKey } from "./profile-elements";
 
 export function useProfileData(activeSection: ProfileSectionKey) {
     const { message } = App.useApp();
@@ -18,7 +18,8 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     const [coupons, setCoupons] = useState<UserCoupon[]>([]);
     const [couponTemplates, setCouponTemplates] = useState<CouponTemplate[]>([]);
     const [couponsTotal, setCouponsTotal] = useState(0);
-    const [couponsLoaded, setCouponsLoaded] = useState(false);
+    const [couponsPage, setCouponsPage] = useState(1);
+    const [couponsLoadedPage, setCouponsLoadedPage] = useState<number | null>(null);
     const [couponsLoading, setCouponsLoading] = useState(false);
     const [orders, setOrders] = useState<BillingOrder[]>([]);
     const [ordersTotal, setOrdersTotal] = useState(0);
@@ -37,7 +38,9 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     const [consumeRecordsLoading, setConsumeRecordsLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const productsRequest = useRef(false);
-    const couponsRequest = useRef(false);
+    const couponsRequestPage = useRef<number | null>(null);
+    const couponsQueuedRequest = useRef<{ page: number; refreshTemplates: boolean } | null>(null);
+    const couponTemplatesLoaded = useRef(false);
     const ordersRequestPage = useRef<number | null>(null);
     const pointsRequestPage = useRef<number | null>(null);
     const consumptionRequestPage = useRef<number | null>(null);
@@ -78,23 +81,53 @@ export function useProfileData(activeSection: ProfileSectionKey) {
         [message],
     );
 
-    const loadCoupons = useCallback(async () => {
-        if (couponsRequest.current) return;
-        couponsRequest.current = true;
-        setCouponsLoading(true);
-        try {
-            const payload = await listBillingCoupons({ page: 1, pageSize: 100 });
-            setCoupons(payload.coupons || []);
-            setCouponTemplates(payload.templates || []);
-            setCouponsTotal(payload.total || 0);
-            setCouponsLoaded(true);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "优惠券加载失败");
-        } finally {
-            couponsRequest.current = false;
-            setCouponsLoading(false);
-        }
-    }, [message]);
+    const loadCoupons = useCallback(
+        async (page: number, options: { refreshTemplates?: boolean } = {}) => {
+            const normalizedPage = Math.max(1, Math.floor(page));
+            const request = { page: normalizedPage, refreshTemplates: options.refreshTemplates === true };
+            if (couponsRequestPage.current !== null) {
+                couponsQueuedRequest.current = request;
+                return;
+            }
+            couponsRequestPage.current = normalizedPage;
+            setCouponsLoading(true);
+            try {
+                let currentRequest = request;
+                while (true) {
+                    try {
+                        const payload = await listBillingCoupons({ page: currentRequest.page, pageSize: COUPON_PAGE_SIZE, includeTemplates: currentRequest.refreshTemplates || !couponTemplatesLoaded.current });
+                        if (payload.templates !== undefined) {
+                            setCouponTemplates(payload.templates);
+                            couponTemplatesLoaded.current = true;
+                        }
+                        const queuedRequest = couponsQueuedRequest.current;
+                        if (queuedRequest !== null) {
+                            couponsQueuedRequest.current = null;
+                            currentRequest = queuedRequest;
+                            couponsRequestPage.current = currentRequest.page;
+                            continue;
+                        }
+                        setCoupons(payload.coupons || []);
+                        setCouponsTotal(payload.total || 0);
+                        setCouponsLoadedPage(payload.page || currentRequest.page);
+                        break;
+                    } catch (error) {
+                        const queuedRequest = couponsQueuedRequest.current;
+                        if (queuedRequest === null) throw error;
+                        couponsQueuedRequest.current = null;
+                        currentRequest = queuedRequest;
+                        couponsRequestPage.current = currentRequest.page;
+                    }
+                }
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "优惠券加载失败");
+            } finally {
+                couponsRequestPage.current = null;
+                setCouponsLoading(false);
+            }
+        },
+        [message],
+    );
 
     const loadPointRecords = useCallback(
         async (page: number) => {
@@ -146,8 +179,8 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     }, [activeSection, loadProducts, productsLoaded]);
 
     useEffect(() => {
-        if (activeSection === "coupons" && !couponsLoaded) void loadCoupons();
-    }, [activeSection, couponsLoaded, loadCoupons]);
+        if (activeSection === "coupons" && couponsLoadedPage !== couponsPage) void loadCoupons(couponsPage);
+    }, [activeSection, couponsLoadedPage, couponsPage, loadCoupons]);
 
     useEffect(() => {
         if (needsOrders && ordersLoadedPage !== ordersTargetPage) void loadOrders(ordersTargetPage);
@@ -177,7 +210,7 @@ export function useProfileData(activeSection: ProfileSectionKey) {
             const requests: Promise<void>[] = [refreshUser()];
             if (activeSection === "overview") requests.push(loadOrders(1), loadPointRecords(1));
             else if (activeSection === "billing") requests.push(loadProducts());
-            else if (activeSection === "coupons") requests.push(loadCoupons());
+            else if (activeSection === "coupons") requests.push(loadCoupons(couponsPage));
             else if (activeSection === "orders") requests.push(loadOrders(ordersPage));
             else if (activeSection === "consume") requests.push(loadConsumeRecords(consumeRecordsPage));
             else if (activeSection === "points") requests.push(loadPointRecords(pointRecordsPage));
@@ -185,11 +218,26 @@ export function useProfileData(activeSection: ProfileSectionKey) {
         } finally {
             setRefreshing(false);
         }
-    }, [activeSection, consumeRecordsPage, loadConsumeRecords, loadCoupons, loadOrders, loadPointRecords, loadProducts, ordersPage, pointRecordsPage, refreshUser]);
+    }, [activeSection, consumeRecordsPage, couponsPage, loadConsumeRecords, loadCoupons, loadOrders, loadPointRecords, loadProducts, ordersPage, pointRecordsPage, refreshUser]);
+
+    const refreshCoupons = useCallback(() => loadCoupons(couponsPage, { refreshTemplates: true }), [couponsPage, loadCoupons]);
+    const refreshCouponsAfterClaim = useCallback(async () => {
+        setCouponsPage(1);
+        await loadCoupons(1, { refreshTemplates: true });
+    }, [loadCoupons]);
 
     return {
         products: { items: products, loading: productsLoading || (activeSection === "billing" && !productsLoaded), refresh: loadProducts },
-        coupons: { items: coupons, templates: couponTemplates, total: couponsTotal, loading: couponsLoading || (activeSection === "coupons" && !couponsLoaded), refresh: loadCoupons },
+        coupons: {
+            items: coupons,
+            templates: couponTemplates,
+            total: couponsTotal,
+            page: couponsPage,
+            setPage: setCouponsPage,
+            loading: couponsLoading || (activeSection === "coupons" && couponsLoadedPage !== couponsPage),
+            refresh: refreshCoupons,
+            refreshAfterClaim: refreshCouponsAfterClaim,
+        },
         orders: { items: orders, total: ordersTotal, page: ordersPage, setPage: setOrdersPage, loading: ordersLoading || (needsOrders && ordersLoadedPage !== ordersTargetPage) },
         points: { items: pointRecords, total: pointRecordsTotal, page: pointRecordsPage, setPage: setPointRecordsPage, loading: pointRecordsLoading || (needsPoints && pointRecordsLoadedPage !== pointsTargetPage) },
         consumption: {

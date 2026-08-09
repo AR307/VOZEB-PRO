@@ -116,19 +116,17 @@ export function AssistantHistory({
         <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
                 <div>
-                    <div className="text-sm font-semibold" style={{ color: theme.node.text }}>历史对话</div>
-                    <div className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>{sessions.length ? `${sessions.length} 条记录` : "暂无历史"}</div>
+                    <div className="text-sm font-semibold" style={{ color: theme.node.text }}>
+                        历史对话
+                    </div>
+                    <div className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>
+                        {sessions.length ? `${sessions.length} 条记录` : "暂无历史"}
+                    </div>
                 </div>
                 {sessions.length ? (
                     <div className="flex items-center gap-2">
                         <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs" style={{ color: theme.node.muted }}>
-                            <input
-                                type="checkbox"
-                                checked={allSelected}
-                                onChange={(event) => setSelectedIds(event.target.checked ? sessions.map((session) => session.id) : [])}
-                                className="size-3.5 accent-current"
-                                aria-label="全选历史对话"
-                            />
+                            <input type="checkbox" checked={allSelected} onChange={(event) => setSelectedIds(event.target.checked ? sessions.map((session) => session.id) : [])} className="size-3.5 accent-current" aria-label="全选历史对话" />
                             全选
                         </label>
                         {selectedIds.length ? (
@@ -146,7 +144,11 @@ export function AssistantHistory({
                 ) : null}
             </div>
             {sessions.map((session) => (
-                <div key={session.id} className="rounded-xl border px-3 py-2.5 transition" style={{ borderColor: session.id === activeSession?.id ? theme.node.activeStroke : theme.node.stroke, background: session.id === activeSession?.id ? theme.node.fill : theme.toolbar.panel, color: theme.node.text }}>
+                <div
+                    key={session.id}
+                    className="rounded-xl border px-3 py-2.5 transition"
+                    style={{ borderColor: session.id === activeSession?.id ? theme.node.activeStroke : theme.node.stroke, background: session.id === activeSession?.id ? theme.node.fill : theme.toolbar.panel, color: theme.node.text }}
+                >
                     <div className="flex min-w-0 items-center gap-2.5">
                         <input
                             type="checkbox"

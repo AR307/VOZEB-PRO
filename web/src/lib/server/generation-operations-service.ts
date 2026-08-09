@@ -4,6 +4,7 @@ import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { getChannelRuntimeHealth, isChannelRuntimeCooling } from "@/lib/server/channel-runtime-health";
 import { generationTaskPointsCost, listStoredGenerationTaskRecords, type GenerationTaskRecordListOptions, type StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 import { getTextPlanningRuntime } from "@/lib/server/text-planning-runtime";
+import { resolveGenerationReviewReason } from "@/lib/server/generation-task-review-reason";
 
 export async function listAdminGenerationOperations(options: GenerationTaskRecordListOptions): Promise<AdminGenerationOperationsPayload> {
     const settingsPromise = getAuthSettings();
@@ -55,7 +56,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         lastUpstreamStatus: record.lastUpstreamStatus,
         attempts: generationAttempts(payload.attempts),
         prompt: firstText(payload.prompt, config.prompt, tasks.find((task) => text(task.prompt))?.prompt).slice(0, 500),
-        error: firstText(payload.error, tasks.find((task) => text(task.error))?.error).slice(0, 1000) || undefined,
+        error: firstText(payload.error, tasks.find((task) => text(task.error))?.error, resolveGenerationReviewReason(record)).slice(0, 1000) || undefined,
         durationMs: Math.max(0, record.updatedAt - record.createdAt),
         pointsCost: Number(pointsCost.toFixed(2)),
         createdAt: record.createdAt,

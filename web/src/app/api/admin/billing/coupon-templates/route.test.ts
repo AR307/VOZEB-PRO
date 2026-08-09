@@ -29,9 +29,16 @@ describe("/api/admin/billing/coupon-templates", () => {
 
     it("lists and creates templates", async () => {
         expect((await GET(new NextRequest("http://localhost/api/admin/billing/coupon-templates"))).status).toBe(200);
+        expect(mocks.listCouponTemplates).toHaveBeenCalledWith({ page: 1, pageSize: 20, includeDisabled: true, keyword: undefined, selectedId: undefined });
         const response = await POST(new Request("http://localhost/api/admin/billing/coupon-templates", { method: "POST" }));
         expect(response.status).toBe(201);
         expect(mocks.saveCouponTemplate).toHaveBeenCalledWith({ name: "新客券", createdByUserId: "admin-one" });
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.billing.coupon-template.save" }));
+    });
+
+    it("forwards bounded search and the current selected template", async () => {
+        await GET(new NextRequest("http://localhost/api/admin/billing/coupon-templates?pageSize=12&includeDisabled=false&keyword=%E6%96%B0%E5%AE%A2&selectedId=template-current"));
+
+        expect(mocks.listCouponTemplates).toHaveBeenCalledWith({ page: 1, pageSize: 12, includeDisabled: false, keyword: "新客", selectedId: "template-current" });
     });
 });

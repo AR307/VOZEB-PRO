@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ refreshUserPointsIfSystem: vi.fn(async () => u
 
 vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: mocks.refreshUserPointsIfSystem }));
 
-import { controlCreativeAgentRun, createCreativeAgentRun, listCreativeConversationPage, watchCreativeAgentRun } from "./creative";
+import { controlCreativeAgentRun, createCreativeAgentRun, listCreativeConversationPage, listCreativeMessages, watchCreativeAgentRun } from "./creative";
 import type { CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
 
 class FakeEventSource extends EventTarget {
@@ -139,6 +139,16 @@ describe("创作会话来源", () => {
 
         const url = new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost");
         expect(Object.fromEntries(url.searchParams)).toMatchObject({ surface: "chat", source: "video-workbench", status: "active", offset: "10", limit: "20" });
+    });
+
+    it("requests one bounded page of older conversation messages", async () => {
+        const fetchMock = vi.fn(async (_input: string | URL | Request) => Response.json({ code: 0, data: { messages: [] }, msg: "ok" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await listCreativeMessages("conversation-one", 51, 50);
+
+        const url = new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost");
+        expect(Object.fromEntries(url.searchParams)).toEqual({ limit: "50", beforeSequence: "51" });
     });
 
     it("explicitly retries a failed planning run in place", async () => {

@@ -47,6 +47,8 @@ type CreateSubmitOptions = {
     preferences?: CreativeGenerationPreferences;
 };
 
+const MESSAGE_PAGE_SIZE = 50;
+
 export function useCreateAgent() {
     const streamRef = useRef<(() => void) | null>(null);
     const conversationGenerationRef = useRef(0);
@@ -104,7 +106,7 @@ export function useCreateAgent() {
 
     const refreshConversation = useCallback(async (id: string, generation = conversationGenerationRef.current) => {
         const requestId = ++refreshRequestRef.current;
-        const [nextMessages, nextAssets] = await Promise.all([listCreativeMessages(id), listCreativeAssets(id)]);
+        const [nextMessages, nextAssets] = await Promise.all([listCreativeMessages(id, undefined, MESSAGE_PAGE_SIZE), listCreativeAssets(id)]);
         if (requestId !== refreshRequestRef.current || generation !== conversationGenerationRef.current || activeConversationRef.current !== id) return;
         const runIds = Array.from(new Set(nextMessages.map((item) => item.runId).filter((value): value is string => Boolean(value))));
         const runs = await Promise.all(runIds.map((runId) => getCreativeAgentRun(runId).catch(() => null)));
@@ -152,7 +154,7 @@ export function useCreateAgent() {
         if (!id || !firstSequence || olderMessagesLoading || !hasOlderMessages) return;
         setOlderMessagesLoading(true);
         try {
-            const older = await listCreativeMessages(id, firstSequence);
+            const older = await listCreativeMessages(id, firstSequence, MESSAGE_PAGE_SIZE);
             if (activeConversationRef.current !== id) return;
             setMessages((current) => uniqueMessages([...older, ...current]));
             setHasOlderMessages(Boolean(older[0] && older[0].sequence > 1));

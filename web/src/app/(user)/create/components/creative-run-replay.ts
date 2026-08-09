@@ -4,16 +4,17 @@ import type { CreativeAgentRun } from "@/services/api/creative";
 export function creativeRunReplayPreferences(run?: CreativeAgentRun): CreativeGenerationPreferences | undefined {
     if (!run) return undefined;
     const preferences = run.generationPreferences;
-    const imageCounts = run.tasks
-        .filter((task) => task.type === "image")
-        .map((task) => Number(task.count))
-        .filter((count) => Number.isInteger(count) && count > 0);
-    if (!imageCounts.length) return preferences;
+    const counts = (type: "image" | "video") =>
+        run.tasks
+            .filter((task) => task.type === type)
+            .map((task) => Number(task.count))
+            .filter((count) => Number.isInteger(count) && count > 0);
+    const imageCounts = counts("image");
+    const videoCounts = counts("video");
+    if (!imageCounts.length && !videoCounts.length) return preferences;
     return {
         ...preferences,
-        image: {
-            ...preferences?.image,
-            count: Math.min(10, Math.max(...imageCounts)),
-        },
+        ...(imageCounts.length ? { image: { ...preferences?.image, count: Math.min(10, Math.max(...imageCounts)) } } : {}),
+        ...(videoCounts.length ? { video: { ...preferences?.video, count: Math.min(10, Math.max(...videoCounts)) } } : {}),
     };
 }

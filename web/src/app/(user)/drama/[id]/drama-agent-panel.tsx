@@ -47,7 +47,7 @@ export function DramaAgentPanel({ project, episode, onConversationChange }: { pr
                 </div>
             </aside>
             <Button type="primary" shape="circle" className="!fixed !bottom-20 !right-4 !z-30 !size-11 sm:!bottom-4 xl:!hidden" icon={<MessageSquareText className="size-4.5" />} aria-label="打开短剧项目 Agent" onClick={() => setMobileOpen(true)} />
-            <Drawer title="项目 Agent" placement="right" width="min(100vw, 420px)" open={mobileOpen} destroyOnHidden onClose={() => setMobileOpen(false)} styles={{ body: { padding: 0 } }}>
+            <Drawer title="项目 Agent" placement="right" size="min(100vw, 420px)" open={mobileOpen} destroyOnHidden onClose={() => setMobileOpen(false)} styles={{ body: { padding: 0 } }}>
                 {mobileOpen ? <DramaAgentContent project={project} episode={episode} onConversationChange={onConversationChange} /> : null}
             </Drawer>
         </>

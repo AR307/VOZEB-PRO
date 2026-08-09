@@ -34,11 +34,19 @@ describe("GET /api/billing/coupons", () => {
         expect(mocks.listUserCoupons).not.toHaveBeenCalled();
     });
 
-    it("returns product applicability and claimable templates", async () => {
-        const response = await GET(new NextRequest("http://localhost/api/billing/coupons?productId=product-one&quantity=2&page=2&pageSize=10&status=available"));
+    it("returns product applicability without querying unrelated claimable templates", async () => {
+        const response = await GET(new NextRequest("http://localhost/api/billing/coupons?productId=product-one&quantity=2&page=2&pageSize=10&status=available&includeTemplates=false"));
         expect(response.status).toBe(200);
         expect(mocks.listUserCouponsForProduct).toHaveBeenCalledWith("user-one", { productId: "product-one", quantity: "2", page: 2, pageSize: 10, status: "available" });
+        expect(mocks.listClaimableCouponTemplates).not.toHaveBeenCalled();
+        expect(await response.json()).toEqual({ code: 0, data: { coupons: [{ id: "coupon-one", applicable: true }], total: 1, page: 2, pageSize: 10 }, msg: "" });
+    });
+
+    it("includes claimable templates for the coupon wallet by default", async () => {
+        const response = await GET(new NextRequest("http://localhost/api/billing/coupons?page=1&pageSize=8"));
+        expect(response.status).toBe(200);
+        expect(mocks.listUserCoupons).toHaveBeenCalledWith("user-one", { page: 1, pageSize: 8, status: undefined });
         expect(mocks.listClaimableCouponTemplates).toHaveBeenCalledWith({ userId: "user-one", page: 1, pageSize: 50 });
-        expect(await response.json()).toEqual({ code: 0, data: { coupons: [{ id: "coupon-one", applicable: true }], templates: [{ id: "template-one" }], total: 1, page: 2, pageSize: 10 }, msg: "" });
+        expect(await response.json()).toEqual({ code: 0, data: { coupons: [{ id: "coupon-one" }], templates: [{ id: "template-one" }], total: 1, page: 1, pageSize: 20 }, msg: "" });
     });
 });

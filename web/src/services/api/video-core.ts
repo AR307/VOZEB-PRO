@@ -119,7 +119,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
         }
         if (state.status === "failed") {
             await refreshUserPointsIfSystem(resolveModelRequestConfig(config, task.model).apiSource);
-            if (state.error === GENERATION_TASK_NEEDS_REVIEW_MESSAGE) throw new GenerationTaskNeedsReviewError();
+            if (state.needsReview) throw new GenerationTaskNeedsReviewError(state.error);
             throw new VideoGenerationUpstreamError(state.error, state.canRetry !== false);
         }
         await delay(delayMs, options?.signal);
@@ -222,6 +222,10 @@ export async function createUpstreamVideoGenerationTask(
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);
     const protocol = requestConfig.advancedConfig?.protocol === "sub2api" ? "auto" : requestConfig.advancedConfig?.protocol || "auto";
+    if (protocol === "yumeng") {
+        if (videoReferences.length) throw new Error("昱梦新版模型中心暂不支持参考视频，请移除参考视频后重试");
+        return createCompatibleVideoTask(requestConfig, selectedModel, prompt, references, options, [], audioReferences);
+    }
     if (protocol === "seedance-special") {
         return createSeedanceSpecialTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
@@ -251,7 +255,7 @@ export async function pollServerVideoTask(task: VideoGenerationTask, options?: R
     syncUserPointsFromHeaders(response.headers, "system");
     const payload = (await response.json().catch(() => ({}))) as { task?: GenerationTaskExecutionState & { status?: string; result?: VideoGenerationResult; error?: string; canRetry?: boolean }; error?: string };
     if (!response.ok) throw new Error(payload.error || "后台视频任务查询失败");
-    if (payload.task?.needsReview) return { status: "failed", error: GENERATION_TASK_NEEDS_REVIEW_MESSAGE };
+    if (payload.task?.needsReview) return { status: "failed", error: payload.task.reviewReason || GENERATION_TASK_NEEDS_REVIEW_MESSAGE, needsReview: true };
     if (payload.task?.status === "success") return { status: "completed", result: payload.task.result || {} };
     if (payload.task?.status === "error" || payload.task?.status === "cancelled") return { status: "failed", error: payload.task.error || "视频生成失败", canRetry: payload.task.canRetry === true };
     return { status: "pending" };

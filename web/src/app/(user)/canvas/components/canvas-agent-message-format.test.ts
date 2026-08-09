@@ -14,7 +14,7 @@ describe("Canvas Agent 消息清理", () => {
     });
 
     it("shows a safe fix for protocol mismatches", () => {
-        expect(formatAgentMessageText('{"error":{"message":"MetaJing video requests must use application/json"}}')).toBe("当前视频渠道要求 application/json，请在后台选择“VOZEB推荐”协议。");
+        expect(formatAgentMessageText('{"error":{"message":"MetaJing video requests must use application/json"}}')).toBe("当前视频渠道要求 application/json，请在后台选择匹配的内置协议，或使用自定义协议配置请求模板。");
     });
 
     it("replaces legacy task internals", () => {

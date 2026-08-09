@@ -94,8 +94,7 @@ VOZEB-PRO/
 | 模块                         | 负责内容                                               |
 | ---------------------------- | ------------------------------------------------------ |
 | `creative-runtime-*`         | 创作会话、消息、稳定资产、Run 和事件持久化             |
-| `agent-run-*`                | Agent 计划校验、Skill 策略、子任务调度、事件和结果回写 |
-| `workbench-agent-service.ts` | 图片与视频工作台的规划和手动模型执行入口               |
+| `agent-run-*`                | `/create` 统一 Agent 的计划校验、Skill 策略、媒体子任务调度、事件、结果回写与恢复 |
 | `logical-model-router.ts`    | 逻辑模型到真实渠道、上游模型和候选优先级的解析         |
 | `*-task-store.ts`            | 文本、图片、视频、音频任务的状态、幂等和退款边界       |
 | `generation-task-store.ts`   | 统一生成任务状态机、并发约束和任务认领                 |
@@ -215,4 +214,4 @@ flowchart LR
     REPO --> TEST["同域测试与数据库契约"]
 ```
 
-例如图片任务历史异常，应从图片工作台 Controller 找到 `services/api/image.ts`，再进入 `api/image-tasks`、图片任务 Store、生成记录和媒体登记；不要在页面层直接增加数据库或上游兼容分支。
+例如 `/create` 图片任务历史异常，应从页面私有 Hook 找到 `services/api/creative.ts`，再进入 Creative Conversation / Agent Run Route、任务 Store、生成记录和媒体登记；不要在页面层直接增加数据库或上游兼容分支。底层 `services/api/image.ts` 与 `api/image-tasks` 仍负责真实图片子任务，不代表存在独立图片工作台页面。

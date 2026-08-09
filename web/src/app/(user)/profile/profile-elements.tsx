@@ -17,6 +17,7 @@ export type ProfileSectionKey = "overview" | "profile" | "billing" | "coupons" |
 
 export const RECORD_PAGE_SIZE = 8;
 export const ORDER_PAGE_SIZE = 8;
+export const COUPON_PAGE_SIZE = 8;
 
 export const profileSections: Array<{ key: ProfileSectionKey; label: string; description: string; shortDescription: string; icon: ReactNode }> = [
     { key: "overview", label: "账户概览", description: "查看当前套餐、积分余额、最近订单和最近积分流水。", shortDescription: "资产摘要", icon: <WalletCards className="size-4" /> },

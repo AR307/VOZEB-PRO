@@ -17,6 +17,7 @@ import {
     readFetchError,
     readImageTaskId,
     parseImageSubmissionJson,
+    imageRequestAspectRatio,
     resolveRequestSize,
     taskFetch,
     taskHeaders,
@@ -42,6 +43,8 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         model: config.model,
         prompt: withSystemPrompt(config, task.prompt),
         size,
+        aspect_ratio: imageRequestAspectRatio(config.size || "auto"),
+        resolution: advanced.protocol === "yumeng" ? yumengImageResolution(config.quality) : config.quality || "auto",
         width,
         height,
         quality: config.quality || "auto",
@@ -66,6 +69,13 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl: baseUrl, pollBaseUrl: baseUrl } };
         return pollCustomImageTask(task, taskId, baseUrl, cookie);
     });
+}
+
+function yumengImageResolution(value: string | undefined) {
+    const quality = value?.trim().toLowerCase();
+    if (quality === "high" || quality === "4k") return "4K";
+    if (quality === "medium" || quality === "3k") return "3K";
+    return "2K";
 }
 
 export function resolveDeclarativeImageSize(config: Pick<ImageTask["config"], "quality" | "size" | "advancedConfig">) {

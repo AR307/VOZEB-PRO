@@ -244,6 +244,7 @@ const globalForPostgres = globalThis as typeof globalThis & {
 };
 
 type PostgresNotificationListener = (payload: string) => void;
+const POSTGRES_SCHEMA_LOCK_KEY = "vozeb-pro:schema";
 type PostgresNotificationState = {
     client?: Client;
     connecting?: Promise<void>;
@@ -271,7 +272,7 @@ function getPostgresPool() {
         globalForPostgres.__vozebProPostgresPool = new Pool({
             connectionString,
             max: normalizePoolMax(process.env.VOZEB_PRO_DATABASE_POOL_MAX),
-            ssl: parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined,
+            ssl: postgresSslConfig(),
         });
     }
 
@@ -343,7 +344,7 @@ async function ensurePostgresNotificationClient(state: PostgresNotificationState
     if (state.connecting) return state.connecting;
     const connectionString = getPostgresConnectionString();
     if (!connectionString) throw new Error("DATABASE_URL is required for PostgreSQL notifications");
-    const client = new Client({ connectionString, ssl: parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined });
+    const client = new Client({ connectionString, ssl: postgresSslConfig() });
     state.connecting = (async () => {
         await client.connect();
         client.on("notification", (message) => {
@@ -386,8 +387,10 @@ export async function ensurePostgresSchema() {
 
 export async function initializePostgresSchema() {
     if (!globalForPostgres.__vozebProPostgresSchemaReady) {
-        globalForPostgres.__vozebProPostgresSchemaReady = getPostgresPool()
-            .query(prefixPostgresSql(POSTGRESQL_SCHEMA_SQL))
+        globalForPostgres.__vozebProPostgresSchemaReady = withPostgresTransaction(async (client) => {
+            await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [POSTGRES_SCHEMA_LOCK_KEY]);
+            await client.query(POSTGRESQL_SCHEMA_SQL);
+        })
             .then(() => undefined)
             .catch((error) => {
                 globalForPostgres.__vozebProPostgresSchemaReady = undefined;
@@ -415,4 +418,11 @@ function normalizePoolMax(value: string | undefined) {
 
 function parseBoolean(value: string | undefined) {
     return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() || "");
+}
+
+function postgresSslConfig() {
+    if (!parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL)) return undefined;
+    const rejectUnauthorized = !["0", "false", "no", "off"].includes(process.env.VOZEB_PRO_DATABASE_SSL_REJECT_UNAUTHORIZED?.trim().toLowerCase() || "");
+    const ca = process.env.VOZEB_PRO_DATABASE_SSL_CA?.trim().replace(/\\n/g, "\n") || "";
+    return { rejectUnauthorized, ...(ca ? { ca } : {}) };
 }

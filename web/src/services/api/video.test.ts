@@ -13,7 +13,8 @@ vi.mock("@/stores/use-config-store", () => ({
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask } from "./video";
-import { isGlobalAiOpcVideoConfig } from "./video-providers";
+import { createUpstreamVideoGenerationTask } from "./video-core";
+import { buildCompatibleVideoPayloadVariants, compatibleVideoCreatePaths, compatibleVideoPollPaths, isGlobalAiOpcVideoConfig } from "./video-providers";
 
 const config = {
     model: "video-v1",
@@ -86,12 +87,13 @@ describe("video API service", () => {
     });
 
     it("returns a terminal failure when the upstream submission needs manual review", async () => {
-        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-review", status: "running", needsReview: true } }));
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-review", status: "running", needsReview: true, reviewReason: "视频提交结果无法确认" } }));
         vi.stubGlobal("fetch", fetchMock);
 
         await expect(pollVideoGenerationTask(config, { id: "video-review", provider: "generation", model: "video-v1", pollPath: "server" })).resolves.toEqual({
             status: "failed",
-            error: "上游创建状态待确认，系统已停止重复创建，请联系管理员处理",
+            error: "视频提交结果无法确认",
+            needsReview: true,
         });
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -126,6 +128,45 @@ describe("video API service", () => {
         expect(isGlobalAiOpcVideoConfig({ ...config, baseUrl: "https://api.globalaiopc.com/v1" }, "other-model")).toBe(true);
         expect(isGlobalAiOpcVideoConfig({ ...config, baseUrl: "https://globalaiopc.com.evil.test/v1" }, "other-model")).toBe(false);
         expect(isGlobalAiOpcVideoConfig({ ...config, baseUrl: "https://kyyreactapiserver-production.example.com/v1" }, "other-model")).toBe(true);
+    });
+
+    it("uses only the Yumeng v2 paths and request template", async () => {
+        const yumeng = {
+            ...config,
+            baseUrl: "/api/ai/system/yumeng",
+            apiKey: "system",
+            model: "seedance-2.5",
+            videoModel: "seedance-2.5",
+            videoSeconds: "60",
+            advancedConfig: {
+                protocol: "yumeng",
+                createPath: "/v2/model-center/tasks",
+                queryPath: "/v2/model-center/tasks/:task_id",
+                referenceRule: "参考素材必须使用公网 URL",
+                requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}"}',
+            },
+        } as AiConfig;
+        const imageReference = { id: "image-one", name: "参考图片", type: "image/png", dataUrl: "https://cdn.example.com/reference.png", url: "https://cdn.example.com/reference.png" } as ReferenceImage;
+        const audioReference = { id: "audio-one", name: "参考音频", type: "audio/mpeg", url: "https://cdn.example.com/reference.mp3" };
+
+        expect(compatibleVideoCreatePaths(yumeng, yumeng.model)).toEqual(["/v2/model-center/tasks"]);
+        expect(compatibleVideoPollPaths(yumeng, { id: "task-one", model: yumeng.model } as never)).toEqual(["/v2/model-center/tasks/:task_id"]);
+        await expect(buildCompatibleVideoPayloadVariants(yumeng, yumeng.model, "生成视频", [imageReference], "/v2/model-center/tasks", [], [audioReference])).resolves.toEqual([
+            expect.objectContaining({ model: "seedance-2.5", prompt: "生成视频", duration: 30, aspect_ratio: "16:9", reference_images: ["https://cdn.example.com/reference.png"], reference_audios: ["https://cdn.example.com/reference.mp3"] }),
+        ]);
+    });
+
+    it("rejects reference video before submitting to the Yumeng v2 API", async () => {
+        const yumeng = {
+            ...config,
+            baseUrl: "/api/ai/system/yumeng",
+            apiKey: "system",
+            model: "seedance-2.5",
+            videoModel: "seedance-2.5",
+            advancedConfig: { protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", requestTemplate: "{}" },
+        } as AiConfig;
+
+        await expect(createUpstreamVideoGenerationTask(yumeng, "生成视频", [], [{ id: "video-one", name: "参考视频", type: "video/mp4", url: "https://cdn.example.com/reference.mp4" }])).rejects.toThrow("昱梦新版模型中心暂不支持参考视频");
     });
 });
 

@@ -75,20 +75,20 @@ export async function updateOwnPassword(userId: string, input: { currentPassword
             const repos = createPostgresRepositories(client);
             const user = await repos.users.getById(userId, true);
             if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-            if (!verifyPassword(input.currentPassword, user.passwordHash)) throw new AuthInputError("当前密码不正确");
-            await repos.users.update(userId, { passwordHash: hashPassword(input.newPassword) });
+            if (!(await verifyPassword(input.currentPassword, user.passwordHash))) throw new AuthInputError("当前密码不正确");
+            await repos.users.update(userId, { passwordHash: await hashPassword(input.newPassword) });
             await repos.sessions.deleteByUserId(userId);
             const record = (await repos.users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }))[0];
             if (!record) throw new AuthInputError("用户不可用");
             return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
         });
     }
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         const user = db.users.find((item) => item.id === userId);
         if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-        if (!verifyPassword(input.currentPassword, user.passwordHash)) throw new AuthInputError("当前密码不正确");
+        if (!(await verifyPassword(input.currentPassword, user.passwordHash))) throw new AuthInputError("当前密码不正确");
         validatePassword(input.newPassword);
-        user.passwordHash = hashPassword(input.newPassword);
+        user.passwordHash = await hashPassword(input.newPassword);
         user.updatedAt = new Date().toISOString();
         db.sessions = db.sessions.filter((session) => session.userId !== user.id);
         return toPublicUser(user, db);
@@ -100,13 +100,13 @@ export async function verifyUserPasswordForSensitiveAction(userId: string, passw
         await ensurePostgresSchema();
         const user = await createPostgresRepositories().users.getById(userId);
         if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-        if (!verifyPassword(password, user.passwordHash)) throw new AuthInputError("当前密码不正确");
+        if (!(await verifyPassword(password, user.passwordHash))) throw new AuthInputError("当前密码不正确");
         return;
     }
     const db = await readAuthDb();
     const user = db.users.find((item) => item.id === userId);
     if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-    if (!verifyPassword(password, user.passwordHash)) throw new AuthInputError("当前密码不正确");
+    if (!(await verifyPassword(password, user.passwordHash))) throw new AuthInputError("当前密码不正确");
 }
 
 export async function resetPasswordByEmail(input: { email: string; code?: string; newPassword: string }) {
@@ -122,7 +122,7 @@ export async function resetPasswordByEmail(input: { email: string; code?: string
             if (!user || user.status !== "active") throw new AuthInputError("邮箱验证码不正确或已过期");
             const consumed = await consumePostgresEmailCode(client, { purpose: "password-reset", email, code: input.code });
             if (!consumed.ok) return consumed;
-            await repos.users.update(user.id, { passwordHash: hashPassword(input.newPassword) });
+            await repos.users.update(user.id, { passwordHash: await hashPassword(input.newPassword) });
             await repos.sessions.deleteByUserId(user.id);
             const record = (await repos.users.getPublicDetails([user.id], { now: clock.now.toISOString(), date: clock.date }))[0];
             if (!record) throw new AuthInputError("没有找到可用账号");
@@ -131,11 +131,11 @@ export async function resetPasswordByEmail(input: { email: string; code?: string
         if (!outcome.ok) throw outcome.error;
         return publicUserFromAuthenticatedRecord(outcome.record, clock.expiresAt);
     }
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         const user = db.users.find((item) => item.email?.toLowerCase() === email);
         if (!user || user.status !== "active") throw new AuthInputError("邮箱验证码不正确或已过期");
         consumeEmailCode(db, { purpose: "password-reset", email, code: input.code });
-        user.passwordHash = hashPassword(input.newPassword);
+        user.passwordHash = await hashPassword(input.newPassword);
         user.updatedAt = new Date().toISOString();
         db.sessions = db.sessions.filter((session) => session.userId !== user.id);
         return toPublicUser(user, db);
@@ -254,7 +254,7 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
             }
             if (patch.password) {
                 validatePassword(patch.password);
-                userPatch.passwordHash = hashPassword(patch.password);
+                userPatch.passwordHash = await hashPassword(patch.password);
             }
             if (patch.planId !== undefined) {
                 const settings = await readPostgresAuthSettings(client);
@@ -281,7 +281,7 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
             return { ...publicUserFromAuthenticatedRecord(record, clock.expiresAt), ...(walletPointsBalance === undefined ? {} : { pointsBalance: walletPointsBalance }) };
         });
     }
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         const user = db.users.find((item) => item.id === userId);
         if (!user) throw new AuthInputError("用户不存在");
         if (user.id === actorId && patch.status === "disabled") throw new AuthInputError("不能禁用当前登录的管理员账号");
@@ -304,7 +304,7 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
         }
         if (patch.password) {
             validatePassword(patch.password);
-            user.passwordHash = hashPassword(patch.password);
+            user.passwordHash = await hashPassword(patch.password);
             db.sessions = db.sessions.filter((session) => session.userId !== user.id);
         }
         user.role = nextRole;

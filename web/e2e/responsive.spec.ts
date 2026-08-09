@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { billingProductsFixture, expectDialogWithinViewport, expectNoHorizontalOverflow, masonryGalleryFixture, masonryLayoutIsReady, openCreativeHistory, readMasonryLayout } from "./responsive-helpers";
+
 async function waitForCreativeComposerReady(page: Page) {
     await expect(page.locator(".creative-composer")).toHaveAttribute("data-ready", "true", { timeout: 45_000 });
     await expect(page.getByRole("button", { name: /当前创作类型：/ })).toBeVisible({ timeout: 45_000 });
@@ -293,9 +295,10 @@ test("creative composer controls return to a neutral palette after selection", a
         await expect.poll(() => readPalette(selectedModeTrigger)).toEqual(neutralPalette);
 
         const preferenceTrigger = page.getByRole("button", { name: "生成参数：智能参数 · 5秒" });
-        const preferencePopover = page.locator(".ant-popover").filter({ hasText: "参考方式" }).last();
+        const preferencePopover = page.locator(".ant-popover").last();
         await openComposerPopover(preferenceTrigger, preferencePopover);
         await expect.poll(() => readPalette(preferenceTrigger)).not.toEqual(neutralPalette);
+        await preferencePopover.getByRole("tab", { name: "输出" }).click();
         const configuredPreferenceTrigger = page.getByRole("button", { name: "生成参数：智能参数 · 10秒" });
         await selectComposerPopoverOption(preferenceTrigger, preferencePopover, preferencePopover.getByRole("button", { name: "选择视频时长 10 秒" }), () => expect(configuredPreferenceTrigger).toBeVisible());
         await page.keyboard.press("Escape");
@@ -312,6 +315,57 @@ test("creative composer controls return to a neutral palette after selection", a
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.locator("html")).toHaveClass(/dark/);
     await verifyNeutralControls("creative composer neutral controls dark");
+});
+
+test("Agent generation inputs apply immediately and reveal video frame slots", async ({ page }, testInfo) => {
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await waitForCreativeComposerReady(page);
+
+    const preferenceTrigger = page.getByRole("button", { name: "生成参数：生成参数" });
+    const preferencePopover = page.locator(".ant-popover").last();
+    await openComposerPopover(preferenceTrigger, preferencePopover);
+
+    await preferencePopover.getByRole("button", { name: "打开图片自定义像素尺寸" }).click();
+    await preferencePopover.getByRole("textbox", { name: "自定义图片宽度" }).fill("1024");
+    await preferencePopover.getByRole("textbox", { name: "自定义图片高度" }).fill("1536");
+    await expect(preferencePopover.getByText("1024×1536", { exact: true })).toBeVisible();
+    await expect(preferencePopover.getByRole("button", { name: "应用", exact: true })).toHaveCount(0);
+
+    await preferencePopover.getByRole("tab", { name: "输出" }).click();
+    const countInput = preferencePopover.getByRole("textbox", { name: "自定义生成数量" });
+    await countInput.fill("6");
+    await expect(countInput).toHaveValue("6");
+    if (process.env.VOZEB_PRO_VISUAL_CAPTURE === "1") {
+        const screenshotPath = testInfo.outputPath(`agent-immediate-parameters-${testInfo.project.name}.png`);
+        await page.screenshot({ path: screenshotPath });
+        await testInfo.attach("Agent 即时尺寸与数量", { path: screenshotPath, contentType: "image/png" });
+    }
+
+    await preferencePopover.getByRole("button", { name: "视频", exact: true }).click();
+    const firstLastOption = preferencePopover.getByRole("button", { name: "选择视频参考方式 首尾帧" });
+    await expect(firstLastOption).toBeVisible();
+    await firstLastOption.click();
+    await expect(page.getByRole("button", { name: "当前创作类型：Agent 模式" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(preferencePopover).toBeHidden();
+
+    const frames = page.locator('[aria-label="视频首尾帧"]');
+    const firstFrame = page.getByRole("button", { name: "添加视频首帧" });
+    await expect(frames).toBeVisible();
+    await expect(firstFrame).toBeVisible();
+    await expect(page.getByRole("button", { name: "添加视频尾帧" })).toBeVisible();
+
+    await firstFrame.click();
+    const framePopover = page.locator(".ant-popover").filter({ hasText: "选择首帧图片" }).last();
+    await expect(framePopover).toBeVisible();
+    const [frameRect, framePopoverRect] = await Promise.all([firstFrame.evaluate((element) => element.getBoundingClientRect().toJSON()), framePopover.evaluate((element) => element.getBoundingClientRect().toJSON())]);
+    expect(framePopoverRect.top, "new Agent frame picker should open below its slot").toBeGreaterThanOrEqual(frameRect.bottom - 1);
+    await expectNoHorizontalOverflow(page, `${testInfo.project.name} Agent immediate inputs and video frames`);
+    if (process.env.VOZEB_PRO_VISUAL_CAPTURE === "1") {
+        const screenshotPath = testInfo.outputPath(`agent-immediate-inputs-${testInfo.project.name}.png`);
+        await page.screenshot({ path: screenshotPath });
+        await testInfo.attach("Agent 即时参数与首尾帧", { path: screenshotPath, contentType: "image/png" });
+    }
 });
 
 test("creative composer renders uploaded images as thumbnails instead of filename chips", async ({ page }, testInfo) => {
@@ -575,7 +629,7 @@ test("creative video first and last frame controls support upload, removal and r
     };
 
     const uploadFrame = async (label: "首帧" | "尾帧", fileName: string) => {
-        await page.getByRole("button", { name: `选择视频${label}` }).click();
+        await page.getByRole("button", { name: `添加视频${label}` }).click();
         const popover = page
             .locator(".ant-popover")
             .filter({ hasText: `选择${label}图片` })
@@ -605,11 +659,11 @@ test("creative video first and last frame controls support upload, removal and r
     await expect(composer.getByText(lastFileName, { exact: true })).toHaveCount(0);
 
     await frames.getByRole("button", { name: "移除视频尾帧" }).click();
-    await expect(page.getByRole("button", { name: "选择视频尾帧" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "添加视频尾帧" })).toBeVisible();
     await page.getByRole("button", { name: "发送" }).click();
     await expect(page.getByText("请先同时选择视频首帧和尾帧图片").last()).toBeVisible();
 
-    await page.getByRole("button", { name: "选择视频尾帧" }).click();
+    await page.getByRole("button", { name: "添加视频尾帧" }).click();
     const tailPopover = page.locator(".ant-popover").filter({ hasText: "选择尾帧图片" }).last();
     await expect(tailPopover).toBeVisible();
     await tailPopover.getByRole("button", { name: `设为尾帧：${lastFileName}` }).click();
@@ -621,8 +675,8 @@ test("creative video first and last frame controls support upload, removal and r
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.locator("html")).toHaveClass(/dark/);
     await selectFirstLastMode();
-    await expect(page.getByRole("button", { name: "选择视频首帧" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "选择视频尾帧" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "添加视频首帧" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "添加视频尾帧" })).toBeVisible();
     await expectNoHorizontalOverflow(page, `${testInfo.project.name} creative video frames dark`);
 });
 
@@ -903,151 +957,3 @@ test("inspiration works fill each row before continuing down the shortest masonr
         expect(layout.itemsInsideGrid).toBe(true);
     }
 });
-
-function masonryGalleryFixture() {
-    const sizes = [
-        [400, 800],
-        [400, 300],
-        [400, 600],
-        [400, 240],
-        [400, 500],
-        [400, 700],
-        [400, 360],
-        [400, 560],
-    ];
-    return sizes.map(([width, height], index) => ({
-        slug: `e2e-masonry-${index + 1}`,
-        sourceType: "media",
-        viewCount: index + 1,
-        likeCount: 0,
-        isFeatured: false,
-        publishedAt: "2026-08-04T00:00:00.000Z",
-        title: `瀑布流测试作品 ${index + 1}`,
-        description: "",
-        publicPrompt: `masonry fixture ${index + 1}`,
-        category: "视觉设计",
-        tags: [],
-        authorName: "E2E",
-        preview: {
-            id: `e2e-preview-${index + 1}`,
-            mediaType: "image",
-            mimeType: "image/svg+xml",
-            url: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="hsl(${index * 42} 55% 58%)"/></svg>`)}`,
-        },
-    }));
-}
-
-async function readMasonryLayout(page: import("@playwright/test").Page) {
-    return page.evaluate(() => {
-        const grid = document.querySelector<HTMLElement>('[aria-label="灵感作品列表"]')!;
-        const gridBounds = grid.getBoundingClientRect();
-        const items = [...grid.children].map((item) => (item.firstElementChild as HTMLElement).getBoundingClientRect());
-        const columnCount = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length;
-        const firstRow = items.slice(0, columnCount);
-        const shortestColumn = firstRow.reduce((shortest, item) => (item.bottom < shortest.bottom ? item : shortest));
-        const nextItem = items[columnCount];
-        return {
-            columnCount,
-            firstRowLefts: firstRow.map((item) => Math.round(item.left)),
-            firstRowTopRange: Math.max(...firstRow.map((item) => item.top)) - Math.min(...firstRow.map((item) => item.top)),
-            shortestColumnLeft: Math.round(shortestColumn.left),
-            shortestColumnBottom: shortestColumn.bottom,
-            nextItemLeft: Math.round(nextItem.left),
-            nextItemTop: nextItem.top,
-            rowGap: Number.parseFloat(getComputedStyle(grid).rowGap) || 0,
-            documentClientWidth: document.documentElement.clientWidth,
-            documentScrollWidth: document.documentElement.scrollWidth,
-            gridClientWidth: grid.clientWidth,
-            gridScrollWidth: grid.scrollWidth,
-            itemsInsideGrid: items.every((item) => item.left >= gridBounds.left - 1 && item.right <= gridBounds.right + 1),
-        };
-    });
-}
-
-function masonryLayoutIsReady(layout: Awaited<ReturnType<typeof readMasonryLayout>>, expectedColumns: number) {
-    return layout.columnCount === expectedColumns && layout.firstRowLefts.length === expectedColumns && new Set(layout.firstRowLefts).size === expectedColumns && layout.firstRowTopRange <= 1 && layout.nextItemLeft === layout.shortestColumnLeft;
-}
-
-function billingProductsFixture() {
-    const timestamp = "2026-08-02T00:00:00.000Z";
-    return Array.from({ length: 8 }, (_, index) => ({
-        id: `e2e-plan-${index + 1}`,
-        productKind: "points",
-        name: `E2E 创作积分包 ${index + 1}`,
-        description: `用于验证多套餐响应式布局 ${index + 1}`,
-        amountCents: (index + 1) * 900,
-        currency: "CNY",
-        pointsAmount: (index + 1) * 100,
-        dailyPoints: 0,
-        periodDays: 0,
-        enabled: true,
-        sortOrder: index,
-        metadata: { recommended: index === 2, features: ["图片与视频创作", "订单和积分流水可查", "支付成功自动到账"] },
-        pricing: {
-            listUnitAmountCents: (index + 1) * 1_000,
-            saleUnitAmountCents: (index + 1) * 900,
-            discountCents: (index + 1) * 100,
-            promotion: { id: `promo-${index + 1}`, label: "限时优惠", unitAmountCents: (index + 1) * 900, startsAt: timestamp, endsAt: timestamp },
-        },
-        createdAt: timestamp,
-        updatedAt: timestamp,
-    }));
-}
-
-async function expectNoHorizontalOverflow(page: import("@playwright/test").Page, label: string) {
-    await expect
-        .poll(async () =>
-            page.evaluate(() => ({
-                viewport: window.innerWidth,
-                documentClientWidth: document.documentElement.clientWidth,
-                documentScrollWidth: document.documentElement.scrollWidth,
-                bodyClientWidth: document.body.clientWidth,
-                bodyScrollWidth: document.body.scrollWidth,
-            })),
-        )
-        .toMatchObject({
-            documentScrollWidth: expect.any(Number),
-            bodyScrollWidth: expect.any(Number),
-        });
-    const sizes = await page.evaluate(() => ({
-        document: [document.documentElement.clientWidth, document.documentElement.scrollWidth],
-        body: [document.body.clientWidth, document.body.scrollWidth],
-        overflowers: [...document.querySelectorAll<HTMLElement>("body *")]
-            .map((element) => {
-                const bounds = element.getBoundingClientRect();
-                return {
-                    tag: element.tagName,
-                    ariaLabel: element.getAttribute("aria-label"),
-                    className: typeof element.className === "string" ? element.className : "",
-                    left: Math.round(bounds.left),
-                    right: Math.round(bounds.right),
-                    width: Math.round(bounds.width),
-                };
-            })
-            .filter((item) => item.left < -1 || item.right > document.documentElement.clientWidth + 1)
-            .slice(0, 8),
-    }));
-    expect(sizes.document[1], `${label} document overflow: ${JSON.stringify(sizes.overflowers)}`).toBeLessThanOrEqual(sizes.document[0] + 1);
-    expect(sizes.body[1], `${label} body overflow`).toBeLessThanOrEqual(sizes.body[0] + 1);
-}
-
-async function expectDialogWithinViewport(dialog: import("@playwright/test").Locator) {
-    const bounds = await dialog.boundingBox();
-    expect(bounds).not.toBeNull();
-    const viewport = dialog.page().viewportSize();
-    expect(viewport).not.toBeNull();
-    expect(bounds!.x).toBeGreaterThanOrEqual(0);
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width + 1);
-}
-
-async function openCreativeHistory(page: import("@playwright/test").Page) {
-    const dialog = page.getByRole("dialog", { name: "创作历史" });
-    await expect
-        .poll(async () => {
-            if (await dialog.isVisible().catch(() => false)) return true;
-            await page.getByRole("button", { name: "创作历史" }).click();
-            return dialog.isVisible().catch(() => false);
-        })
-        .toBe(true);
-    return dialog;
-}

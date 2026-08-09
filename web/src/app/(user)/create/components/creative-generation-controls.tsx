@@ -22,6 +22,7 @@ export function CreativeGenerationControls({
     onToggleModel,
     onClearModels,
     onToggleSmartPlanning,
+    onCapabilityChange,
     onChangeGenerationPreference,
 }: {
     models: CreativeModelOption[];
@@ -33,6 +34,7 @@ export function CreativeGenerationControls({
     onToggleModel: (model: CreativeModelOption) => void;
     onClearModels: () => void;
     onToggleSmartPlanning: () => void;
+    onCapabilityChange: (capability: MediaCapability) => void;
     onChangeGenerationPreference: (capability: MediaCapability, patch: Record<string, string | number>) => void;
 }) {
     const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -158,8 +160,11 @@ export function CreativeGenerationControls({
                 preferences={generationPreferences}
                 triggerLabel={creationMode === "agent" ? "生成参数" : undefined}
                 placement={placement}
-                onCapabilityChange={setPreferredCapability}
-                onChange={(patch) => onChangeGenerationPreference(activeCapability, patch as Record<string, string | number>)}
+                onCapabilityChange={(capability) => {
+                    setPreferredCapability(capability);
+                    onCapabilityChange(capability);
+                }}
+                onChange={(patch) => onChangeGenerationPreference(creationMode === "agent" ? preferredCapability : activeCapability, patch as Record<string, string | number>)}
             />
         </>
     );

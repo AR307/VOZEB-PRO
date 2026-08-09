@@ -18,6 +18,7 @@ import type { PublicGalleryItem } from "@/services/api/work-governance";
 import { createAgentPromptFromHash } from "@/lib/create-agent-prompt";
 
 import { CreativeComposer } from "./components/creative-composer";
+import { applyAgentGenerationCapability, shouldShowVideoFrameControls } from "./components/creative-composer-video-mode";
 import { CreativeConversationList } from "./components/creative-conversation-list";
 import { CreateInspirationGallery } from "./components/create-inspiration-gallery";
 import { CreativeMessages } from "./components/creative-messages";
@@ -142,11 +143,12 @@ export default function CreatePage() {
             return;
         }
         const videoPreference = generationPreferences.video;
-        if (videoPreference?.referenceMode === "first_frame" && !videoPreference.firstFrameAssetId) {
+        const videoFrameModeActive = shouldShowVideoFrameControls(creationMode, generationPreferences);
+        if (videoFrameModeActive && videoPreference?.referenceMode === "first_frame" && !videoPreference.firstFrameAssetId) {
             message.warning("请先选择视频首帧图片");
             return;
         }
-        if (videoPreference?.referenceMode === "first_last" && (!videoPreference.firstFrameAssetId || !videoPreference.lastFrameAssetId)) {
+        if (videoFrameModeActive && videoPreference?.referenceMode === "first_last" && (!videoPreference.firstFrameAssetId || !videoPreference.lastFrameAssetId)) {
             message.warning("请先同时选择视频首帧和尾帧图片");
             return;
         }
@@ -256,7 +258,13 @@ export default function CreatePage() {
 
     const changeCreationMode = (mode: "agent" | CreativeGenerationMode) => {
         setCreationMode(mode);
-        if (mode !== "video") setGenerationPreferences((current) => (current.video ? { ...current, video: { ...current.video, referenceMode: "reference", firstFrameAssetId: undefined, lastFrameAssetId: undefined } } : current));
+        setGenerationPreferences((current) => {
+            const automaticPreferences = { ...current };
+            delete automaticPreferences.mode;
+            const next: CreativeGenerationPreferences = mode === "agent" ? automaticPreferences : { ...current, mode };
+            if (mode === "video" || !next.video) return next;
+            return { ...next, video: { ...next.video, referenceMode: "reference", firstFrameAssetId: undefined, lastFrameAssetId: undefined } };
+        });
         if (mode === "agent") {
             setSelectedModelIds([]);
             setSmartPlanning(true);
@@ -266,13 +274,22 @@ export default function CreatePage() {
         setSmartPlanning(true);
     };
 
+    const changeGenerationCapability = (capability: CreativeGenerationMode) => {
+        setGenerationPreferences((current) => {
+            const next = { ...current, mode: capability };
+            if (capability === "video" || !current.video) return next;
+            return { ...next, video: { ...current.video, referenceMode: "reference", firstFrameAssetId: undefined, lastFrameAssetId: undefined } };
+        });
+    };
+
     const changeGenerationPreference = (capability: "image" | "video" | "audio", patch: Record<string, string | number>) => {
         setGenerationPreferences((current) => {
-            if (capability !== "video") return { ...current, [capability]: { ...current[capability], ...patch } };
-            const nextVideo = { ...current.video, ...patch };
-            if (patch.referenceMode === "reference") return { ...current, video: { ...nextVideo, firstFrameAssetId: undefined, lastFrameAssetId: undefined } };
-            if (patch.referenceMode === "first_frame") return { ...current, video: { ...nextVideo, lastFrameAssetId: undefined } };
-            return { ...current, video: nextVideo };
+            const activePreferences = applyAgentGenerationCapability(creationMode, capability, current);
+            if (capability !== "video") return { ...activePreferences, [capability]: { ...activePreferences[capability], ...patch } };
+            const nextVideo = { ...activePreferences.video, ...patch };
+            if (patch.referenceMode === "reference") return { ...activePreferences, video: { ...nextVideo, firstFrameAssetId: undefined, lastFrameAssetId: undefined } };
+            if (patch.referenceMode === "first_frame") return { ...activePreferences, video: { ...nextVideo, lastFrameAssetId: undefined } };
+            return { ...activePreferences, video: nextVideo };
         });
     };
 
@@ -401,6 +418,7 @@ export default function CreatePage() {
                 });
             }}
             onChangeCreationMode={changeCreationMode}
+            onChangeGenerationCapability={changeGenerationCapability}
             onChangeGenerationPreference={changeGenerationPreference}
             onSelectVideoFrame={selectVideoFrame}
             onUploadVideoFrame={(role) => {

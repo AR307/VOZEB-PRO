@@ -12,7 +12,7 @@ import { capabilityLabel, channelDetectedCapabilities, channelModelCapability } 
 import { normalizeModelId } from "@/lib/model-capability";
 import { revealAdminChannelApiKey } from "@/services/api/admin-settings";
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
-import { applyModelProtocol, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
+import { applyModelProtocol, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, channelSupportsModelCatalog, emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 
 const protocolOptions = channelProtocolOptions().map(({ value, label }) => ({ value, label }));
 const ALL_GLOBAL_AIOPC_PRESETS = "__all_globalaiopc_presets__";
@@ -35,6 +35,8 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
     const [apiKeyLoading, setApiKeyLoading] = useState(false);
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
     const protocolDefinition = channelProtocolDefinition(advanced.protocol);
+    const canSyncModels = channelSupportsModelCatalog(channel);
+    const hasDocumentedModels = Boolean(protocolDefinition.builtInModels?.length);
     const capabilitySummary = channelCapabilitySummary(channel);
     const detectedCapabilities = channelDetectedCapabilities(channel);
     const selectedGlobalPresets = resolveGlobalAiOpcPresets(advanced);
@@ -129,7 +131,15 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                         {capabilitySummary ? <Tag className="m-0">{capabilitySummary}</Tag> : null}
                     </div>
                     <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{channel.baseUrl || "未填写 Base URL"}</div>
-                    <div className="mt-1 text-xs text-stone-400 dark:text-stone-500">{requiresApiKey ? "填写名称、Base URL 和 API Key，再同步上游模型。" : "填写名称和 Base URL 后即可同步上游模型；当前协议无需 API Key。"}</div>
+                    <div className="mt-1 text-xs text-stone-400 dark:text-stone-500">
+                        {canSyncModels
+                            ? requiresApiKey
+                                ? "填写名称、Base URL 和 API Key，再同步上游模型。"
+                                : "填写名称和 Base URL 后即可同步上游模型；当前协议无需 API Key。"
+                            : hasDocumentedModels
+                              ? "填写连接信息后即可使用官方文档预置模型。"
+                              : "填写连接信息后手动添加上游模型 ID。"}
+                    </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:w-full sm:justify-start sm:gap-2 lg:w-auto lg:justify-end">
                     <Switch checkedChildren="启用" unCheckedChildren="停用" checked={channel.enabled} onChange={(enabled) => onChange({ enabled })} />
@@ -248,9 +258,10 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                             className="w-full"
                             mode="tags"
                             maxTagCount="responsive"
+                            tokenSeparators={[",", "，", "\n"]}
                             value={channel.models}
-                            placeholder="检测会自动填，也可以手动输入模型名"
-                            onChange={(models) => onChange({ models })}
+                            placeholder={canSyncModels ? "同步后自动填，也可输入模型 ID" : "输入模型 ID 后按 Enter，可添加多个"}
+                            onChange={(models) => onChange({ models: models.map((model) => model.trim()).filter(Boolean) })}
                         />
                     </LabeledControl>
                     {detectedCapabilities.has("text") ? (
@@ -343,12 +354,20 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                     ) : (
                         <div className="md:col-span-2 text-xs leading-5 text-stone-500 dark:text-stone-400">当前协议的路径、请求字段、结果字段和参考素材能力由协议注册表固定；如需非标准字段，请在模型级路由中选择“自定义协议”。</div>
                     )}
-                    <div className="flex flex-wrap gap-2 md:col-span-2">
-                        <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetching} onClick={onFetchModels}>
-                            拉取模型
-                        </Button>
+                    {canSyncModels ? (
+                        <div className="flex flex-wrap gap-2 md:col-span-2">
+                            <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetching} onClick={onFetchModels}>
+                                拉取模型
+                            </Button>
+                        </div>
+                    ) : null}
+                    <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">
+                        {canSyncModels
+                            ? "拉取会合并上游模型、官方目录和已有手工模型，不会覆盖手工配置；混合接口优先使用模型级路由，上方兜底字段只在模型没有专属配置时生效。"
+                            : hasDocumentedModels
+                              ? "当前协议使用官方新版文档预置模型，不请求未公开的模型目录；真实任务继续使用协议注册表中的 V2 路径。"
+                              : "当前协议未公开模型目录，请在模型列表中手动维护真实模型 ID；任务仍严格使用协议注册表中的 V2 路径。"}
                     </div>
-                    <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">拉取会合并上游模型、官方目录和已有手工模型，不会覆盖手工配置；混合接口优先使用模型级路由，上方兜底字段只在模型没有专属配置时生效。</div>
                 </div>
             </details>
         </div>

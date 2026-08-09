@@ -2,8 +2,8 @@ import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 
 import { deleteSession, getPublicUsersByIds, getUserBySession, sessionMaxAgeSeconds, type AuthSettings, type PublicUser } from "./store";
-import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
-import { getTrustedProxyHops } from "@/lib/server/security";
+import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
+import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
 
 const SESSION_COOKIE_NAME = "vozeb_pro_session";
 
@@ -17,7 +17,7 @@ async function getSessionCookieValue() {
 export async function getCurrentUser(request?: Request) {
     const sessionUser = await getUserBySession(await getSessionCookieValue());
     if (sessionUser || !request) return sessionUser;
-    const workerUserId = authorizedMaintenanceUserId(request);
+    const workerUserId = authorizedWorkerUserId(request);
     if (!workerUserId) return null;
     const workerUser = (await getPublicUsersByIds([workerUserId]))[0];
     return workerUser?.status === "active" ? workerUser : null;

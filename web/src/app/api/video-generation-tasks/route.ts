@@ -25,6 +25,7 @@ import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoReques
 import { assertGeminiVideoReferences, buildGeminiVideoRequest, geminiVideoCreatePath, normalizeGeminiVideoDuration, parseGeminiVideoCreateResponse } from "@/lib/server/gemini-video-provider";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
+import { resolvePublicRequestOrigin } from "@/lib/server/public-request-origin";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
 import { normalizeVideoGenerationReferences, regularVideoReferences, videoFrameReferences, type VideoGenerationReference } from "@/lib/video-reference-contract";
@@ -526,12 +527,7 @@ function videoReferenceContent(prompt: string, references: readonly VideoGenerat
     ];
 }
 function requestPublicOrigin(request: Request) {
-    const configured = normalizePublicOrigin(process.env.NEXT_PUBLIC_SITE_URL || "");
-    if (configured) return configured;
-    const url = new URL(request.url);
-    const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || request.headers.get("host") || url.host;
-    const protocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(/:$/, "");
-    return `${protocol}://${host}`;
+    return resolvePublicRequestOrigin(request);
 }
 function normalizePublicOrigin(value: string) {
     try {

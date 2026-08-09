@@ -32,7 +32,7 @@ import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
 import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import { channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
+import { channelProtocolDefinition, channelSupportsModelCatalog, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
     ArrowRight,
@@ -382,6 +382,10 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const fetchModelsForChannel = async (channel: SystemModelChannel) => {
+        if (!channelSupportsModelCatalog(channel)) {
+            message.warning("当前协议没有可用的模型目录，请手动填写上游模型 ID");
+            return;
+        }
         if (!channel.baseUrl.trim()) {
             message.error("请先填写该渠道的 Base URL");
             return;
@@ -401,9 +405,9 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const fetchAllModels = async () => {
-        const runnable = settings.systemChannels.filter((channel) => channel.baseUrl.trim());
+        const runnable = settings.systemChannels.filter((channel) => channel.baseUrl.trim() && channelSupportsModelCatalog(channel));
         if (!runnable.length) {
-            message.error("请先填写至少一个渠道的 Base URL");
+            message.warning("当前没有可同步模型目录的渠道；请先配置目录，或手动维护模型 ID");
             return;
         }
         setFetchingModelId("all");

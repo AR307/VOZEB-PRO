@@ -4,9 +4,11 @@ const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     getPaymentConfigSummary: vi.fn(),
     savePaymentProviderConfig: vi.fn(),
+    audit: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
+vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin-one" })), safeRecordAuditLog: mocks.audit }));
 vi.mock("@/lib/server/payment-config-store", () => ({ savePaymentProviderConfig: mocks.savePaymentProviderConfig }));
 vi.mock("@/lib/server/payment-config-status", () => ({ getPaymentConfigSummary: mocks.getPaymentConfigSummary }));
 
@@ -32,6 +34,13 @@ describe("PATCH /api/admin/billing/payment-config", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.savePaymentProviderConfig).toHaveBeenCalledWith({ providerId: "alipay", enabled: true, values: { mode: "face_to_face" } });
+        expect(mocks.audit).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: "admin.billing.payment-config.update",
+                target: { type: "payment_provider", id: "alipay" },
+                metadata: { enabled: true },
+            }),
+        );
     });
 
     it("maps invalid selector values to a client error", async () => {
@@ -47,5 +56,6 @@ describe("PATCH /api/admin/billing/payment-config", () => {
 
         expect(response.status).toBe(400);
         expect(await response.json()).toEqual({ error: "接入方式配置无效" });
+        expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.billing.payment-config.update", status: "failure" }));
     });
 });

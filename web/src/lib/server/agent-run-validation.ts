@@ -75,11 +75,11 @@ export function validateAgentTaskResult(type: AgentPlan["deliverables"][number][
 }
 
 export function agentTaskCopies(type: AgentPlan["deliverables"][number]["type"], count: number) {
-    return type === "image" ? Math.max(1, Math.min(10, Math.floor(Number(count) || 1))) : 1;
+    return type === "image" || type === "video" ? Math.max(1, Math.min(10, Math.floor(Number(count) || 1))) : 1;
 }
 
 export function resolveAgentTaskCount(type: AgentPlan["deliverables"][number]["type"], planned: unknown, skillDefault: unknown, canvasDefault: unknown) {
-    if (type !== "image") return 1;
+    if (type !== "image" && type !== "video") return 1;
     const value = Number(planned) || Number(skillDefault) || Number(canvasDefault) || 1;
     return Math.max(1, Math.min(10, Math.floor(value)));
 }

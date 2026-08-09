@@ -6,7 +6,9 @@ import {
     applyModelProtocol,
     channelCredentialsReady,
     channelProtocolDefinition,
+    channelProtocolDefinitions,
     channelProtocolOptions,
+    channelSupportsModelCatalog,
     channelProtocolValidationErrors,
     normalizeStrictProtocolModelConfig,
     protocolAuthHeaders,
@@ -24,17 +26,20 @@ const channel = {
 } satisfies SystemModelChannel;
 
 describe("channel protocol registry", () => {
-    it("exposes SD2 video and Stable Diffusion image as separate protocols", () => {
+    it("exposes only active protocols and keeps SD2 separate from Stable Diffusion", () => {
         const protocols = channelProtocolOptions().map((item) => item.value);
-        expect(protocols).toEqual(expect.arrayContaining(["openai", "gemini", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "seedance-special", "custom"]));
+        expect(protocols).toEqual(["openai", "yumeng", "gemini", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "custom", "compatible", "auto"]);
+        expect(protocols).not.toEqual(expect.arrayContaining(["vozeb-recommended", "seedance-special", "globalaiopc"]));
         expect(channelProtocolDefinition("openai").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("sub2api").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("newapi").modelCatalogPaths).toEqual(["/v1/models"]);
-        expect(channelProtocolDefinition("vozeb-recommended").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("seedance").modelCatalogPaths).toEqual(["/models"]);
         expect(channelProtocolDefinition("volcengine-video").modelCatalogPaths).toEqual(["/api/v3/models"]);
         expect(channelProtocolDefinition("stable-diffusion").modelCatalogPaths).toEqual(["/sdapi/v1/sd-models"]);
         expect(channelProtocolDefinition("gemini").modelCatalogPaths).toEqual(["/v1beta/models"]);
+        expect(channelProtocolDefinition("yumeng")).toMatchObject({ label: "昱梦", modelCatalogPaths: [], capabilities: ["image", "video"], builtInModels: expect.any(Array) });
+        expect(channelProtocolDefinition("yumeng").builtInModels).toHaveLength(29);
+        expect(channelProtocolDefinition("yumeng")).not.toHaveProperty("defaultBaseUrl");
     });
 
     it("keeps strict protocol paths and request contracts isolated", () => {
@@ -49,7 +54,11 @@ describe("channel protocol registry", () => {
         expect(channelProtocolDefinition("seedance").operations.video).toMatchObject({ createPath: "/contents/generations/tasks", queryPath: "/contents/generations/tasks/:task_id", resultField: "content.video_url" });
         expect(channelProtocolDefinition("volcengine-video").operations.video).toEqual(channelProtocolDefinition("seedance").operations.video);
         expect(channelProtocolDefinition("stable-diffusion").operations.image).toMatchObject({ createPath: "/sdapi/v1/txt2img", editPath: "/sdapi/v1/img2img", resultField: "images[0]" });
-        expect(channelProtocolDefinition("seedance-special").operations.video).toMatchObject({ createPath: "/v1/seedance-special/videos", queryPath: "/v1/videos/:task_id" });
+        expect(channelProtocolDefinition("yumeng").operations).toMatchObject({
+            image: { createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", resultField: "result_url / image_url", supportsReferenceImage: true },
+            video: { createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", resultField: "result_url / video_url", supportsReferenceImage: true, supportsReferenceVideo: false, supportsReferenceAudio: true },
+        });
+        expect(channelProtocolDefinition("seedance-special").operations.video).toMatchObject({ createPath: "/v1/seedance-special/videos", queryPath: "/v1/result/:task_id" });
         expect(channelProtocolDefinition("vozeb-recommended").operations.video).toMatchObject({
             createPath: "/v1/videos/generations",
             imageToVideoPath: "/v1/videos/generations",
@@ -64,6 +73,20 @@ describe("channel protocol registry", () => {
             resultField: "response.generateVideoResponse.generatedSamples[0].video.uri",
             statusField: "done",
         });
+    });
+
+    it("keeps every strict capability executable and every asynchronous video query explicit", () => {
+        const strict = channelProtocolDefinitions.filter((definition) => definition.strict);
+
+        for (const definition of strict) {
+            expect(Object.keys(definition.operations).sort(), definition.id).toEqual([...definition.capabilities].sort());
+            for (const capability of definition.capabilities) {
+                const operation = definition.operations[capability];
+                expect(operation?.createPath, `${definition.id}:${capability}`).toMatch(/^\//);
+                expect(operation?.resultField, `${definition.id}:${capability}`).toBeTruthy();
+                if (capability === "video") expect(operation?.queryPath, `${definition.id}:${capability}`).toMatch(/^\//);
+            }
+        }
     });
 
     it("applies the VOZEB recommended preset to frontend channel drafts", () => {
@@ -106,6 +129,27 @@ describe("channel protocol registry", () => {
         expect(configured.apiFormat).toBe("gemini");
         expect(configured.advancedConfig?.modelConfigs?.["veo-3.1-generate-preview"]).toMatchObject({ protocol: "gemini", apiFormat: "gemini", capability: "video" });
         expect(protocolAuthHeaders("secret", configured.advancedConfig, "gemini")).toEqual({ "x-goog-api-key": "secret" });
+    });
+
+    it("applies only the documented Yumeng v2 model-center contract", () => {
+        const configured = applyChannelProtocol({ ...channel, baseUrl: "", models: [] }, "yumeng");
+
+        expect(configured.baseUrl).toBe("");
+        expect(configured.models).toHaveLength(29);
+        expect(configured.models).toContain("seedream_5.0Pro");
+        expect(configured.models).toContain("klingo3");
+        expect(configured.advancedConfig?.modelConfigs).toMatchObject({
+            "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/v2/model-center/tasks" },
+            klingo3: { capability: "video", protocol: "yumeng", createPath: "/v2/model-center/tasks" },
+        });
+        expect(configured.advancedConfig?.operationConfigs).toMatchObject({
+            image: { protocol: "yumeng", capability: "image", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id" },
+            video: { protocol: "yumeng", capability: "video", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", supportsReferenceVideo: false },
+        });
+        expect(protocolAuthHeaders("secret", configured.advancedConfig)).toEqual({ authorization: "Bearer secret" });
+        expect(channelSupportsModelCatalog(configured)).toBe(false);
+        expect(channelSupportsModelCatalog(applyChannelProtocol(channel, "openai"))).toBe(true);
+        expect(channelSupportsModelCatalog({ advancedConfig: { ...configured.advancedConfig!, modelCatalogPaths: ["/v2/model-center/models"] } })).toBe(true);
     });
 
     it("loads the documented Seedance special models and rejects preset tampering", () => {

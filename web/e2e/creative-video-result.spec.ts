@@ -219,7 +219,7 @@ test("failed media generation shows the real failure path without an empty resul
     await expect(round).toBeVisible({ timeout: 45_000 });
     await expect(round.getByTestId("creative-generation-failure")).toBeVisible();
     await expect(round.getByText("当前模型暂不可用，请切换模型或稍后重试。", { exact: true })).toBeVisible();
-    await expect(round.getByText("仅在你确认后重新请求", { exact: true })).toBeVisible();
+    await expect(round.getByText("仅在你确认后重新请求", { exact: true })).toHaveCount(0);
     await expect(round.getByRole("button", { name: "重新分析 图片生成" })).toHaveText("重新分析");
     await expect(round.getByText("已为你生成图片", { exact: true })).toHaveCount(0);
     await expect(round.getByTestId("creative-primary-result")).toHaveCount(0);

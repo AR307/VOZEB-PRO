@@ -70,7 +70,14 @@ export async function getReferralCenter() {
 }
 
 export async function getAdminReferralOverview() {
-    return requestReferral<{ program: ReferralProgram; stats: { clicks: number; registrations: number; qualified: number; pending: number; settled: number; risky: number }; couponTemplates: CouponTemplate[] }>("/api/admin/referrals");
+    return requestReferral<{ program: ReferralProgram; stats: { clicks: number; registrations: number; qualified: number; pending: number; settled: number; risky: number } }>("/api/admin/referrals");
+}
+
+export async function listAdminReferralCouponTemplates(input: { keyword?: string; selectedId?: string; pageSize?: number } = {}) {
+    const query = new URLSearchParams({ page: "1", pageSize: String(input.pageSize || 20), includeDisabled: "false" });
+    if (input.keyword) query.set("keyword", input.keyword);
+    if (input.selectedId) query.set("selectedId", input.selectedId);
+    return requestReferral<{ templates: CouponTemplate[]; total: number; page: number; pageSize: number }>(`/api/admin/billing/coupon-templates?${query}`);
 }
 
 export async function saveAdminReferralProgram(program: ReferralProgram) {

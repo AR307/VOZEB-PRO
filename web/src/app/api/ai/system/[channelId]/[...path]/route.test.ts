@@ -591,6 +591,49 @@ describe("Gemini Veo native video proxy", () => {
     });
 });
 
+describe("Yumeng v2 model-center proxy", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("yumeng-image", "image", "seedream_5.0Pro")],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer",
+                    apiKey: "yumeng-secret",
+                    apiFormat: "openai",
+                    models: ["seedream_5.0Pro"],
+                    advancedConfig: {
+                        protocol: "yumeng",
+                        modelConfigs: { "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id" } },
+                    },
+                },
+            ],
+        });
+    });
+
+    it("keeps the v2 path literal instead of inserting v1", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/v2/model-center/tasks", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...systemModelHeaders("yumeng-image", "seedream_5.0Pro") },
+                body: JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["v2", "model-center", "tasks"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer yumeng-secret");
+    });
+});
+
 describe("custom protocol model routing", () => {
     beforeEach(() => {
         vi.restoreAllMocks();

@@ -67,7 +67,7 @@ export async function createUser(input: { username: string; email?: string; emai
                 status: "active",
                 planId: resolveDefaultPlan(settings.entitlements).id,
                 pointsBalance: 0,
-                passwordHash: hashPassword(input.password),
+                passwordHash: await hashPassword(input.password),
                 createdAt: now,
                 updatedAt: now,
             });
@@ -93,7 +93,7 @@ export async function createUser(input: { username: string; email?: string; emai
         return outcome.user;
     }
 
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         if (db.users.length === 0) throw new AuthInputError("请先通过安装向导创建管理员", 503);
         if (!db.settings.registrationEnabled) throw new AuthInputError("注册已关闭");
         if (db.settings.emailRegistrationEnabled && !email) throw new AuthInputError("请填写邮箱地址");
@@ -113,7 +113,7 @@ export async function createUser(input: { username: string; email?: string; emai
             status: "active",
             planId: resolveDefaultPlan(db.settings.entitlements).id,
             pointsBalance: 0,
-            passwordHash: hashPassword(input.password),
+            passwordHash: await hashPassword(input.password),
             createdAt: now,
             updatedAt: now,
         };
@@ -157,7 +157,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
                 status: "active",
                 planId: resolveDefaultPlan(settings.entitlements).id,
                 pointsBalance: 0,
-                passwordHash: hashPassword(input.password),
+                passwordHash: await hashPassword(input.password),
                 createdAt: now,
                 updatedAt: now,
             });
@@ -167,7 +167,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
         });
     }
 
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         if (db.users.length !== 0) throw new AuthInputError("项目已完成安装，禁止重复创建首个管理员", 409);
         const now = new Date().toISOString();
         const user: StoredUser = {
@@ -181,7 +181,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
             status: "active",
             planId: resolveDefaultPlan(db.settings.entitlements).id,
             pointsBalance: 0,
-            passwordHash: hashPassword(input.password),
+            passwordHash: await hashPassword(input.password),
             createdAt: now,
             updatedAt: now,
         };
@@ -220,7 +220,7 @@ export async function createUserByAdmin(input: { username: string; email?: strin
                 status: "active",
                 planId: plan.id,
                 pointsBalance: 0,
-                passwordHash: hashPassword(input.password),
+                passwordHash: await hashPassword(input.password),
                 createdAt: now,
                 updatedAt: now,
             });
@@ -241,7 +241,7 @@ export async function createUserByAdmin(input: { username: string; email?: strin
         });
     }
 
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) throw new AuthInputError("用户名已存在");
         if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
 
@@ -260,7 +260,7 @@ export async function createUserByAdmin(input: { username: string; email?: strin
             status: "active",
             planId: plan.id,
             pointsBalance: 0,
-            passwordHash: hashPassword(input.password),
+            passwordHash: await hashPassword(input.password),
             createdAt: now,
             updatedAt: now,
         };
@@ -278,7 +278,8 @@ export async function authenticateUser(input: { username: string; password: stri
         await ensurePostgresSchema();
         const repos = createPostgresRepositories();
         const user = await repos.users.getByLogin(account, accountEmail || undefined);
-        if (!user || !verifyPasswordWithDummy(input.password, user.passwordHash)) throw new AuthInputError("用户名或密码不正确");
+        const passwordMatches = await verifyPasswordWithDummy(input.password, user?.passwordHash);
+        if (!user || !passwordMatches) throw new AuthInputError("用户名或密码不正确");
         if (user.status !== "active") throw new AuthInputError("账号已被禁用");
 
         const lastLoginAt = new Date().toISOString();
@@ -290,7 +291,8 @@ export async function authenticateUser(input: { username: string; password: stri
     }
     const db = await readAuthDb();
     const user = db.users.find((item) => item.username.toLowerCase() === account.toLowerCase() || (accountEmail && item.email?.toLowerCase() === accountEmail));
-    if (!user || !verifyPasswordWithDummy(input.password, user.passwordHash)) throw new AuthInputError("用户名或密码不正确");
+    const passwordMatches = await verifyPasswordWithDummy(input.password, user?.passwordHash);
+    if (!user || !passwordMatches) throw new AuthInputError("用户名或密码不正确");
     if (user.status !== "active") throw new AuthInputError("账号已被禁用");
 
     await mutateAuthDb((nextDb) => {

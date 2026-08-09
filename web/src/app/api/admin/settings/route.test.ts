@@ -40,7 +40,7 @@ describe("admin settings model routing", () => {
         expect(mocks.setAuthSettings).toHaveBeenCalledWith(
             expect.objectContaining({
                 systemChannels: [expect.objectContaining({ id: "one", apiKey: "saved-secret", webhookSecret: savedSettings.systemChannels[0].webhookSecret })],
-                logicalModels: [expect.objectContaining({ id: "writer", name: "vendor/writer", bindings: savedSettings.logicalModels[0].bindings })],
+                logicalModels: [expect.objectContaining({ id: "writer", name: "Writer", bindings: savedSettings.logicalModels[0].bindings })],
                 defaultModels: savedSettings.defaultModels,
             }),
         );

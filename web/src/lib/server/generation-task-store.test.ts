@@ -95,6 +95,26 @@ describe("mutateStoredGenerationTask", () => {
         await expect(withGenerationConcurrencyLimit("user", "image", 60_000, 1, async () => "image-retry")).resolves.toBe("image-retry");
     });
 
+    it("restores a safe review reason for a legacy uncertain submission", async () => {
+        const now = Date.now();
+        mocks.records = [
+            {
+                id: "image-review",
+                userId: "user",
+                type: "image",
+                status: "running",
+                executionPhase: "needs_review",
+                lastUpstreamStatus: "submission_outcome_unknown",
+                payload: { id: "image-review", userId: "user", status: "running", events: [], createdAt: now, updatedAt: now },
+                createdAt: now,
+                updatedAt: now,
+                expiresAt: now + 60_000,
+            },
+        ];
+
+        await expect(getStoredGenerationTask<TestTask>("image", "image-review")).resolves.toMatchObject({ reviewReason: expect.stringContaining("避免重复生成和扣费") });
+    });
+
     it("deduplicates the same request attempt but allows a later retry attempt", async () => {
         mocks.records = [];
         const now = Date.now();

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
+import { readJsonBodyResult } from "@/lib/auth/request";
 import { getPublicUsersByIds } from "@/lib/auth/store";
 import { deleteExternalStorageFiles, listExternalStorageFiles } from "@/lib/server/object-storage-service";
 
@@ -45,7 +46,9 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
     const denied = await requireAdmin();
     if (denied) return denied;
-    const body = (await request.json().catch(() => ({}))) as { keys?: unknown };
+    const parsed = await readJsonBodyResult<{ keys?: unknown }>(request);
+    if (!parsed.ok) return NextResponse.json({ code: parsed.status, data: null, msg: parsed.message }, { status: parsed.status });
+    const body = parsed.data;
     const keys = Array.isArray(body.keys) ? body.keys.filter((key): key is string => typeof key === "string") : [];
     if (!keys.length) return NextResponse.json({ code: 400, data: null, msg: "请选择要删除的对象" }, { status: 400 });
     try {

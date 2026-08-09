@@ -48,16 +48,7 @@ type CanvasAssistantPanelProps = {
     onCollapse: () => void;
 };
 
-import {
-    AssistantHistory,
-    AssistantReferenceChip,
-    assistantMessageToChatMessage,
-    buildAssistantReferences,
-    compactSnapshot,
-    canvasRunSelectedNodeIds,
-    createSession,
-    removeCanvasAssistantSessions,
-} from "./canvas-assistant-elements";
+import { AssistantHistory, AssistantReferenceChip, assistantMessageToChatMessage, buildAssistantReferences, compactSnapshot, canvasRunSelectedNodeIds, createSession, removeCanvasAssistantSessions } from "./canvas-assistant-elements";
 
 export function CanvasAssistantPanel({
     conversationId,
@@ -462,9 +453,20 @@ export function CanvasAssistantPanel({
                         <div className="canvas-agent-empty space-y-5 pb-4">
                             <section data-canvas-agent-welcome className="grid min-w-0 grid-cols-[minmax(0,1fr)_64px] items-center gap-3 rounded-2xl border px-4 py-4" style={{ borderColor: theme.node.stroke, background: theme.node.fill }}>
                                 <div className="min-w-0">
-                                    <h2 className="text-base font-semibold leading-6" style={{ color: theme.node.text }}>你好，我是你的画布助手</h2>
-                                    <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>我可以帮你生成图像、优化布局、撰写文案、梳理思路、提取关键信息，让创意更高效实现。</p>
-                                    <button type="button" className="mt-3 inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition hover:opacity-90" style={{ background: theme.node.action, color: theme.node.actionText }} onClick={() => setPrompt("请介绍一下你能如何协助我完成当前画布。")}>了解 Agent 能做什么 <ArrowRight className="size-3.5 shrink-0" /></button>
+                                    <h2 className="text-base font-semibold leading-6" style={{ color: theme.node.text }}>
+                                        你好，我是你的画布助手
+                                    </h2>
+                                    <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>
+                                        我可以帮你生成图像、优化布局、撰写文案、梳理思路、提取关键信息，让创意更高效实现。
+                                    </p>
+                                    <button
+                                        type="button"
+                                        className="mt-3 inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition hover:opacity-90"
+                                        style={{ background: theme.node.action, color: theme.node.actionText }}
+                                        onClick={() => setPrompt("请介绍一下你能如何协助我完成当前画布。")}
+                                    >
+                                        了解 Agent 能做什么 <ArrowRight className="size-3.5 shrink-0" />
+                                    </button>
                                 </div>
                                 <div className="pointer-events-none grid size-16 place-items-center rounded-2xl border" style={{ borderColor: theme.node.stroke, color: theme.node.muted }} aria-hidden="true">
                                     <Sparkles className="size-8" />
@@ -472,15 +474,31 @@ export function CanvasAssistantPanel({
                             </section>
                             <section data-canvas-agent-suggestions>
                                 <div className="mb-2.5 flex items-center justify-between">
-                                    <h3 className="text-xs font-semibold" style={{ color: theme.node.text }}>你可以试试</h3>
-                                    <span className="grid size-7 place-items-center" style={{ color: theme.node.muted }} aria-hidden="true"><Sparkles className="size-3.5" /></span>
+                                    <h3 className="text-xs font-semibold" style={{ color: theme.node.text }}>
+                                        你可以试试
+                                    </h3>
+                                    <span className="grid size-7 place-items-center" style={{ color: theme.node.muted }} aria-hidden="true">
+                                        <Sparkles className="size-3.5" />
+                                    </span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     {suggestionItems.map((item) => (
-                                        <button key={item.title} type="button" className="group min-w-0 rounded-xl border px-3 py-3 text-left transition hover:-translate-y-px hover:shadow-sm" style={{ borderColor: theme.node.stroke, background: theme.toolbar.panel }} onClick={() => setPrompt(item.prompt)}>
-                                            <span className="grid size-7 place-items-center rounded-lg border" style={{ color: theme.node.muted, borderColor: theme.node.stroke }}>{item.icon}</span>
-                                            <span className="mt-2 block truncate text-[11px] font-medium" style={{ color: theme.node.text }}>{item.title}</span>
-                                            <span className="mt-1 block truncate text-[10px]" style={{ color: theme.node.muted }}>{item.description}</span>
+                                        <button
+                                            key={item.title}
+                                            type="button"
+                                            className="group min-w-0 rounded-xl border px-3 py-3 text-left transition hover:-translate-y-px hover:shadow-sm"
+                                            style={{ borderColor: theme.node.stroke, background: theme.toolbar.panel }}
+                                            onClick={() => setPrompt(item.prompt)}
+                                        >
+                                            <span className="grid size-7 place-items-center rounded-lg border" style={{ color: theme.node.muted, borderColor: theme.node.stroke }}>
+                                                {item.icon}
+                                            </span>
+                                            <span className="mt-2 block truncate text-[11px] font-medium" style={{ color: theme.node.text }}>
+                                                {item.title}
+                                            </span>
+                                            <span className="mt-1 block truncate text-[10px]" style={{ color: theme.node.muted }}>
+                                                {item.description}
+                                            </span>
                                         </button>
                                     ))}
                                 </div>

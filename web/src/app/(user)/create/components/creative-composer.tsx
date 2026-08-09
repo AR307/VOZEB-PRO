@@ -12,6 +12,7 @@ import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { cn } from "@/lib/utils";
 
 import { creativeComposerToolButtonClass } from "./creative-composer-styles";
+import { shouldShowVideoFrameControls } from "./creative-composer-video-mode";
 import { CreativeGenerationControls, type CreativeModelOption } from "./creative-generation-controls";
 import { CreativeModeIcon, creativeModeOptions } from "./creative-generation-preferences";
 import { CreativeVideoFrameControls } from "./creative-video-frame-controls";
@@ -51,6 +52,7 @@ export function CreativeComposer({
     onClearModels,
     onToggleSmartPlanning,
     onChangeCreationMode,
+    onChangeGenerationCapability,
     onChangeGenerationPreference,
     onSelectVideoFrame,
     onUploadVideoFrame,
@@ -84,6 +86,7 @@ export function CreativeComposer({
     onClearModels: () => void;
     onToggleSmartPlanning: () => void;
     onChangeCreationMode: (mode: "agent" | CreativeGenerationMode) => void;
+    onChangeGenerationCapability: (capability: CreativeModelOption["capability"]) => void;
     onChangeGenerationPreference: (capability: CreativeModelOption["capability"], patch: Record<string, string | number>) => void;
     onSelectVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">, assetId: string) => void;
     onUploadVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">) => void;
@@ -103,7 +106,7 @@ export function CreativeComposer({
     const currentMode = creativeModeOptions.find((option) => option.value === creationMode) || creativeModeOptions[0];
     const videoPreference = generationPreferences.video;
     const frameMode = videoPreference?.referenceMode || "reference";
-    const showVideoFrames = creationMode === "video" && frameMode !== "reference";
+    const showVideoFrames = shouldShowVideoFrameControls(creationMode, generationPreferences);
     const frameAssetIds = new Set([videoPreference?.firstFrameAssetId, videoPreference?.lastFrameAssetId].filter(Boolean));
     const visibleAttachments = attachments.filter((asset) => !showVideoFrames || !frameAssetIds.has(asset.id));
     const mediaAttachments = visibleAttachments.filter((asset) => (asset.type === "image" || asset.type === "video") && Boolean(asset.serverUrl || asset.remoteUrl));
@@ -229,6 +232,7 @@ export function CreativeComposer({
                                 firstFrameAssetId={videoPreference?.firstFrameAssetId}
                                 lastFrameAssetId={videoPreference?.lastFrameAssetId}
                                 uploading={uploading}
+                                placement={popoverPlacement}
                                 onSelect={onSelectVideoFrame}
                                 onUpload={onUploadVideoFrame}
                                 onRemove={onRemoveVideoFrame}
@@ -381,6 +385,7 @@ export function CreativeComposer({
                             onToggleModel={onToggleModel}
                             onClearModels={onClearModels}
                             onToggleSmartPlanning={onToggleSmartPlanning}
+                            onCapabilityChange={onChangeGenerationCapability}
                             onChangeGenerationPreference={onChangeGenerationPreference}
                         />
                         <Popover

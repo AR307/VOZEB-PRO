@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { encryptAuthDbSecretsForStorage } from "@/lib/auth/store-normalizers";
 import { mergeAuthBackupSecrets, sanitizeAuthBackup } from "@/lib/server/admin-backup-policy";
 import { readAdminBackupData, restoreAdminBackupData, type AdminBackupData } from "@/lib/server/admin-backup-store";
+import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { getDatabaseProvider } from "@/lib/server/database";
 import { copyDataFile, ensureDataDirectory, listDataDirectory, removeDataPath, resolveDataPath, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
@@ -103,19 +104,38 @@ export async function POST(request: Request) {
     const safetyBackupName = importedAt.replace(/[:.]/g, "-");
     const safetyBackupPath = `restore-backups/${safetyBackupName}`;
     const safetyBackupDir = resolveDataPath(safetyBackupPath);
-    await ensureDataDirectory(safetyBackupPath);
-    await createSafetyBackup(currentData, safetyBackupPath);
     const valueByKey = new Map(values.map((entry) => [entry.key, entry.value]));
-    await restoreAdminBackupData(
-        {
-            auth: (valueByKey.get("auth") ?? currentData.auth) as AdminBackupData["auth"],
-            prompts: (valueByKey.get("prompts") ?? currentData.prompts) as AdminBackupData["prompts"],
-            generationLogs: (valueByKey.get("generationLogs") ?? currentData.generationLogs) as AdminBackupData["generationLogs"],
-            accountDeletionRequests: (valueByKey.get("accountDeletionRequests") ?? currentData.accountDeletionRequests) as AdminBackupData["accountDeletionRequests"],
-        },
-        { mode: "account-config" },
-    );
-    const removedSafetyBackups = await pruneRestoreImportBackups();
+    let removedSafetyBackups = 0;
+    try {
+        await ensureDataDirectory(safetyBackupPath);
+        await createSafetyBackup(currentData, safetyBackupPath);
+        await restoreAdminBackupData(
+            {
+                auth: (valueByKey.get("auth") ?? currentData.auth) as AdminBackupData["auth"],
+                prompts: (valueByKey.get("prompts") ?? currentData.prompts) as AdminBackupData["prompts"],
+                generationLogs: (valueByKey.get("generationLogs") ?? currentData.generationLogs) as AdminBackupData["generationLogs"],
+                accountDeletionRequests: (valueByKey.get("accountDeletionRequests") ?? currentData.accountDeletionRequests) as AdminBackupData["accountDeletionRequests"],
+            },
+            { mode: "account-config" },
+        );
+        removedSafetyBackups = await pruneRestoreImportBackups();
+        await safeRecordAuditLog({
+            action: "admin.backup.restore",
+            actor: auditActorFromRequest(request, currentUser),
+            target: { type: "backup", id: safetyBackupName },
+            metadata: { mode: "account-config", imported: values.map((entry) => entry.key) },
+        });
+    } catch (error) {
+        await safeRecordAuditLog({
+            action: "admin.backup.restore",
+            status: "failure",
+            actor: auditActorFromRequest(request, currentUser),
+            target: { type: "backup", id: safetyBackupName },
+            metadata: { error: error instanceof Error ? error.message : "unknown" },
+        });
+        console.error("Admin backup restore failed", error);
+        return NextResponse.json({ error: "备份恢复失败，原数据未被确认替换" }, { status: 500 });
+    }
 
     return NextResponse.json({
         ok: true,

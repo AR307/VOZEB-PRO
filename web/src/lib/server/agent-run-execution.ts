@@ -198,7 +198,12 @@ export function normalizeTasks(
             type: item.type,
             model: resolvePlannedModel(settings, item.type, item.model),
             prompt: `${withCreativeFoundation(item.prompt.trim(), plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
-            count: resolveAgentTaskCount(item.type, item.type === "image" ? generationPreferences?.image?.count || item.count : item.count, defaults.count, globalDefaults.canvasImageCount),
+            count: resolveAgentTaskCount(
+                item.type,
+                item.type === "image" ? generationPreferences?.image?.count || item.count : item.type === "video" ? generationPreferences?.video?.count || item.count : item.count,
+                item.type === "video" ? defaults.videoCount || defaults.count : defaults.count,
+                item.type === "image" ? globalDefaults.canvasImageCount : undefined,
+            ),
             ratio: resolveAgentTaskRatio({
                 type: item.type,
                 requestedImageSize,

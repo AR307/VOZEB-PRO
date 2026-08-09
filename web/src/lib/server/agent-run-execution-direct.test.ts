@@ -147,12 +147,13 @@ describe("directAgentPlan", () => {
 
         const [task] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, "让首尾画面自然衔接", "chat", assets as never, undefined, {
             mode: "video",
-            video: { referenceMode: "first_last", firstFrameAssetId: "first-image", lastFrameAssetId: "last-image" },
+            video: { count: 3, referenceMode: "first_last", firstFrameAssetId: "first-image", lastFrameAssetId: "last-image" },
         });
 
         expect(task).toMatchObject({
             type: "video",
             model: "video-pro",
+            count: 3,
             referenceAssetId: "first-image",
             references: [
                 { assetId: "first-image", type: "image", role: "first_frame", url: "/api/reference-assets/first.png" },

@@ -68,6 +68,31 @@ describe("admin models route", () => {
         expect(fetchMock.mock.calls[1][0]).toBe("https://api.example.com/v1/models?after=writer-v1");
     });
 
+    it("does not add embeddings, rerankers, OCR, STT, or moderation models to the creative catalog", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    data: [
+                        { id: "gpt-4.1" },
+                        { id: "text-embedding-3-small" },
+                        { id: "bge-reranker-v2-m3" },
+                        { id: "dots.ocr" },
+                        { id: "gcp-speech-to-text", capability: "audio" },
+                        { id: "whisper-1", capability: "audio" },
+                        { id: "omni-moderation-latest" },
+                        { id: "llama-3.1-nemoguard-8b-topic-control" },
+                        { id: "tts-1", capability: "audio" },
+                    ],
+                }),
+            ),
+        );
+
+        const response = await POST(request({ channelId: "saved" }));
+
+        expect(await response.json()).toMatchObject({ models: ["gpt-4.1", "tts-1"], modelCapabilities: { "gpt-4.1": "text", "tts-1": "audio" }, discoveredCount: 2, totalCount: 2 });
+    });
+
     it("merges the complete Agnes official catalog when its models endpoint only returns video", async () => {
         vi.stubGlobal(
             "fetch",
@@ -205,6 +230,52 @@ describe("admin models route", () => {
         expect(payload.models).toEqual(expect.arrayContaining(["gpt-4.1", "gemini-3.1-pro-preview", "gpt-image-2", "happyhorse-1.0-i2v", "videos_stable", "videos_stable_fast"]));
         expect(payload.globalAiOpcPresets).toEqual(expect.arrayContaining(["text-openai-chat", "text-gemini-native", "image-gpt-image-2", "video-happyhorse-i2v", "video-videos"]));
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("uses the documented Yumeng v2 model preset without downgrading to v1", async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ baseUrl: "https://yumeng.example.com/kyyReactApiServer", apiKey: "yumeng-secret", protocol: "yumeng" }));
+        const payload = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(payload.models).toHaveLength(29);
+        expect(payload.models).toContain("seedream_5.0Pro");
+        expect(payload.models).toContain("klingo3");
+        expect(payload.catalogSupported).toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("pulls Yumeng models only from an explicitly configured v2 catalog", async () => {
+        const fetchMock = vi.fn(async () =>
+            Response.json({
+                data: [
+                    { id: "seedream_5.0Pro", capability: "image" },
+                    { id: "seedance-2.5", capability: "video" },
+                ],
+            }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(
+            request({
+                baseUrl: "https://yumeng.example.com/kyyReactApiServer",
+                apiKey: "yumeng-secret",
+                protocol: "yumeng",
+                modelCatalogPaths: ["/kyyReactApiServer/v2/model-center/models"],
+            }),
+        );
+        const payload = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(payload.models).toEqual(expect.arrayContaining(["seedream_5.0Pro", "seedance-2.5"]));
+        expect(payload.modelConfigs).toMatchObject({
+            "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id" },
+            "seedance-2.5": { capability: "video", protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", supportsReferenceVideo: false },
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock).toHaveBeenCalledWith("https://yumeng.example.com/kyyReactApiServer/v2/model-center/models", expect.objectContaining({ headers: { authorization: "Bearer yumeng-secret" } }));
     });
 
     it("redacts an API key echoed by the upstream error", async () => {

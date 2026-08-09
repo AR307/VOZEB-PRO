@@ -87,6 +87,17 @@ describe("image task runtime submission safety", () => {
         expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-two", channelId: "channel-two", provider: "gemini", lastUpstreamStatus: "submitted" }));
     });
 
+    it("routes Yumeng image tasks through the declarative async runtime", async () => {
+        state.config = { ...state.config, advancedConfig: { ...state.config.advancedConfig!, protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id" } };
+        state.candidateConfigs = [];
+        mocks.runCustom.mockResolvedValueOnce({ dataUrl: "", pending: { id: "yumeng-task", mediaBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer", pollBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer" } });
+
+        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "pending", upstream: { id: "yumeng-task" } });
+        expect(mocks.runCustom).toHaveBeenCalledOnce();
+        expect(mocks.runOpenAi).not.toHaveBeenCalled();
+        expect(mocks.runGemini).not.toHaveBeenCalled();
+    });
+
     it("does not switch candidates when the submission outcome is unknown", async () => {
         mocks.runCustom.mockRejectedValueOnce(new Error("socket closed"));
 
@@ -113,7 +124,17 @@ describe("image task runtime submission safety", () => {
         expect(mocks.runGemini).not.toHaveBeenCalled();
         expect(state.upstream?.id).toBe("upstream-one");
         expect(state.billing).toMatchObject({ pointsRecordId: "record-one", refunded: false });
-        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "needs_review", upstreamTaskId: "upstream-one", channelId: "channel-one", nextPollAt: undefined }));
+        expect(mocks.schedule).toHaveBeenLastCalledWith(
+            "image",
+            "image-one",
+            expect.objectContaining({
+                executionPhase: "needs_review",
+                upstreamTaskId: "upstream-one",
+                channelId: "channel-one",
+                nextPollAt: undefined,
+                resultPayload: { reviewReason: "OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径" },
+            }),
+        );
         expect(mocks.refund).not.toHaveBeenCalled();
     });
 

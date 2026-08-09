@@ -168,6 +168,22 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         tasks.set(id, { kind: "vozeb-video", status: "completed" });
         return sendJson(response, 200, { id, task_id: id, object: "video", model: payload.model, status: "queued", progress: 0, created_at: 0 });
     }
+    if (request.method === "POST" && path === "/v2/model-center/tasks") {
+        const payload = jsonBody(body);
+        const model = String(payload.model || "");
+        const kind = /image|seedream/i.test(model) ? "yumeng-image" : "yumeng-video";
+        const id = nextTaskId(kind);
+        tasks.set(id, { kind, status: "completed", model });
+        return sendJson(response, 200, { task_id: id, status: "queued" });
+    }
+    const yumengTaskId = path.match(/^\/v2\/model-center\/tasks\/([^/]+)$/)?.[1];
+    if (request.method === "GET" && yumengTaskId) {
+        const id = decodeURIComponent(yumengTaskId);
+        const task = tasks.get(id);
+        if (!task || !String(task.kind).startsWith("yumeng-")) return sendJson(response, 404, { code: 404, message: "昱梦任务不存在" });
+        const resultUrl = task.kind === "yumeng-image" ? `${url.origin}/media/fixture.png` : `${url.origin}/media/fixture.mp4`;
+        return sendJson(response, 200, { task_id: id, status: "completed", result_url: resultUrl });
+    }
     if (request.method === "POST" && path === "/custom/videos") {
         const id = nextTaskId("custom-video");
         tasks.set(id, { kind: "custom-video", status: "completed" });
@@ -320,7 +336,7 @@ function videoTaskId(path) {
 
 function fixturePath(pathname) {
     const internal = pathname.replace(/^\/api\/ai\/system\/[^/]+(?=\/)/, "");
-    return internal.replace(/^\/(?:v1beta|v1)(?=\/)/, "");
+    return internal.replace(/^\/(?:api\/v3|v1beta|v1)(?=\/)/, "");
 }
 
 function createWave() {

@@ -58,6 +58,36 @@ describe("generation operations aggregation", () => {
         expect(mocks.listStoredGenerationTaskRecords).toHaveBeenNthCalledWith(2, { page: 1, pageSize: 100, type: "agent", search: "0001", searchUserIds: ["user-one"], includeAll: true });
         expect(JSON.stringify(result)).not.toContain("amountCents");
     });
+
+    it("shows the persisted review reason when a task has no terminal error", async () => {
+        mocks.listStoredGenerationTaskRecords.mockResolvedValue({
+            items: [{ ...task(), type: "image", status: "running", executionPhase: "needs_review", payload: { config: { model: "image-model" } }, resultPayload: { reviewReason: "生成渠道暂时无法连接，请稍后重试或联系管理员。" } }],
+            all: [],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            summary: { total: 1, active: 1, success: 0, failed: 0, averageDurationMs: 0, totalPointsCost: 0, byType: { image: 1 }, byStatus: { running: 1 } },
+        });
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+
+        expect(result.items[0]).toMatchObject({ canReview: true, error: "生成渠道暂时无法连接，请稍后重试或联系管理员。" });
+    });
+
+    it("explains a legacy uncertain submission when no reason was persisted", async () => {
+        mocks.listStoredGenerationTaskRecords.mockResolvedValue({
+            items: [{ ...task(), type: "image", status: "running", executionPhase: "needs_review", lastUpstreamStatus: "submission_outcome_unknown", payload: { config: { model: "image-model" } } }],
+            all: [],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            summary: { total: 1, active: 1, success: 0, failed: 0, averageDurationMs: 0, totalPointsCost: 0, byType: { image: 1 }, byStatus: { running: 1 } },
+        });
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+
+        expect(result.items[0]).toMatchObject({ canReview: true, error: expect.stringContaining("避免重复生成和扣费") });
+    });
 });
 
 function task() {

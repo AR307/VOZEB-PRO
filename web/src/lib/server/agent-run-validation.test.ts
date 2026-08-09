@@ -84,17 +84,17 @@ describe("validateAgentPlan", () => {
         expect(() => validateAgentTaskResult("image", { results: [{}, { error: "第二张失败" }] })).toThrow("没有返回有效产物");
     });
 
-    it("runs the configured number of image copies only", () => {
+    it("runs the configured number of image and video copies", () => {
         expect(agentTaskCopies("image", 4)).toBe(4);
         expect(agentTaskCopies("image", 99)).toBe(10);
-        expect(agentTaskCopies("video", 4)).toBe(1);
+        expect(agentTaskCopies("video", 4)).toBe(4);
     });
 
     it("uses plan, skill, then canvas image count defaults", () => {
         expect(resolveAgentTaskCount("image", 3, 4, 5)).toBe(3);
         expect(resolveAgentTaskCount("image", undefined, 4, 5)).toBe(4);
         expect(resolveAgentTaskCount("image", undefined, undefined, 5)).toBe(5);
-        expect(resolveAgentTaskCount("video", 3, 4, 5)).toBe(1);
+        expect(resolveAgentTaskCount("video", 3, 4, 5)).toBe(3);
     });
 
     it("recognizes child cancellation as a terminal state", () => {

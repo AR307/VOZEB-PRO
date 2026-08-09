@@ -19,6 +19,7 @@ import { refundAudioTask } from "@/lib/server/audio-task-refund";
 import { refundImageTask } from "@/lib/server/image-task-refund";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
+import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
@@ -324,7 +325,12 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
         return task?.status === "success" ? "completed" : "failed";
     }
     if (lease.executionPhase === "submitting" && task.status === "running" && !task.upstream?.id) {
-        await releaseGenerationTaskLease("text", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        await releaseGenerationTaskLease("text", lease.id, workerId, {
+            executionPhase: "needs_review",
+            nextPollAt: undefined,
+            lastUpstreamStatus: "submission_outcome_unknown",
+            resultPayload: reviewPayload(lease, "文本任务在提交阶段中断，未取得上游任务 ID"),
+        });
         return "needs_review";
     }
     if (!task.upstream?.id)
@@ -347,7 +353,12 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
             return "failed";
         }
         if (step.state === "needs_review") {
-            await releaseGenerationTaskLease("text", task.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+            await releaseGenerationTaskLease("text", task.id, workerId, {
+                executionPhase: "needs_review",
+                nextPollAt: undefined,
+                lastUpstreamStatus: "submission_outcome_unknown",
+                resultPayload: reviewPayload(lease, step.error),
+            });
             console.warn("Text task submission needs review", { taskId: task.id, error: step.error });
             return "needs_review";
         }
@@ -375,6 +386,7 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
             nextPollAt: upstreamTaskId ? generationTaskNextPollAt({ submittedAt: lease.submittedAt, consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
             lastUpstreamStatus: upstreamTaskId ? `query_error:${count}` : "submission_outcome_unknown",
+            ...(!upstreamTaskId ? { resultPayload: reviewPayload(lease, safeReviewReason(error, "文本任务创建结果未知")) } : {}),
         });
         console.warn(upstreamTaskId ? "Text task recovery deferred" : "Text task execution needs review", { taskId: task.id, error: safeError(error) });
         return upstreamTaskId ? "deferred" : "needs_review";
@@ -402,7 +414,12 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
             });
             return "pending";
         }
-        await releaseGenerationTaskLease("image", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        await releaseGenerationTaskLease("image", lease.id, workerId, {
+            executionPhase: "needs_review",
+            nextPollAt: undefined,
+            lastUpstreamStatus: "submission_outcome_unknown",
+            resultPayload: reviewPayload(lease, "图片任务在提交阶段中断，未取得上游任务 ID"),
+        });
         return "needs_review";
     }
     if (needsPersistence(lease)) return persistImageLease(task, lease, workerId, origin, cookie);
@@ -425,6 +442,7 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
                 nextPollAt: undefined,
                 lastPollAt: now,
                 lastUpstreamStatus: `${step.status}:${step.reason}`.slice(0, 500),
+                resultPayload: reviewPayload(lease, step.reason),
             });
             return "needs_review";
         }
@@ -463,6 +481,7 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
             nextPollAt: submitted ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
             lastUpstreamStatus: submitted ? `query_error:${count}` : "submission_outcome_unknown",
+            ...(!submitted ? { resultPayload: reviewPayload(lease, safeReviewReason(error, "图片任务创建结果未知")) } : {}),
         });
         console.warn("Image task step deferred", { taskId: task.id, error: safeError(error) });
         return submitted ? "deferred" : "needs_review";
@@ -511,7 +530,12 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
             });
             return "pending";
         }
-        await releaseGenerationTaskLease("audio", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        await releaseGenerationTaskLease("audio", lease.id, workerId, {
+            executionPhase: "needs_review",
+            nextPollAt: undefined,
+            lastUpstreamStatus: "submission_outcome_unknown",
+            resultPayload: reviewPayload(lease, "音频任务在提交阶段中断，未取得上游任务 ID"),
+        });
         return "needs_review";
     }
     if (needsPersistence(lease)) return persistAudioLease(task, lease, workerId, origin, cookie);
@@ -557,6 +581,7 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
             nextPollAt: upstreamTaskId ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
             lastUpstreamStatus: upstreamTaskId ? `query_error:${count}` : "submission_outcome_unknown",
+            ...(!upstreamTaskId ? { resultPayload: reviewPayload(lease, safeReviewReason(error, "音频任务创建结果未知")) } : {}),
         });
         return upstreamTaskId ? "deferred" : "needs_review";
     }
@@ -714,4 +739,12 @@ function errorCount(status?: string) {
 
 function safeError(error: unknown) {
     return error instanceof Error ? error.message.slice(0, 300) : "unknown";
+}
+
+function safeReviewReason(error: unknown, fallback: string) {
+    return toSafeGenerationErrorMessage(error, fallback).slice(0, 500);
+}
+
+function reviewPayload(lease: GenerationTaskLease, reviewReason: string) {
+    return { ...(lease.resultPayload || {}), reviewReason: reviewReason.trim().slice(0, 500) || "上游提交结果需要人工确认" };
 }
