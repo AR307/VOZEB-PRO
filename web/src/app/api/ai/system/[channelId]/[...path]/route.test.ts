@@ -632,6 +632,27 @@ describe("Yumeng v2 model-center proxy", () => {
         expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
         expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer yumeng-secret");
     });
+
+    it("does not duplicate a version segment already present in the channel base URL", async () => {
+        const settings = await mocks.getAuthSettings();
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: settings.systemChannels.map((channel: { baseUrl: string }) => ({ ...channel, baseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer/v2" })),
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
+
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/v2/model-center/tasks", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...systemModelHeaders("yumeng-image", "seedream_5.0Pro") },
+                body: JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["v2", "model-center", "tasks"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
+    });
 });
 
 describe("custom protocol model routing", () => {

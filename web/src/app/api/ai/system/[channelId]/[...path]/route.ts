@@ -585,8 +585,21 @@ function targetUrl(baseUrl: string, apiFormat: "openai" | "gemini", path: string
         const origin = new URL(baseUrl).origin;
         return `${origin}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
     }
-    const apiBase = usesLiteralPath ? baseUrl.trim().replace(/\/+$/, "") : normalizeApiBaseUrl(baseUrl, apiFormat, globalAiOpc);
-    return `${apiBase}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
+    if (usesLiteralPath) return literalTargetUrl(baseUrl, cleanPath, search, apiFormat);
+    return `${normalizeApiBaseUrl(baseUrl, apiFormat, globalAiOpc)}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
+}
+
+function literalTargetUrl(baseUrl: string, path: string[], search: string, apiFormat: "openai" | "gemini") {
+    const normalizedBase = baseUrl.trim().replace(/\/+$/, "");
+    const baseSegments = new URL(normalizedBase).pathname.split("/").filter(Boolean).map(safeDecodeURIComponent);
+    const pathSegments = path.map(safeDecodeURIComponent);
+    let overlap = Math.min(baseSegments.length, pathSegments.length);
+    while (overlap > 0 && baseSegments.slice(-overlap).some((segment, index) => segment !== pathSegments[index])) overlap -= 1;
+    const suffix = path
+        .slice(overlap)
+        .map((segment) => encodeTargetPathSegment(segment, apiFormat))
+        .join("/");
+    return `${normalizedBase}${suffix ? `/${suffix}` : ""}${search}`;
 }
 
 function encodeTargetPathSegment(segment: string, apiFormat: "openai" | "gemini") {

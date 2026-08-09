@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runCustomImageTask, pollCustomImageTask } from "@/app/api/image-tasks/image-task-custom";
 import { runOpenAiImageTask } from "@/app/api/image-tasks/image-task-openai";
-import { createUpstream } from "@/app/api/video-generation-tasks/route";
+import { createUpstream } from "@/app/api/video-generation-tasks/video-generation-route";
 import type { SystemChannelProtocol } from "@/lib/auth/store-types";
 import { emptyAdvancedConfig, protocolModelConfig } from "@/lib/channel-protocol-registry";
 import type { SystemGenerationChannelConfig } from "@/lib/server/generation-channel";
