@@ -654,6 +654,15 @@ export type BillingSummaryRecord = {
         succeededAmountCents: number;
         refundedAmountCents: number;
     };
+    commerce: {
+        convertedOrders: number;
+        promotionOrders: number;
+        promotionConvertedOrders: number;
+        promotionDiscountCents: number;
+        couponOrders: number;
+        couponConvertedOrders: number;
+        couponDiscountCents: number;
+    };
     providers: BillingSummaryProviderRecord[];
     reconciliation: {
         paidOrdersWithoutSucceededPayment: number;

@@ -4,6 +4,7 @@ import { Button, Tag } from "antd";
 import { CircleDollarSign, Database, PlugZap, RefreshCw, UsersRound } from "lucide-react";
 
 import { generationKindLabel, generationSourceLabel } from "@/components/admin/admin-generation-log";
+import { AdminCommerceConversionPanel } from "@/components/admin/admin-commerce-conversion-panel";
 import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { formatAdminMoney } from "@/components/admin/admin-values";
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
@@ -25,11 +26,13 @@ type AdminOverviewProps = {
     promptCount: number;
     assetStats: GenerationAssetStats | null;
     enabledProducts: number;
+    billingLoading: boolean;
     loading: boolean;
+    onRefreshBilling: () => Promise<void>;
     onRefresh: () => void;
 };
 
-export function AdminOverview({ stats, settingsSummary, walletSummary, billingSummary, operationsSummary, promptCount, assetStats, enabledProducts, loading, onRefresh }: AdminOverviewProps) {
+export function AdminOverview({ stats, settingsSummary, walletSummary, billingSummary, operationsSummary, promptCount, assetStats, enabledProducts, billingLoading, loading, onRefreshBilling, onRefresh }: AdminOverviewProps) {
     return (
         <div className="space-y-3 sm:space-y-5">
             <section className="admin-metric-grid grid grid-cols-2 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 xl:grid-cols-4">
@@ -38,6 +41,7 @@ export function AdminOverview({ stats, settingsSummary, walletSummary, billingSu
                 <Metric label="实收金额" value={formatAdminMoney(billingSummary?.orders.paidAmountCents || 0)} detail={(billingSummary?.orders.paid || 0) + " 笔已支付订单"} icon={<CircleDollarSign className="size-5" />} tone="slate" />
                 <Metric label="今日调用" value={operationsSummary.dailyCalls.at(-1)?.value || 0} detail={`近 ${operationsSummary.windowDays} 日 ${operationsSummary.totalCalls} 次调用`} icon={<Database className="size-5" />} tone="slate" />
             </section>
+            <AdminCommerceConversionPanel billingSummary={billingSummary} billingLoading={billingLoading} onRefreshBilling={onRefreshBilling} />
             <Panel>
                 <PanelHeader
                     title="平台运营拆分"

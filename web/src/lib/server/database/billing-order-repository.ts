@@ -91,7 +91,7 @@ export class BillingOrderRepository {
         const result = await this.db.query<Record<string, unknown>>(
             `
             WITH scoped_orders AS MATERIALIZED (
-                SELECT id, provider, status, amount_cents
+                SELECT id, provider, status, amount_cents, promotion_discount_cents, coupon_discount_cents
                 FROM billing_orders
                 WHERE ($1::timestamptz IS NULL OR created_at >= $1)
                   AND ($2::timestamptz IS NULL OR created_at <= $2)
@@ -110,6 +110,13 @@ export class BillingOrderRepository {
                     count(*) FILTER (WHERE status = 'closed') AS closed,
                     count(*) FILTER (WHERE status = 'canceled') AS canceled,
                     count(*) FILTER (WHERE status = 'refunded') AS refunded,
+                    count(*) FILTER (WHERE status IN ('paid', 'refunded')) AS converted,
+                    count(*) FILTER (WHERE promotion_discount_cents > 0) AS promotion_orders,
+                    count(*) FILTER (WHERE promotion_discount_cents > 0 AND status IN ('paid', 'refunded')) AS promotion_converted_orders,
+                    coalesce(sum(promotion_discount_cents) FILTER (WHERE status IN ('paid', 'refunded')), 0) AS promotion_discount_cents,
+                    count(*) FILTER (WHERE coupon_discount_cents > 0) AS coupon_orders,
+                    count(*) FILTER (WHERE coupon_discount_cents > 0 AND status IN ('paid', 'refunded')) AS coupon_converted_orders,
+                    coalesce(sum(coupon_discount_cents) FILTER (WHERE status IN ('paid', 'refunded')), 0) AS coupon_discount_cents,
                     coalesce(sum(amount_cents) FILTER (WHERE status IN ('paid', 'refunded')), 0) AS gross_amount_cents,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'paid'), 0) AS paid_amount_cents,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'pending'), 0) AS pending_amount_cents,
@@ -172,6 +179,13 @@ export class BillingOrderRepository {
                 order_summary.paid_amount_cents AS order_paid_amount_cents,
                 order_summary.pending_amount_cents AS order_pending_amount_cents,
                 order_summary.refunded_amount_cents AS order_refunded_amount_cents,
+                order_summary.converted AS commerce_converted_orders,
+                order_summary.promotion_orders AS commerce_promotion_orders,
+                order_summary.promotion_converted_orders AS commerce_promotion_converted_orders,
+                order_summary.promotion_discount_cents AS commerce_promotion_discount_cents,
+                order_summary.coupon_orders AS commerce_coupon_orders,
+                order_summary.coupon_converted_orders AS commerce_coupon_converted_orders,
+                order_summary.coupon_discount_cents AS commerce_coupon_discount_cents,
                 payment_summary.succeeded AS payment_succeeded,
                 payment_summary.refunded AS payment_refunded,
                 payment_summary.succeeded_amount_cents AS payment_succeeded_amount_cents,
@@ -221,6 +235,15 @@ export class BillingOrderRepository {
                 refunded: numberValue(row.payment_refunded),
                 succeededAmountCents: numberValue(row.payment_succeeded_amount_cents),
                 refundedAmountCents: numberValue(row.payment_refunded_amount_cents),
+            },
+            commerce: {
+                convertedOrders: numberValue(row.commerce_converted_orders),
+                promotionOrders: numberValue(row.commerce_promotion_orders),
+                promotionConvertedOrders: numberValue(row.commerce_promotion_converted_orders),
+                promotionDiscountCents: numberValue(row.commerce_promotion_discount_cents),
+                couponOrders: numberValue(row.commerce_coupon_orders),
+                couponConvertedOrders: numberValue(row.commerce_coupon_converted_orders),
+                couponDiscountCents: numberValue(row.commerce_coupon_discount_cents),
             },
             providers: Array.isArray(providers)
                 ? providers.flatMap((item): BillingSummaryRecord["providers"] => {

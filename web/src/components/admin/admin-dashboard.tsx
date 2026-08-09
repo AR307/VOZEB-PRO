@@ -481,7 +481,9 @@ export function AdminDashboard(props: AdminDashboardProps) {
                             promptCount={promptCount}
                             assetStats={assetStats}
                             enabledProducts={setupSummary?.enabledProducts || 0}
+                            billingLoading={billingSummaryLoading}
                             loading={operationsSummaryLoading}
+                            onRefreshBilling={loadBillingSummary}
                             onRefresh={() => void loadOperationsSummary()}
                         />
                     ) : null}

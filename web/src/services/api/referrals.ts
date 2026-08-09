@@ -3,6 +3,15 @@ import type { CouponTemplate } from "./billing";
 export type ReferralRiskStatus = "clear" | "review" | "frozen" | "rejected";
 export type ReferralRewardStatus = "pending" | "settled" | "revoked" | "rejected" | "reversal_pending";
 
+export type AdminReferralStats = {
+    clicks: number;
+    registrations: number;
+    qualified: number;
+    pending: number;
+    settled: number;
+    risky: number;
+};
+
 export type ReferralProgram = {
     id?: "default";
     enabled: boolean;
@@ -70,7 +79,7 @@ export async function getReferralCenter() {
 }
 
 export async function getAdminReferralOverview() {
-    return requestReferral<{ program: ReferralProgram; stats: { clicks: number; registrations: number; qualified: number; pending: number; settled: number; risky: number } }>("/api/admin/referrals");
+    return requestReferral<{ program: ReferralProgram; stats: AdminReferralStats }>("/api/admin/referrals");
 }
 
 export async function listAdminReferralCouponTemplates(input: { keyword?: string; selectedId?: string; pageSize?: number } = {}) {
