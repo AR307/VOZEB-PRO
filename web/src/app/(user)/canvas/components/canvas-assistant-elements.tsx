@@ -239,7 +239,15 @@ export function assistantImageReferenceLabel(references: CanvasAssistantReferenc
 
 export function assistantMessageToChatMessage(message: CanvasAssistantMessage): CanvasAgentChatMessage {
     const attachments = message.references?.flatMap((item) => (item.dataUrl ? [{ id: item.id, name: item.title, url: item.dataUrl }] : []));
-    return { id: message.id, role: message.role, title: message.title, text: formatAgentMessageText(message.text), meta: message.meta, detail: message.detail, ...(attachments?.length ? { attachments } : {}) };
+    return {
+        id: message.id,
+        role: message.role,
+        title: message.title,
+        text: message.role === "error" ? friendlyAgentError(message.text) : formatAgentMessageText(message.text),
+        meta: message.meta,
+        detail: message.detail,
+        ...(attachments?.length ? { attachments } : {}),
+    };
 }
 
 export function nodeToReference(node: CanvasNodeData): CanvasAssistantReference | null {

@@ -107,6 +107,8 @@ description: 当前接口响应事实与管理员敏感配置契约
 - `POST /api/creative/assets`
 - `GET /api/creative/assets/{id}`
 
+`POST /api/agent/prompt-optimization` 接收稳定 `requestId`、不超过 4000 字符的 `prompt` 和 `agent/image/video/audio` 模式，调用后台默认文本逻辑模型并返回 `{ code: 0, data: { prompt }, msg: "OK" }`。接口要求登录，复用文本生成限流、候选渠道路由和后台模型/渠道能力配置；每个候选使用稳定计费幂等键，不额外写死输出 token 上限，无效但已计费的结构化响应必须退款。优化结果只作为可编辑公开草稿，不创建会话、消息或 Agent Run，也不得返回内部规划与模型选择理由。
+
 所有接口先校验登录用户与资源所有权；无权访问时返回 404 或 403，不回传其他用户的会话、消息和资产。会话创建后不能改变 Surface 或项目。
 
 `POST /api/creative/assets` 使用 `multipart/form-data` 提交 `conversationId` 和单个 `file`。只接受项目列出的图片、视频和音频 MIME，单文件最大 20MB；上传完成后返回稳定创作资产，媒体内容进入服务器日期目录，不写入数据库 base64。
@@ -131,9 +133,11 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 
 `chat` 不接受项目或快照，`canvas/drama` 必须提供项目，项目快照最大 512KB。相同用户与 `clientRequestId` 的重复提交返回原 Run。`GET /api/agent/runs/{id}/events` 使用递增数字事件 ID，支持 `Last-Event-ID` 或 `lastEventId` 断线续传；多份结果会逐份发送 `task.child.completed` 或 `task.child.failed`，事件数据包含父任务、子任务、完成/失败/总数和当前资产，客户端不得等待父任务终态才刷新素材。
 
+`POST /api/agent/runs/{id}/{cancel|pause|resume|retry}` 可接收 `{ conversationId: string }` 作为调用方当前预期会话。`/create` 必须提交该字段；若字段为空返回 400，若 Run 不属于该会话返回 409，且不会修改 Run、子任务或上游任务。切换对话本身不调用控制接口，只关闭旧页面的 SSE 观察；切回运行中对话时继续使用原 Run 和上游任务身份。
+
 创建后续 Run 时，服务端读取同一会话的持久摘要和近期已完成消息，规划输入最多保留最近 6 条并在超出预算时继续裁剪；前端只需继续提交稳定 `conversationId`。同一 deliverable 可选择多个 `assetIds`，依赖 deliverable 完成后登记的资产会自动成为下游图片/视频任务的真实参考素材。显式选择逻辑媒体模型时跳过文本规划；否则普通、多结果和短剧/复杂 Canvas 分别使用有界的规划输入与输出提示预算。
 
-文本规划根据模型级或渠道级预设直接选择 Chat、Responses、Gemini 或自定义协议，同一候选不会因协议猜测产生第二次上游请求。所有文本候选统一允许 1 分钟，文本模型能力档案不覆盖该上限；失败、超时、429 或 5xx 后调用方自动尝试下一个逻辑模型绑定，当前进程根据近期成功率、延迟和短期冷却状态排序候选。
+文本规划根据模型级或渠道级预设直接选择 Chat、Responses、Gemini 或自定义协议，同一候选不会因协议猜测产生第二次上游请求。所有文本候选统一允许 3 分钟，文本模型能力档案不覆盖该上限；失败、超时、429 或 5xx 后调用方自动尝试下一个逻辑模型绑定，当前进程根据近期成功率、延迟和短期冷却状态排序候选。结构化规划不额外写死协议输出 token 上限，继续遵循后台模型与渠道的真实能力配置。
 
 用户明确要求“建立画布项目”或“建立短剧项目”时，Chat 规划可返回 `projectHandoff`。运行完成前 SSE 发送一次 `project.handoff`，数据包含稳定 `id/sourceRunId/conversationId`、目标 `surface`、标题、摘要、风格、比例、稳定 `assetIds` 和完整资产信息；`run.completed.data.projectHandoff` 与助手消息 metadata 保存同一份交接。客户端必须使用交接 ID 幂等落地 Canvas 本地项目或服务端短剧项目，SSE 重放不得重复创建。
 

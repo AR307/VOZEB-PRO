@@ -283,7 +283,7 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                 {messages.map((message) => {
                     const referencedAssets = message.role === "user" ? messageAssetIds(message).flatMap((id) => assetById.get(id) || []) : [];
                     const messageAssets = [...(assetsByRun.get(message.id) || []), ...(message.runId ? assetsByRun.get(message.runId) || [] : [])].filter((asset, index, list) => list.findIndex((item) => item.id === asset.id) === index);
-                    const displayContent = formatAgentMessageText(message.content);
+                    const displayContent = message.status === "failed" ? friendlyAgentError(message.content) : formatAgentMessageText(message.content);
                     return (
                         <div key={message.id} className={`group/message min-w-0 ${message.role === "user" ? "pl-8 text-right" : "pr-2"}`}>
                             {referencedAssets.length ? <DramaMessageReferences assets={referencedAssets} /> : null}

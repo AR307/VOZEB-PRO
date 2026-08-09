@@ -73,6 +73,7 @@ describe("agent message controls", () => {
     });
 
     it("keeps generated text while removing upstream display directives", () => {
+        expect(formatAgentMessageText("是的，我在呢！上一轮生成渠道暂时无法连接，现在可以重新生成。")).toBe("是的，我在呢！上一轮生成渠道暂时无法连接，现在可以重新生成。");
         expect(formatAgentMessageText('已完成 1 个创作任务。\n\n「狗提示词」已完成：\n:::writing{variant="document" id="58391"}\n一只温暖友善的狗，真实毛发，柔和自然光。\n:::\n可继续调整。')).toBe(
             "已完成 1 个创作任务。\n\n「狗提示词」已完成：\n\n一只温暖友善的狗，真实毛发，柔和自然光。\n\n可继续调整。",
         );

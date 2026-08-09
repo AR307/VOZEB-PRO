@@ -3,7 +3,7 @@
 import { App, Button, Drawer } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import { ChevronsDown, Clapperboard, History, Play, Plus, ScanFace, ShoppingBag, Sparkles } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CREATIVE_UPLOAD_ACCEPT, CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
@@ -13,6 +13,7 @@ import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
 import { listAgentSkills, type AgentSkillSummary } from "@/services/api/agent-skills";
 import type { CreativeAgentRun } from "@/services/api/creative";
+import { optimizePrompt } from "@/services/api/prompt-optimization";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
 import { createAgentPromptFromHash } from "@/lib/create-agent-prompt";
@@ -46,7 +47,11 @@ export default function CreatePage() {
     const conversationScrollRef = useRef<HTMLElement>(null);
     const previousScrollTopRef = useRef(0);
     const awayFromLatestRef = useRef(false);
+    const promptValueRef = useRef("");
+    const promptRevisionRef = useRef(0);
+    const optimizingRef = useRef(false);
     const [prompt, setPrompt] = useState("");
+    const [optimizingPrompt, setOptimizingPrompt] = useState(false);
     const [skills, setSkills] = useState<AgentSkillSummary[]>([]);
     const [skillsLoading, setSkillsLoading] = useState(true);
     const [selectedSkillId, setSelectedSkillId] = useState<string>();
@@ -67,6 +72,11 @@ export default function CreatePage() {
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
     const modelOptions = useCreativeAgentModels();
     const selectedModels = modelOptions.filter((model) => selectedModelIds.includes(model.id));
+    const updatePrompt = useCallback((value: string) => {
+        promptValueRef.current = value;
+        promptRevisionRef.current += 1;
+        setPrompt(value);
+    }, []);
 
     useEffect(() => {
         let active = true;
@@ -101,11 +111,11 @@ export default function CreatePage() {
         initialPromptRestoredRef.current = true;
         const incomingPrompt = createAgentPromptFromHash(window.location.hash);
         if (!incomingPrompt) return;
-        setPrompt(incomingPrompt);
+        updatePrompt(incomingPrompt);
         router.replace("/create");
         window.requestAnimationFrame(() => inputRef.current?.focus());
         message.success("已填入作品提示词");
-    }, [message, router]);
+    }, [message, router, updatePrompt]);
 
     useEffect(() => {
         if (!agent.conversationId || createConversationIdFromSearch(window.location.search) === agent.conversationId) return;
@@ -152,10 +162,11 @@ export default function CreatePage() {
             message.warning("请先同时选择视频首帧和尾帧图片");
             return;
         }
+        promptRevisionRef.current += 1;
         try {
             const preferences = { ...generationPreferences, ...(creationMode !== "agent" ? { mode: creationMode } : {}) };
             if (await agent.submit(prompt, { skillIds: selectedSkillId ? [selectedSkillId] : [], ...(!smartPlanning && selectedModelIds.length ? { modelIds: selectedModelIds } : {}), ...(Object.keys(preferences).length ? { preferences } : {}) })) {
-                setPrompt("");
+                updatePrompt("");
                 setSelectedSkillId(undefined);
                 setGenerationPreferences((current) => (current.video ? { ...current, video: { ...current.video, firstFrameAssetId: undefined, lastFrameAssetId: undefined } } : current));
             }
@@ -168,7 +179,7 @@ export default function CreatePage() {
         const assetIds = Array.isArray(editedMessage.metadata.assetIds) ? editedMessage.metadata.assetIds.filter((id): id is string => typeof id === "string") : [];
         const { mode, ...preferences } = creativeRunReplayPreferences(run) || {};
         const availableModelIds = (run?.requestedModelIds || []).filter((id) => modelOptions.some((model) => model.id === id));
-        setPrompt(editedMessage.content);
+        updatePrompt(editedMessage.content);
         agent.restoreAttachments(assetIds);
         setSelectedSkillId(run?.selectedSkillIds?.find((id) => skills.some((skill) => skill.id === id)));
         setSelectedModelIds(availableModelIds);
@@ -177,17 +188,6 @@ export default function CreatePage() {
         setGenerationPreferences(preferences);
         window.requestAnimationFrame(() => inputRef.current?.focus());
         message.info("已恢复本轮需求、参考素材和生成设置，可修改后重新发送");
-    };
-
-    const repeatRound = async (sourceMessage: CreativeMessage, run?: CreativeAgentRun) => {
-        const assetIds = Array.isArray(sourceMessage.metadata.assetIds) ? sourceMessage.metadata.assetIds.filter((id): id is string => typeof id === "string") : [];
-        const submitted = await agent.submit(sourceMessage.content, {
-            assetIds,
-            skillIds: run?.selectedSkillIds || [],
-            modelIds: run?.requestedModelIds || [],
-            preferences: creativeRunReplayPreferences(run),
-        });
-        if (submitted) message.success("已按原设置创建新的生成任务");
     };
 
     const uploadAttachments = async (files: File[], successMessage?: string) => {
@@ -212,9 +212,32 @@ export default function CreatePage() {
     };
 
     const usePublicPrompt = (value: string) => {
-        setPrompt(value);
+        updatePrompt(value);
         window.requestAnimationFrame(() => inputRef.current?.focus());
         message.success("已填入公开提示词");
+    };
+
+    const optimizeCurrentPrompt = async () => {
+        const source = promptValueRef.current.trim();
+        if (!source || optimizingRef.current) return;
+        const revision = promptRevisionRef.current;
+        optimizingRef.current = true;
+        setOptimizingPrompt(true);
+        try {
+            const optimized = await optimizePrompt({ requestId: `prompt-${crypto.randomUUID()}`, prompt: source, mode: creationMode });
+            if (promptRevisionRef.current !== revision) {
+                message.info("输入内容已变化，未覆盖当前提示词");
+                return;
+            }
+            updatePrompt(optimized);
+            window.requestAnimationFrame(() => inputRef.current?.focus());
+            message.success("提示词已优化");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "提示词优化失败");
+        } finally {
+            optimizingRef.current = false;
+            setOptimizingPrompt(false);
+        }
     };
 
     const importReferenceMedia = async (input: { url: string; mimeType?: string; fileStem: string }) => {
@@ -384,8 +407,10 @@ export default function CreatePage() {
             inputRef={inputRef}
             value={prompt}
             busy={agent.sending}
+            optimizing={optimizingPrompt}
             centered={!showConversation}
-            onChange={setPrompt}
+            onChange={updatePrompt}
+            onOptimize={() => void optimizeCurrentPrompt()}
             onSubmit={() => void submit()}
             onCancel={() => void agent.cancel().catch((error) => message.error(error instanceof Error ? error.message : "停止任务失败"))}
             attachments={agent.selectedAssets}
@@ -460,12 +485,7 @@ export default function CreatePage() {
                         runDetails={agent.runDetails}
                         materializingProjectId={agent.materializingProjectId}
                         onMaterializeProject={agent.materializeProject}
-                        onRetryTask={(runId, taskId) => void agent.retryTask(runId, taskId).catch((error) => message.error(error instanceof Error ? error.message : "重试任务失败"))}
-                        onRetryRun={(runId) => void agent.retryRun(runId).catch((error) => message.error(error instanceof Error ? error.message : "重新分析失败"))}
-                        onRetrySubmission={(messageId) => void agent.retrySubmission(messageId).catch((error) => message.error(error instanceof Error ? error.message : "重试请求失败"))}
                         onEditMessage={restoreRoundInput}
-                        onRepeatMessage={(sourceMessage, run) => void repeatRound(sourceMessage, run).catch((error) => message.error(error instanceof Error ? error.message : "再次生成失败"))}
-                        busy={agent.sending}
                         selectedAssetIds={agent.selectedAssetIds}
                         onToggleAsset={agent.toggleAsset}
                         hasOlder={agent.hasOlderMessages}

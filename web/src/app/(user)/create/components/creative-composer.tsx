@@ -2,7 +2,7 @@
 
 import { Button, Input, Popover, Tooltip } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import { ArrowUp, Boxes, Check, ChevronDown, ChevronLeft, ChevronRight, FileAudio, FileVideo, ImageIcon, Plus, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, Boxes, Check, ChevronDown, ChevronLeft, ChevronRight, FileAudio, FileVideo, ImageIcon, Plus, Sparkles, Square, WandSparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEventHandler, type PointerEventHandler, type RefObject, type WheelEvent } from "react";
 
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
@@ -30,7 +30,9 @@ export function CreativeComposer({
     inputRef,
     value,
     busy,
+    optimizing,
     onChange,
+    onOptimize,
     onSubmit,
     onCancel,
     onAttachment,
@@ -64,7 +66,9 @@ export function CreativeComposer({
     inputRef: RefObject<TextAreaRef | null>;
     value: string;
     busy: boolean;
+    optimizing: boolean;
     onChange: (value: string) => void;
+    onOptimize: () => void;
     onSubmit: () => void;
     onCancel: () => void;
     onAttachment: () => void;
@@ -162,6 +166,20 @@ export function CreativeComposer({
                             if (!busy) onSubmit();
                         }}
                     />
+                    <Tooltip title="优化提示词">
+                        <Button
+                            type="text"
+                            className="!size-11 !min-w-11 !shrink-0 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] disabled:!bg-transparent disabled:!text-[#b3bac4] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white dark:disabled:!text-[#5f6873]"
+                            icon={<WandSparkles className="size-4" />}
+                            loading={optimizing}
+                            disabled={busy || !value.trim()}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onOptimize();
+                            }}
+                            aria-label={optimizing ? "正在优化提示词" : "优化提示词"}
+                        />
+                    </Tooltip>
                     <Tooltip title={busy ? "停止生成" : "发送"}>
                         <Button
                             type="primary"
@@ -486,6 +504,19 @@ export function CreativeComposer({
                                 <span className="hidden text-xs font-medium sm:inline">使用 Skill</span>
                             </Button>
                         </Popover>
+                        <Tooltip title="优化提示词">
+                            <Button
+                                type="text"
+                                className={creativeComposerToolButtonClass(false)}
+                                icon={<WandSparkles className="size-4" />}
+                                loading={optimizing}
+                                disabled={busy || !value.trim()}
+                                onClick={onOptimize}
+                                aria-label={optimizing ? "正在优化提示词" : "优化提示词"}
+                            >
+                                <span className="hidden text-xs font-medium sm:inline">优化</span>
+                            </Button>
+                        </Tooltip>
                     </div>
                     <Tooltip title={busy ? "停止生成" : "发送"}>
                         <Button

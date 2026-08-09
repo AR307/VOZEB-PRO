@@ -19,8 +19,8 @@ describe("useCreateAgent submission retry", () => {
         expect(uploadSource).not.toContain("uploadCreativeAsset");
         expect(draftStoreSource).toContain("URL.createObjectURL(file)");
         expect(draftStoreSource).not.toContain("localStorage");
-        expect(materializeSource).toContain("await ensureConversation()");
-        expect(materializeSource).toContain("await uploadCreativeAsset(id, draft.file)");
+        expect(materializeSource).toContain("await ensureConversation(generation)");
+        expect(materializeSource).toContain("await uploadCreativeAsset(materializedConversationId, draft.file)");
         expect(submitSource.indexOf("await materializeDraftAttachments(selectedIds)")).toBeLessThan(submitSource.indexOf("executeSubmission(snapshot)"));
     });
 
@@ -48,9 +48,23 @@ describe("useCreateAgent submission retry", () => {
         const retryStart = source.indexOf("const retryRun");
         const retrySource = source.slice(retryStart, source.indexOf("const renameConversation", retryStart));
 
-        expect(retrySource).toContain('controlCreativeAgentRun(runId, "retry")');
+        expect(retrySource).toContain('controlCreativeAgentRun(runId, "retry", expectedConversationId)');
         expect(retrySource).toContain("setRunDetails");
         expect(retrySource).toContain("watchRun(result.run, assistantMessage.id");
         expect(retrySource).not.toContain("createCreativeAgentRun");
+    });
+
+    it("keeps delayed run callbacks and controls scoped to the active conversation", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-agent.ts"), "utf8");
+        const watchStart = source.indexOf("const watchRun");
+        const reconnectStart = source.indexOf("useEffect(() =>", watchStart);
+        const executeStart = source.indexOf("const executeSubmission", reconnectStart);
+        const cancelStart = source.indexOf("const cancel", executeStart);
+        const controlStart = source.indexOf("const control", cancelStart);
+
+        expect(source.slice(watchStart, reconnectStart)).toContain("if (!isCurrentConversation(run.conversationId, generation)) return false");
+        expect(source.slice(reconnectStart, executeStart)).toContain("run.conversationId !== expectedConversationId");
+        expect(source.slice(executeStart, cancelStart)).toContain("if (!canClaimCurrentView) return true");
+        expect(source.slice(cancelStart, controlStart)).toContain('controlCreativeAgentRun(activeRunId, "cancel", expectedConversationId)');
     });
 });

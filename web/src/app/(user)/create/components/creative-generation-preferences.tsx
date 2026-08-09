@@ -249,7 +249,7 @@ function PreferencePanel({ capability, preferences, onChange }: { capability: Me
                                     <Maximize2 className="size-3.5" />
                                     自定义像素尺寸
                                 </button>
-                                {customEditorOpen ? <CustomImageSizeEditor size={selectedSize} onChange={onChange} onClose={() => setCustomEditorOpen(false)} /> : null}
+                                {customEditorOpen ? <CustomImageSizeEditor size={selectedSize} onChange={onChange} /> : null}
                             </>
                         ) : null}
                     </div>
@@ -271,7 +271,7 @@ function PreferencePanel({ capability, preferences, onChange }: { capability: Me
     );
 }
 
-function CustomImageSizeEditor({ size, onChange, onClose }: { size: string; onChange: (patch: PreferencePatch) => void; onClose: () => void }) {
+function CustomImageSizeEditor({ size, onChange }: { size: string; onChange: (patch: PreferencePatch) => void }) {
     const dimensions = parseCustomDimensions(size);
     const [width, setWidth] = useState(dimensions?.[0] || "");
     const [height, setHeight] = useState(dimensions?.[1] || "");
@@ -298,25 +298,12 @@ function CustomImageSizeEditor({ size, onChange, onClose }: { size: string; onCh
         setHeight(value);
         updateSize(width, value);
     };
-    const clear = () => {
-        setWidth("");
-        setHeight("");
-        setError("");
-        onChange({ size: "auto" });
-        onClose();
-    };
     return (
         <div className="grid min-w-0 max-w-full gap-1.5 rounded-xl border border-[#e3e8ec] bg-[#fafbfc] p-2 dark:border-[#343b44] dark:bg-[#1f242a]">
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5">
                 <DimensionInput ariaLabel="自定义图片宽度" placeholder="宽" value={width} onChange={changeWidth} />
                 <span className="shrink-0 text-xs text-[#9aa4ae]">×</span>
                 <DimensionInput ariaLabel="自定义图片高度" placeholder="高" value={height} onChange={changeHeight} />
-            </div>
-            <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-[10px] text-[#8b949f] dark:text-[#7f8996]">修改后立即生效，例如 1024 × 1536</span>
-                <button type="button" className="shrink-0 text-[10px] text-[#687481] underline-offset-2 hover:text-[#315d78] hover:underline dark:text-[#a6afb9] dark:hover:text-[#a8c8dc]" onClick={clear}>
-                    恢复智能
-                </button>
             </div>
             {error ? <p className="text-[10px] text-[#b85c5c] dark:text-[#e39a9a]">{error}</p> : null}
         </div>

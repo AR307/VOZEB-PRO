@@ -103,12 +103,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onRetryTask={vi.fn()}
-                    onRetryRun={vi.fn()}
-                    onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
-                    onRepeatMessage={vi.fn()}
-                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -157,12 +152,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onRetryTask={vi.fn()}
-                    onRetryRun={vi.fn()}
-                    onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
-                    onRepeatMessage={vi.fn()}
-                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -314,12 +304,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onRetryTask={vi.fn()}
-                    onRetryRun={vi.fn()}
-                    onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
-                    onRepeatMessage={vi.fn()}
-                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -347,8 +332,9 @@ describe("CreativeMessages", () => {
         expect(markup).toContain("720P");
         expect(markup).toContain("10秒");
         expect(markup).toContain('aria-label="查看本轮创作详细信息"');
-        expect(markup).toContain("重新编辑");
-        expect(markup).toContain("再次生成");
+        expect(markup).toContain("复制提示词");
+        expect(markup).not.toContain("重新编辑");
+        expect(markup).not.toContain("再次生成");
         expect(markup).toContain("下载视频");
         expect(markup).toContain('aria-label="更多本轮创作操作"');
         expect(markup).toContain('preload="metadata"');
@@ -364,7 +350,18 @@ describe("CreativeMessages", () => {
         expect(markup).not.toContain("shadow-[0_4px_16px_rgba(32,36,42,0.04)]");
     });
 
-    it("offers an in-place retry for an initial submission failure", () => {
+    it("restores the original text before retrying an initial submission failure", () => {
+        const userMessage: CreativeMessage = {
+            id: "temporary-user",
+            conversationId: "pending",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "生成一张商品图",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
         const message: CreativeMessage = {
             id: "temporary-assistant",
             conversationId: "pending",
@@ -379,7 +376,7 @@ describe("CreativeMessages", () => {
         const markup = renderToStaticMarkup(
             <App>
                 <CreativeMessages
-                    messages={[message]}
+                    messages={[userMessage, message]}
                     assets={[]}
                     loading={false}
                     projectLinks={{}}
@@ -388,23 +385,30 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onRetryTask={vi.fn()}
-                    onRetryRun={vi.fn()}
-                    onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
-                    onRepeatMessage={vi.fn()}
-                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
             </App>,
         );
 
-        expect(markup).toContain('aria-label="重试本次创作请求"');
-        expect(markup).toContain("重试");
+        expect(markup).toContain("编辑重试");
+        expect(markup).not.toContain('aria-label="重试本次创作请求"');
     });
 
     it("offers an explicit retry when Agent planning finished with an uncertain result", () => {
+        const userMessage: CreativeMessage = {
+            id: "user-message",
+            conversationId: "conversation-one",
+            runId: "run-one",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "生成一张海报",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
         const message: CreativeMessage = {
             id: "assistant-message",
             conversationId: "conversation-one",
@@ -420,7 +424,7 @@ describe("CreativeMessages", () => {
         const markup = renderToStaticMarkup(
             <App>
                 <CreativeMessages
-                    messages={[message]}
+                    messages={[userMessage, message]}
                     assets={[]}
                     loading={false}
                     projectLinks={{}}
@@ -439,19 +443,15 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onRetryTask={vi.fn()}
-                    onRetryRun={vi.fn()}
-                    onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
-                    onRepeatMessage={vi.fn()}
-                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
             </App>,
         );
 
-        expect(markup).toContain('aria-label="重新分析本次请求"');
+        expect(markup).toContain("编辑重试");
+        expect(markup).not.toContain('aria-label="重新分析本次请求"');
         expect(markup).not.toContain("仅在你确认后重新请求");
     });
 
@@ -503,12 +503,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onRetryTask={vi.fn()}
-                    onRetryRun={vi.fn()}
-                    onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
-                    onRepeatMessage={vi.fn()}
-                    busy={false}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -518,6 +513,8 @@ describe("CreativeMessages", () => {
         expect(markup).toContain('data-testid="creative-generation-failure"');
         expect((markup.match(/aria-label="创作助手"/g) || []).length).toBe(1);
         expect((markup.match(/data-testid="creative-assistant-avatar"/g) || []).length).toBe(1);
+        expect(markup).toContain('aria-label="编辑提示词后重试"');
+        expect(markup).toContain("编辑重试");
         const failureMarkup = markup.slice(markup.indexOf('data-testid="creative-generation-failure"'));
         expect(failureMarkup).not.toContain("size-12");
         expect(failureMarkup).not.toContain("Sparkles");
@@ -556,6 +553,9 @@ describe("CreativeMessages", () => {
         expect(markup).toContain("rounded-[14px]");
         expect(markup).toContain("bg-[linear-gradient(135deg,#f3f1ff_0%,#ebeaff_100%)]");
         expect(markup).toContain("1970");
+        expect(markup).toContain('aria-label="复制消息"');
+        expect(markup).not.toContain('aria-label="编辑消息"');
+        expect(markup).not.toContain("编辑重试");
     });
 });
 
@@ -572,12 +572,7 @@ function renderMessages(message: CreativeMessage, assets: CreativeAsset[] = [], 
                 onMaterializeProject={async () => {
                     throw new Error("not used");
                 }}
-                onRetryTask={vi.fn()}
-                onRetryRun={vi.fn()}
-                onRetrySubmission={vi.fn()}
                 onEditMessage={vi.fn()}
-                onRepeatMessage={vi.fn()}
-                busy={false}
                 selectedAssetIds={[]}
                 onToggleAsset={vi.fn()}
             />

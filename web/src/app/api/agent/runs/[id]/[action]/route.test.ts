@@ -137,6 +137,42 @@ describe("Agent Run resume concurrency", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalledWith(expect.stringContaining("image-done"), expect.anything());
         expect(mocks.fetchInternalApi).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ method: "PATCH", headers: { "Content-Type": "application/json", cookie: "session=test" }, body: JSON.stringify({ status: "cancelled" }) }));
     });
+
+    it("rejects a control request when the visible conversation does not own the run", async () => {
+        const run = { id: "run", userId: "user", conversationId: "conversation-a", status: "running", tasks: [] };
+        mocks.getAgentRun.mockResolvedValue(run);
+
+        const response = await POST(
+            new Request("http://localhost/api/agent/runs/run/cancel", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversationId: "conversation-b" }),
+            }),
+            { params: Promise.resolve({ id: "run", action: "cancel" }) },
+        );
+
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toMatchObject({ msg: "当前对话与 Agent 任务不匹配" });
+        expect(mocks.setAgentRunStatus).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+        expect(mocks.scheduleGenerationTask).not.toHaveBeenCalled();
+    });
+
+    it("rejects an empty expected conversation before reading or changing the run", async () => {
+        const response = await POST(
+            new Request("http://localhost/api/agent/runs/run/cancel", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversationId: " " }),
+            }),
+            { params: Promise.resolve({ id: "run", action: "cancel" }) },
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ msg: "对话标识无效" });
+        expect(mocks.getAgentRun).not.toHaveBeenCalled();
+        expect(mocks.setAgentRunStatus).not.toHaveBeenCalled();
+    });
 });
 
 function request() {

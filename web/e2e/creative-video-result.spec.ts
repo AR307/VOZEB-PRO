@@ -89,20 +89,13 @@ test("multiple image results share one switcher and actions follow the selected 
     await expect(round.getByLabel("本轮创作操作", { exact: true })).toHaveAttribute("data-active-asset-id", fixture.assets[3].id);
 
     await round.getByRole("button", { name: "更多本轮创作操作" }).click();
-    await page.getByText("在新窗口打开", { exact: true }).click();
+    await page.getByText("新窗口打开", { exact: true }).click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { __lastOpenedUrl?: string }).__lastOpenedUrl)).toBe(fixture.assets[3].serverUrl);
     await expectNoHorizontalOverflow(page);
-
-    await round.getByRole("button", { name: "再次生成" }).evaluate((button) => {
-        (button as HTMLButtonElement).click();
-        (button as HTMLButtonElement).click();
-    });
-    await expect.poll(() => fixture.repeatedRequests().length).toBe(1);
-    expect(fixture.repeatedRequests()[0]).toMatchObject({
-        prompt: fixture.prompt,
-        modelIds: ["image-gen"],
-        preferences: { mode: "image", image: { size: "1:1", quality: "high", count: 4 } },
-    });
+    await expect(round.getByRole("button", { name: "复制提示词" })).toBeVisible();
+    await expect(round.getByRole("button", { name: "重新编辑" })).toHaveCount(0);
+    await expect(round.getByRole("button", { name: "再次生成" })).toHaveCount(0);
+    expect(fixture.repeatedRequests()).toHaveLength(0);
 });
 
 test("single video results keep real ratios and retain complete player controls", async ({ page }, testInfo) => {
@@ -209,23 +202,24 @@ test("multiple videos switch src, poster and size while releasing the previous p
     await captureResult(result, testInfo, "video-multiple-results");
 });
 
-test("failed media generation shows the real failure path without an empty result card", async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== "chromium", "失败状态在桌面基准项目验证");
+test("failed image and video generations restore their prompts for editing", async ({ page }, testInfo) => {
     await preparePage(page, testInfo);
-    const fixture = await mockCreativeRound(page, { type: "image", sizes: [], failed: true });
-    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+    for (const type of ["image", "video"] as const) {
+        const fixture = await mockCreativeRound(page, { type, sizes: [], failed: true });
+        await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
 
-    const round = page.getByTestId("creative-media-round");
-    await expect(round).toBeVisible({ timeout: 45_000 });
-    await expect(round.getByTestId("creative-generation-failure")).toBeVisible();
-    await expect(round.getByText("当前模型暂不可用，请切换模型或稍后重试。", { exact: true })).toBeVisible();
-    await expect(round.getByText("仅在你确认后重新请求", { exact: true })).toHaveCount(0);
-    await expect(round.getByRole("button", { name: "重新分析 图片生成" })).toHaveText("重新分析");
-    await expect(round.getByText("已为你生成图片", { exact: true })).toHaveCount(0);
-    await expect(round.getByTestId("creative-primary-result")).toHaveCount(0);
-    await expect(round.getByText("更多生成结果", { exact: true })).toHaveCount(0);
-    await expectNoHorizontalOverflow(page);
-    await captureResult(round, testInfo, "generation-failed");
+        const round = page.getByTestId("creative-media-round");
+        await expect(round).toBeVisible({ timeout: 45_000 });
+        await expect(round.getByTestId("creative-generation-failure")).toBeVisible();
+        await expect(round.getByText("当前模型暂不可用，请切换模型或稍后重试。", { exact: true })).toBeVisible();
+        await expect(round.getByRole("button", { name: "编辑提示词后重试" })).toHaveText("编辑重试");
+        await expect(round.getByTestId("creative-primary-result")).toHaveCount(0);
+        await round.getByRole("button", { name: "编辑提示词后重试" }).click();
+        await expect(page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" })).toHaveValue(fixture.prompt);
+        await expect(page.getByRole("button", { name: `当前创作类型：${type === "image" ? "图片生成" : "视频生成"}` })).toBeVisible();
+        await expectNoHorizontalOverflow(page);
+        await captureResult(round, testInfo, `${type}-generation-failed`);
+    }
 });
 
 test("partial image and video runs keep every successful result visible with a failed-task retry", async ({ page }, testInfo) => {
@@ -241,7 +235,8 @@ test("partial image and video runs keep every successful result visible with a f
         await expect(result).toBeVisible({ timeout: 45_000 });
         await expect(result).toHaveAttribute("data-results-count", "2");
         await expect(result.getByTestId("creative-result-switcher")).toHaveAttribute("data-results-count", "2");
-        await expect(round.getByRole("button", { name: `重试 ${type === "image" ? "图片" : "视频"}生成` })).toBeVisible();
+        await expect(round.getByRole("button", { name: "编辑重试" })).toBeVisible();
+        await expect(round.getByRole("button", { name: `重试 ${type === "image" ? "图片" : "视频"}生成` })).toHaveCount(0);
         await expectNoHorizontalOverflow(page);
         await captureResult(round, testInfo, `${type}-partial-results`);
     }

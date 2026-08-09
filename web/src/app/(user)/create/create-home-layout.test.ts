@@ -33,6 +33,9 @@ describe("create Agent home layout", () => {
         expect(composer).toContain("autoSize={{ minRows: 1, maxRows: 5 }}");
         expect(composer).toContain("<CreativeGenerationControls");
         expect(composer).toContain("使用 Skill");
+        expect(composer).toContain('aria-label={optimizing ? "正在优化提示词" : "优化提示词"}');
+        expect(page).toContain("optimizePrompt");
+        expect(page).toContain("mode: creationMode");
         expect(composer).toContain('aria-label={mediaAttachments.length ? "继续添加参考素材" : "添加素材"}');
         expect(composer).toContain("创作类型");
         expect(composer).toContain('const popoverPlacement = centered ? "bottomLeft" : "topLeft"');
@@ -60,6 +63,8 @@ describe("create Agent home layout", () => {
         expect(preferences).toContain("选择音色");
         expect(preferences).toContain("<Select");
         expect(preferences).not.toContain("选择模型");
+        expect(preferences).not.toContain("修改后立即生效，例如 1024 × 1536");
+        expect(preferences).not.toContain("恢复智能");
         expect(composer).not.toContain("CreativeImageSizeControl");
         const pointerDownHandler = composer.slice(composer.indexOf("const onPointerDown"), composer.indexOf("const onPointerMove"));
         const pointerMoveHandler = composer.slice(composer.indexOf("const onPointerMove"), composer.indexOf("const finishDrag"));

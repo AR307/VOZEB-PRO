@@ -1,14 +1,14 @@
 "use client";
 
 import { Button, Dropdown, Popover, Tooltip } from "antd";
-import { Check, ChevronDown, Clapperboard, Copy, Download, Edit3, ExternalLink, FileAudio2, Film, Info, Link2, LoaderCircle, MoreHorizontal, PanelsTopLeft, RefreshCw, RotateCcw } from "lucide-react";
+import { Check, ChevronDown, Clapperboard, Copy, Download, Edit3, ExternalLink, FileAudio2, Film, Info, Link2, LoaderCircle, MoreHorizontal, PanelsTopLeft } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { downloadAgentMedia, type AgentMediaDownload } from "@/components/agent/agent-media-download";
 import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
-import { formatAgentMessageText } from "@/components/agent/agent-message-format";
+import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -39,12 +39,7 @@ export function CreativeMessages({
     runDetails,
     materializingProjectId,
     onMaterializeProject,
-    onRetryTask,
-    onRetryRun,
-    onRetrySubmission,
     onEditMessage,
-    onRepeatMessage,
-    busy,
     selectedAssetIds,
     onToggleAsset,
     hasOlder,
@@ -60,12 +55,7 @@ export function CreativeMessages({
     runDetails: Record<string, CreativeAgentRun>;
     materializingProjectId?: string;
     onMaterializeProject: (handoff: CreativeProjectHandoff) => Promise<MaterializedCreativeProject>;
-    onRetryTask: (runId: string, taskId: string) => void;
-    onRetryRun: (runId: string) => void;
-    onRetrySubmission: (messageId: string) => void;
     onEditMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
-    onRepeatMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
-    busy: boolean;
     selectedAssetIds: string[];
     onToggleAsset: (id: string) => void;
     hasOlder?: boolean;
@@ -91,6 +81,14 @@ export function CreativeMessages({
     const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets]);
     const modelNames = useMemo(() => new Map(models.map((model) => [model.id, model.name])), [models]);
     const entries = useMemo(() => creativeConversationEntries(messages, runDetails), [messages, runDetails]);
+    const failedRoundsByAssistantId = useMemo(() => {
+        const map = new Map<string, Extract<CreativeConversationEntry, { type: "round" }>>();
+        for (const entry of entries) {
+            if (entry.type !== "round" || !creativeRoundFailed(entry.assistant, entry.run)) continue;
+            map.set(entry.assistant.id, entry);
+        }
+        return map;
+    }, [entries]);
     const lastMessageId = messages.at(-1)?.id;
     const mediaRounds = useMemo(() => {
         const byUserMessage = new Map<string, Extract<CreativeConversationEntry, { type: "round" }>>();
@@ -138,11 +136,7 @@ export function CreativeMessages({
                             projectErrors={projectErrors}
                             materializingProjectId={materializingProjectId}
                             onMaterializeProject={onMaterializeProject}
-                            onRetryTask={onRetryTask}
-                            onRetryRun={onRetryRun}
                             onEditMessage={onEditMessage}
-                            onRepeatMessage={onRepeatMessage}
-                            busy={busy}
                             selectedAssetIds={selectedAssetIds}
                             onToggleAsset={onToggleAsset}
                         />
@@ -152,7 +146,7 @@ export function CreativeMessages({
                 const referencedAssets = item.role === "user" ? messageAssetIds(item).flatMap((id) => assetById.get(id) || []) : [];
                 const itemAssets = [...referencedAssets, ...(assetsByMessage.get(item.id) || []), ...(item.runId ? assetsByMessage.get(item.runId) || [] : [])].filter((asset, index, list) => list.findIndex((current) => current.id === asset.id) === index);
                 const handoff = isCreativeProjectHandoff(item.metadata.projectHandoff) ? item.metadata.projectHandoff : null;
-                const displayContent = formatAgentMessageText(item.content);
+                const displayContent = item.status === "failed" ? friendlyAgentError(item.content) : formatAgentMessageText(item.content);
                 const textAssetContent = itemAssets
                     .filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim())
                     .map((asset) => asset.textContent!.trim())
@@ -160,6 +154,7 @@ export function CreativeMessages({
                 const downloads = agentAssetDownloads(itemAssets);
                 const run = item.runId ? runDetails[item.runId] : undefined;
                 const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
+                const failedRound = failedRoundsByAssistantId.get(item.id);
                 return (
                     <article key={item.id} className={cn("group/message flex min-w-0 items-start gap-4 sm:gap-5", item.role === "user" ? "justify-end" : "justify-start")}>
                         {item.role === "assistant" ? <CreativeAssistantAvatar className="mt-0" logoUrl={site.logoUrl} /> : null}
@@ -194,14 +189,11 @@ export function CreativeMessages({
                                     onMaterialize={() => void onMaterializeProject(handoff).catch(() => undefined)}
                                 />
                             ) : null}
-                            {item.role === "assistant" && run && failedTasks.length ? <FailedTaskActions run={run} onRetryTask={onRetryTask} /> : null}
-                            {item.role === "assistant" && item.status === "failed" && run?.status === "failed" && !run.tasks.length ? <FailedPlanningAction onRetry={() => onRetryRun(run.id)} /> : null}
-                            {item.role === "assistant" && item.status === "failed" && !item.runId ? <FailedSubmissionAction onRetry={() => onRetrySubmission(item.id)} /> : null}
+                            {item.role === "assistant" && failedRound ? <EditRetryAction onEdit={() => onEditMessage(failedRound.user, failedRound.run)} detail={failedTasks.length ? `${failedTasks.length} 项生成失败` : undefined} /> : null}
                             {item.status !== "running" ? (
                                 <AgentMessageActions
                                     text={item.role === "assistant" ? textAssetContent || (downloads.length ? "" : displayContent) : displayContent}
                                     downloads={item.role === "assistant" && downloads.length ? [] : downloads}
-                                    onEdit={item.role === "user" ? () => onEditMessage(item) : undefined}
                                     align={item.role === "user" ? "end" : "start"}
                                 />
                             ) : null}
@@ -226,11 +218,7 @@ function CreativeMediaRound({
     projectErrors,
     materializingProjectId,
     onMaterializeProject,
-    onRetryTask,
-    onRetryRun,
     onEditMessage,
-    onRepeatMessage,
-    busy,
     selectedAssetIds,
     onToggleAsset,
 }: {
@@ -244,16 +232,12 @@ function CreativeMediaRound({
     projectErrors: Record<string, string>;
     materializingProjectId?: string;
     onMaterializeProject: (handoff: CreativeProjectHandoff) => Promise<MaterializedCreativeProject>;
-    onRetryTask: (runId: string, taskId: string) => void;
-    onRetryRun: (runId: string) => void;
     onEditMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
-    onRepeatMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
-    busy: boolean;
     selectedAssetIds: string[];
     onToggleAsset: (id: string) => void;
 }) {
     const siteLogoUrl = usePublicSessionStore((state) => state.payload?.settings?.site?.logoUrl || "/logo.svg");
-    const displayContent = formatAgentMessageText(assistantMessage.content);
+    const displayContent = assistantMessage.status === "failed" ? friendlyAgentError(assistantMessage.content) : formatAgentMessageText(assistantMessage.content);
     const handoff = isCreativeProjectHandoff(assistantMessage.metadata.projectHandoff) ? assistantMessage.metadata.projectHandoff : null;
     const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
     const mediaOutputs = outputAssets.filter((asset) => asset.type !== "text" && assetUrl(asset));
@@ -267,18 +251,7 @@ function CreativeMediaRound({
     const resultTitle = taskTitle?.startsWith("生成") ? `已为你${taskTitle}` : mode === "video" ? "已为你生成视频" : mode === "audio" ? "已为你生成音频" : "已为你生成图片";
     const renderRoundActions = (activeAsset: CreativeAsset, context: CreativeResultActionContext) =>
         activeAsset.status === "ready" ? (
-            <CreativeRoundActions
-                userMessage={userMessage}
-                outputAssets={outputAssets}
-                activeAsset={activeAsset}
-                preferredWidth={context.shellWidth}
-                run={run}
-                busy={busy}
-                selectedAssetIds={selectedAssetIds}
-                onEditMessage={onEditMessage}
-                onRepeatMessage={onRepeatMessage}
-                onToggleAsset={onToggleAsset}
-            />
+            <CreativeRoundActions userMessage={userMessage} outputAssets={outputAssets} activeAsset={activeAsset} preferredWidth={context.shellWidth} run={run} selectedAssetIds={selectedAssetIds} onToggleAsset={onToggleAsset} />
         ) : null;
 
     return (
@@ -312,11 +285,7 @@ function CreativeMediaRound({
                         ) : null}
                         <div data-testid="creative-result-group" className="mt-3 flex w-fit max-w-full flex-col items-start">
                             {isFailedMediaRound ? (
-                                <CreativeGenerationFailure
-                                    message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent}
-                                    onRetry={failedTasks.length ? () => onRetryTask(run!.id, failedTasks[0]!.id) : () => onRetryRun(run!.id)}
-                                    retryLabel={failedTasks.length ? `重新分析${failedTasks[0]?.title ? ` ${failedTasks[0].title}` : ""}` : "重新分析本次请求"}
-                                />
+                                <CreativeGenerationFailure message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent} onEdit={() => onEditMessage(userMessage, run)} />
                             ) : showAssistantText ? (
                                 <div
                                     className={cn(
@@ -348,17 +317,7 @@ function CreativeMediaRound({
                             ) : mediaOutputs.length ? (
                                 <CreativeMediaResult assets={mediaOutputs} fallbackRatio={run?.tasks.find((task) => task.type === "image")?.ratio || run?.generationPreferences?.image?.size} renderActions={renderRoundActions} />
                             ) : assistantMessage.status === "completed" && textOutputs.length ? (
-                                <CreativeRoundActions
-                                    userMessage={userMessage}
-                                    outputAssets={outputAssets}
-                                    preferredWidth={420}
-                                    run={run}
-                                    busy={busy}
-                                    selectedAssetIds={selectedAssetIds}
-                                    onEditMessage={onEditMessage}
-                                    onRepeatMessage={onRepeatMessage}
-                                    onToggleAsset={onToggleAsset}
-                                />
+                                <CreativeRoundActions userMessage={userMessage} outputAssets={outputAssets} preferredWidth={420} run={run} selectedAssetIds={selectedAssetIds} onToggleAsset={onToggleAsset} />
                             ) : null}
                         </div>
                         {handoff ? (
@@ -370,8 +329,7 @@ function CreativeMediaRound({
                                 onMaterialize={() => void onMaterializeProject(handoff).catch(() => undefined)}
                             />
                         ) : null}
-                        {!isFailedMediaRound && run && failedTasks.length ? <FailedTaskActions run={run} onRetryTask={onRetryTask} /> : null}
-                        {assistantMessage.status === "failed" && run?.status === "failed" && !run.tasks.length ? <FailedPlanningAction onRetry={() => onRetryRun(run.id)} /> : null}
+                        {!isFailedMediaRound && failedTasks.length ? <EditRetryAction onEdit={() => onEditMessage(userMessage, run)} detail={`${failedTasks.length} 项生成失败`} /> : null}
                     </div>
                 </div>
             </div>
@@ -493,10 +451,7 @@ function CreativeRoundActions({
     activeAsset,
     preferredWidth,
     run,
-    busy,
     selectedAssetIds,
-    onEditMessage,
-    onRepeatMessage,
     onToggleAsset,
 }: {
     userMessage: CreativeMessage;
@@ -504,10 +459,7 @@ function CreativeRoundActions({
     activeAsset?: CreativeAsset;
     preferredWidth: number;
     run?: CreativeAgentRun;
-    busy: boolean;
     selectedAssetIds: string[];
-    onEditMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
-    onRepeatMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
     onToggleAsset: (id: string) => void;
 }) {
     const copyText = useCopyText();
@@ -517,20 +469,16 @@ function CreativeRoundActions({
     const primaryDownload = downloads[0];
     const mode = creativeRunMode(run);
     const menuItems = [
-        { key: "copy", label: "复制原始需求", icon: <Copy className="size-4" /> },
-        ...(primaryDownload ? [{ key: "copy-link", label: "复制结果链接", icon: <Link2 className="size-4" /> }] : []),
-        ...(primaryDownload ? [{ key: "open", label: "在新窗口打开", icon: <ExternalLink className="size-4" /> }] : []),
-        ...(referenceAssets.length ? [{ key: "reference", label: allReferenced ? "取消引用本轮结果" : "引用本轮结果", icon: <Link2 className="size-4" /> }] : []),
+        ...(primaryDownload ? [{ key: "copy-link", label: "复制链接", icon: <Link2 className="size-4" /> }] : []),
+        ...(primaryDownload ? [{ key: "open", label: "新窗口打开", icon: <ExternalLink className="size-4" /> }] : []),
+        ...(referenceAssets.length ? [{ key: "reference", label: allReferenced ? "取消引用" : "引用结果", icon: <Link2 className="size-4" /> }] : []),
     ];
     const actionClass =
         "!flex !h-9 !min-w-0 !items-center !justify-center !gap-1.5 !rounded-lg !border !border-[#e4e7ec] !bg-white !px-2 !text-xs !font-medium !text-[#667085] !shadow-none hover:!border-[#d0d5dd] hover:!bg-[#f8f9fb] hover:!text-[#344054] disabled:!border-[#edf0f2] disabled:!bg-[#f8f9fa] disabled:!text-[#b3bac4] dark:!border-[#343a43] dark:!bg-[#181b20] dark:!text-[#aab2bc] dark:hover:!border-[#4a525c] dark:hover:!bg-[#22262c] dark:hover:!text-white dark:disabled:!border-[#2a2f36] dark:disabled:!bg-[#1a1d22] dark:disabled:!text-[#5f6873]";
     return (
-        <div data-active-asset-id={activeAsset?.id} className="mt-2 grid max-w-full grid-cols-2 gap-2 min-[360px]:grid-cols-4" style={{ width: `${preferredWidth}px` }} aria-label="本轮创作操作">
-            <Button className={actionClass} icon={<Edit3 className="size-3.5" />} onClick={() => onEditMessage(userMessage, run)}>
-                重新编辑
-            </Button>
-            <Button disabled={busy} className={actionClass} icon={<RefreshCw className={cn("size-3.5", busy && "animate-spin")} />} onClick={() => onRepeatMessage(userMessage, run)}>
-                {busy ? "生成中" : "再次生成"}
+        <div data-active-asset-id={activeAsset?.id} className="mt-2 grid max-w-full gap-2 [grid-template-columns:repeat(auto-fit,minmax(86px,1fr))]" style={{ width: `${preferredWidth}px` }} aria-label="本轮创作操作">
+            <Button className={actionClass} icon={<Copy className="size-3.5" />} onClick={() => void copyText(userMessage.content, "提示词已复制")}>
+                复制提示词
             </Button>
             <Button
                 className={cn(actionClass, "!border-[#d8d6ff] !bg-[#f7f6ff] !text-[#5c5fff] hover:!border-[#c9c5ff] hover:!bg-[#f1efff] dark:!border-[#4b4775] dark:!bg-[#29263d] dark:!text-[#aaa6ff]")}
@@ -540,22 +488,23 @@ function CreativeRoundActions({
             >
                 {mode === "video" ? "下载视频" : "下载"}
             </Button>
-            <Dropdown
-                trigger={["click"]}
-                menu={{
-                    items: menuItems,
-                    onClick: ({ key }) => {
-                        if (key === "copy") void copyText(userMessage.content, "需求已复制");
-                        if (key === "copy-link" && primaryDownload) void copyText(primaryDownload.url, "结果链接已复制");
-                        if (key === "open" && primaryDownload) window.open(primaryDownload.url, "_blank", "noopener,noreferrer");
-                        if (key === "reference") referenceAssets.forEach((asset) => (allReferenced === selectedAssetIds.includes(asset.id) ? onToggleAsset(asset.id) : undefined));
-                    },
-                }}
-            >
-                <Button className={actionClass} icon={<MoreHorizontal className="size-3.5" />} aria-label="更多本轮创作操作">
-                    更多 <ChevronDown className="size-3" />
-                </Button>
-            </Dropdown>
+            {menuItems.length ? (
+                <Dropdown
+                    trigger={["click"]}
+                    menu={{
+                        items: menuItems,
+                        onClick: ({ key }) => {
+                            if (key === "copy-link" && primaryDownload) void copyText(primaryDownload.url, "链接已复制");
+                            if (key === "open" && primaryDownload) window.open(primaryDownload.url, "_blank", "noopener,noreferrer");
+                            if (key === "reference") referenceAssets.forEach((asset) => (allReferenced === selectedAssetIds.includes(asset.id) ? onToggleAsset(asset.id) : undefined));
+                        },
+                    }}
+                >
+                    <Button className={actionClass} icon={<MoreHorizontal className="size-3.5" />} aria-label="更多本轮创作操作">
+                        更多 <ChevronDown className="size-3" />
+                    </Button>
+                </Dropdown>
+            ) : null}
         </div>
     );
 }
@@ -564,42 +513,8 @@ function assetsForAssistant(message: CreativeMessage, assetsByMessage: Map<strin
     return [...(assetsByMessage.get(message.id) || []), ...(message.runId ? assetsByMessage.get(message.runId) || [] : [])].filter((asset, index, list) => list.findIndex((current) => current.id === asset.id) === index);
 }
 
-function FailedSubmissionAction({ onRetry }: { onRetry: () => void }) {
-    return (
-        <Tooltip title="重新提交本次请求">
-            <Button
-                type="text"
-                size="small"
-                className="!mt-1 !h-7 !px-1.5 !text-xs !text-red-700 hover:!bg-red-50 hover:!text-red-800 dark:!text-red-300 dark:hover:!bg-red-950/30 dark:hover:!text-red-200"
-                icon={<RotateCcw className="size-3.5" />}
-                onClick={onRetry}
-                aria-label="重试本次创作请求"
-            >
-                重试
-            </Button>
-        </Tooltip>
-    );
-}
-
-function FailedPlanningAction({ onRetry }: { onRetry: () => void }) {
-    return (
-        <div className="mt-2 flex items-center gap-2">
-            <Button
-                type="text"
-                size="small"
-                className="!h-8 !rounded-md !px-2 !text-xs !font-medium !text-red-700 hover:!bg-red-50 hover:!text-red-800 dark:!text-red-300 dark:hover:!bg-red-950/30 dark:hover:!text-red-200"
-                icon={<RotateCcw className="size-3.5" />}
-                onClick={onRetry}
-                aria-label="重新分析本次请求"
-            >
-                重新分析
-            </Button>
-        </div>
-    );
-}
-
-function CreativeGenerationFailure({ message, onRetry, retryLabel }: { message: string; onRetry: () => void; retryLabel: string }) {
-    const displayMessage = formatAgentMessageText(message) || "创作任务执行失败";
+function CreativeGenerationFailure({ message, onEdit }: { message: string; onEdit: () => void }) {
+    const displayMessage = friendlyAgentError(message, "创作任务执行失败");
     return (
         <div data-testid="creative-generation-failure" className="max-w-[620px] py-1">
             <div className="min-w-0">
@@ -607,11 +522,11 @@ function CreativeGenerationFailure({ message, onRetry, retryLabel }: { message: 
                 <Button
                     type="default"
                     className="!mt-3 !h-9 !rounded-[10px] !border-[#ffd4d5] !bg-white !px-4 !text-sm !font-medium !text-[#e22b2e] hover:!border-[#ffb7b8] hover:!bg-[#fff8f8] hover:!text-[#c51f22] dark:!border-[#6b3438] dark:!bg-transparent dark:!text-[#ff9a9c] dark:hover:!border-[#9a4a4e] dark:hover:!bg-[#321e20]"
-                    icon={<RotateCcw className="size-4" />}
-                    onClick={onRetry}
-                    aria-label={retryLabel}
+                    icon={<Edit3 className="size-4" />}
+                    onClick={onEdit}
+                    aria-label="编辑提示词后重试"
                 >
-                    重新分析
+                    编辑重试
                 </Button>
             </div>
         </div>
@@ -623,28 +538,25 @@ function messageAssetIds(message: CreativeMessage) {
     return Array.isArray(value) ? Array.from(new Set(value.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map((id) => id.trim()))).slice(0, 20) : [];
 }
 
-function FailedTaskActions({ run, onRetryTask }: { run: CreativeAgentRun; onRetryTask: (runId: string, taskId: string) => void }) {
-    const failedTasks = run.tasks.filter((task) => task.status === "failed");
+function EditRetryAction({ onEdit, detail }: { onEdit: () => void; detail?: string }) {
     return (
-        <div className="mt-3 inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 align-top dark:border-red-900/70 dark:bg-red-950/20">
-            {failedTasks.map((task) => (
-                <span key={task.id} className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-xs text-red-700 dark:text-red-200">
-                    <span className="max-w-44 truncate">{task.title}</span>
-                    <Tooltip title={`重试「${task.title}」`}>
-                        <Button
-                            type="text"
-                            size="small"
-                            shape="circle"
-                            className="!size-6 !min-w-6 !text-red-700 hover:!bg-red-100 hover:!text-red-800 dark:!text-red-200 dark:hover:!bg-red-900/50 dark:hover:!text-red-100"
-                            icon={<RotateCcw className="size-3.5" />}
-                            onClick={() => onRetryTask(run.id, task.id)}
-                            aria-label={`重试 ${task.title}`}
-                        />
-                    </Tooltip>
-                </span>
-            ))}
+        <div className="mt-2 flex max-w-full items-center gap-2">
+            {detail ? <span className="text-xs text-red-600 dark:text-red-300">{detail}</span> : null}
+            <Button
+                type="text"
+                size="small"
+                className="!h-8 !rounded-md !px-2 !text-xs !font-medium !text-red-700 hover:!bg-red-50 hover:!text-red-800 dark:!text-red-300 dark:hover:!bg-red-950/30 dark:hover:!text-red-200"
+                icon={<Edit3 className="size-3.5" />}
+                onClick={onEdit}
+            >
+                编辑重试
+            </Button>
         </div>
     );
+}
+
+function creativeRoundFailed(message: CreativeMessage, run?: CreativeAgentRun) {
+    return message.status === "failed" || run?.status === "failed" || run?.tasks.some((task) => task.status === "failed") === true;
 }
 
 function ProjectHandoffAction({ handoff, project, error, loading, onMaterialize }: { handoff: CreativeProjectHandoff; project?: MaterializedCreativeProject; error?: string; loading: boolean; onMaterialize: () => void }) {

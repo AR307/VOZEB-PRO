@@ -13,10 +13,12 @@ export function friendlyAgentError(value: unknown, fallback = "Agent 暂时无�
 }
 
 export function formatAgentMessageText(text: string) {
-    const actionable = actionableErrorMessage(text);
-    if (actionable) return actionable;
-    const classified = classifiedTechnicalError(text);
-    if (classified) return classified;
+    if (isErrorPayload(text)) {
+        const actionable = actionableErrorMessage(text);
+        if (actionable) return actionable;
+        const classified = classifiedTechnicalError(text);
+        if (classified) return classified;
+    }
     const legacyTextResult = text.match(/^已完成 1 个创作任务。\s*「[^」]+」已完成：\s*\*\*(.+?)\*\*/s);
     if (legacyTextResult?.[1]) return legacyTextResult[1].trim();
     if (/^正在执行任务 task-[^（]+（第 \d+ 次）…?$/.test(text.trim())) return "正在执行创作任务…";
@@ -30,6 +32,11 @@ export function formatAgentMessageText(text: string) {
         .join("\n")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
+}
+
+function isErrorPayload(value: string) {
+    const text = value.trim();
+    return text.startsWith("{") || /^(?:<!doctype\s+html|<html\b)/i.test(text);
 }
 
 function stripUpstreamDisplayDirectives(value: string) {

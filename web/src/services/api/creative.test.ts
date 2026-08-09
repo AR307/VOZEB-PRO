@@ -156,8 +156,16 @@ describe("创作会话来源", () => {
         const fetchMock = vi.fn(async () => Response.json({ code: 0, data: { run }, msg: "OK" }));
         vi.stubGlobal("fetch", fetchMock);
 
-        await expect(controlCreativeAgentRun("run-one", "retry")).resolves.toEqual({ run });
-        expect(fetchMock).toHaveBeenCalledWith("/api/agent/runs/run-one/retry", expect.objectContaining({ method: "POST", cache: "no-store" }));
+        await expect(controlCreativeAgentRun("run-one", "retry", "conversation-one")).resolves.toEqual({ run });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/agent/runs/run-one/retry",
+            expect.objectContaining({
+                method: "POST",
+                cache: "no-store",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversationId: "conversation-one" }),
+            }),
+        );
     });
 
     it.each([

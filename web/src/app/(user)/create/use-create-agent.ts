@@ -87,6 +87,26 @@ export function useCreateAgent() {
         streamRef.current = null;
     }, []);
 
+    const isCurrentConversation = useCallback((id: string | undefined, generation: number) => generation === conversationGenerationRef.current && activeConversationRef.current === id, []);
+
+    const resetConversationView = useCallback((id?: string) => {
+        setConversationId(id);
+        setActiveRunId(undefined);
+        setActiveRunStatus(undefined);
+        setRunDetails({});
+        setMessages([]);
+        setHasOlderMessages(false);
+        setOlderMessagesLoading(false);
+        setAssets([]);
+        setSelectedAssetIds([]);
+        setProjectLinks({});
+        setProjectErrors({});
+        setMaterializingProjectId(undefined);
+        setConversationLoading(false);
+        setUploading(false);
+        setSending(false);
+    }, []);
+
     const refreshConversations = useCallback(async () => {
         setHistoryLoading(true);
         try {
@@ -115,22 +135,18 @@ export function useCreateAgent() {
         setHasOlderMessages(Boolean(nextMessages[0] && nextMessages[0].sequence > 1));
         setAssets(nextAssets);
         setSelectedAssetIds([]);
-        setRunDetails((current) => {
-            const next = { ...current };
-            runs.forEach((run) => {
-                if (run) next[run.id] = run;
-            });
-            return next;
-        });
-        const handoffs = nextMessages.map((item) => item.metadata.projectHandoff).filter(isCreativeProjectHandoff);
+        setRunDetails(Object.fromEntries(runs.filter((run): run is CreativeAgentRun => Boolean(run && run.conversationId === id)).map((run) => [run.id, run])));
+        const handoffs = nextMessages
+            .map((item) => item.metadata.projectHandoff)
+            .filter(isCreativeProjectHandoff)
+            .filter((handoff) => handoff.conversationId === id);
         const projects = await Promise.all(handoffs.map(getMaterializedCreativeProject));
         if (requestId !== refreshRequestRef.current || generation !== conversationGenerationRef.current || activeConversationRef.current !== id) return;
-        setProjectLinks((current) => {
-            const next = { ...current };
+        setProjectLinks(() => {
+            const next: Record<string, MaterializedCreativeProject> = {};
             handoffs.forEach((handoff, index) => {
                 const project = projects[index];
                 if (project) next[handoff.id] = project;
-                else delete next[handoff.id];
             });
             return next;
         });
@@ -150,18 +166,19 @@ export function useCreateAgent() {
 
     const loadOlderMessages = useCallback(async () => {
         const id = activeConversationRef.current;
+        const generation = conversationGenerationRef.current;
         const firstSequence = messages[0]?.sequence;
         if (!id || !firstSequence || olderMessagesLoading || !hasOlderMessages) return;
         setOlderMessagesLoading(true);
         try {
             const older = await listCreativeMessages(id, firstSequence, MESSAGE_PAGE_SIZE);
-            if (activeConversationRef.current !== id) return;
+            if (!isCurrentConversation(id, generation)) return;
             setMessages((current) => uniqueMessages([...older, ...current]));
             setHasOlderMessages(Boolean(older[0] && older[0].sequence > 1));
         } finally {
-            setOlderMessagesLoading(false);
+            if (isCurrentConversation(id, generation)) setOlderMessagesLoading(false);
         }
-    }, [hasOlderMessages, messages, olderMessagesLoading]);
+    }, [hasOlderMessages, isCurrentConversation, messages, olderMessagesLoading]);
 
     const newConversation = useCallback(() => {
         stopWatching();
@@ -171,15 +188,8 @@ export function useCreateAgent() {
         refreshRequestRef.current += 1;
         submittingRef.current = false;
         failedSubmissionsRef.current.clear();
-        setConversationId(undefined);
-        setActiveRunId(undefined);
-        setActiveRunStatus(undefined);
-        setMessages([]);
-        setHasOlderMessages(false);
-        setAssets([]);
-        setSelectedAssetIds([]);
-        setSending(false);
-    }, [clearDraftAttachments, stopWatching]);
+        resetConversationView();
+    }, [clearDraftAttachments, resetConversationView, stopWatching]);
 
     const openConversation = useCallback(
         async (id: string) => {
@@ -187,25 +197,26 @@ export function useCreateAgent() {
             clearDraftAttachments();
             const generation = ++conversationGenerationRef.current;
             activeConversationRef.current = id;
-            setSending(false);
             submittingRef.current = false;
             failedSubmissionsRef.current.clear();
-            setActiveRunId(undefined);
+            refreshRequestRef.current += 1;
+            resetConversationView(id);
             setConversationLoading(true);
-            setConversationId(id);
             try {
                 const conversation = await getCreativeConversation(id);
                 if (conversation.surface !== "chat" || conversation.source !== "agent") throw new Error("该记录不属于创作 Agent 工作台");
                 await refreshConversation(id, generation);
-                setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)].sort((a, b) => b.updatedAt - a.updatedAt));
+                if (isCurrentConversation(id, generation)) {
+                    setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)].sort((a, b) => b.updatedAt - a.updatedAt));
+                }
             } catch (error) {
-                if (generation === conversationGenerationRef.current && activeConversationRef.current === id) newConversation();
+                if (isCurrentConversation(id, generation)) newConversation();
                 throw error;
             } finally {
-                if (generation === conversationGenerationRef.current && activeConversationRef.current === id) setConversationLoading(false);
+                if (isCurrentConversation(id, generation)) setConversationLoading(false);
             }
         },
-        [clearDraftAttachments, newConversation, refreshConversation, stopWatching],
+        [clearDraftAttachments, isCurrentConversation, newConversation, refreshConversation, resetConversationView, stopWatching],
     );
 
     useEffect(() => {
@@ -231,32 +242,43 @@ export function useCreateAgent() {
         setMessages((current) => current.map((item) => (item.id === id ? { ...item, content: content?.trim() || item.content, status, updatedAt: Date.now() } : item)));
     }, []);
 
-    const materializeProject = useCallback(async (handoff: CreativeProjectHandoff) => {
-        setMaterializingProjectId(handoff.id);
-        setProjectErrors((current) => ({ ...current, [handoff.id]: "" }));
-        try {
-            const result = await materializeCreativeProjectHandoff(handoff);
-            setProjectLinks((current) => ({ ...current, [handoff.id]: result }));
-            return result;
-        } catch (error) {
-            const text = error instanceof Error ? error.message : "项目创建失败";
-            setProjectErrors((current) => ({ ...current, [handoff.id]: text }));
-            throw error;
-        } finally {
-            setMaterializingProjectId(undefined);
-        }
-    }, []);
+    const materializeProject = useCallback(
+        async (handoff: CreativeProjectHandoff, generation = conversationGenerationRef.current) => {
+            if (!isCurrentConversation(handoff.conversationId, generation)) throw new Error("当前对话已切换");
+            setMaterializingProjectId(handoff.id);
+            setProjectErrors((current) => ({ ...current, [handoff.id]: "" }));
+            try {
+                const result = await materializeCreativeProjectHandoff(handoff);
+                if (isCurrentConversation(handoff.conversationId, generation)) setProjectLinks((current) => ({ ...current, [handoff.id]: result }));
+                return result;
+            } catch (error) {
+                if (isCurrentConversation(handoff.conversationId, generation)) {
+                    const text = error instanceof Error ? error.message : "项目创建失败";
+                    setProjectErrors((current) => ({ ...current, [handoff.id]: text }));
+                }
+                throw error;
+            } finally {
+                if (isCurrentConversation(handoff.conversationId, generation)) {
+                    setMaterializingProjectId((current) => (current === handoff.id ? undefined : current));
+                }
+            }
+        },
+        [isCurrentConversation],
+    );
 
-    const ensureConversation = useCallback(async () => {
-        if (activeConversationRef.current) return activeConversationRef.current;
-        const generation = conversationGenerationRef.current;
-        const conversation = await createCreativeConversation({ surface: "chat", source: "agent", title: "新对话" });
-        if (generation !== conversationGenerationRef.current) throw new Error("创作入口已切换，请重试");
-        activeConversationRef.current = conversation.id;
-        setConversationId(conversation.id);
-        setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
-        return conversation.id;
-    }, []);
+    const ensureConversation = useCallback(
+        async (generation = conversationGenerationRef.current) => {
+            if (activeConversationRef.current) return activeConversationRef.current;
+            const conversation = await createCreativeConversation({ surface: "chat", source: "agent", title: "新对话" });
+            if (isCurrentConversation(undefined, generation)) {
+                activeConversationRef.current = conversation.id;
+                setConversationId(conversation.id);
+                setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
+            }
+            return conversation.id;
+        },
+        [isCurrentConversation],
+    );
 
     const uploadAttachments = useCallback(
         async (files: File[]) => {
@@ -267,34 +289,37 @@ export function useCreateAgent() {
     );
 
     const materializeDraftAttachments = useCallback(
-        async (assetIds: string[]) => {
-            const draftIds = assetIds.filter((id) => getCreateDraftAttachment(id));
-            if (!draftIds.length) return { conversationId: activeConversationRef.current, assetIds, replacements: new Map<string, CreativeAsset>() };
+        async (assetIds: string[], generation: number, submissionConversationId?: string) => {
+            const drafts = assetIds.map((id) => ({ id, draft: getCreateDraftAttachment(id) })).filter((item): item is { id: string; draft: NonNullable<ReturnType<typeof getCreateDraftAttachment>> } => Boolean(item.draft));
+            if (!drafts.length) return { conversationId: submissionConversationId, assetIds, replacements: new Map<string, CreativeAsset>() };
             const replacements = new Map<string, CreativeAsset>();
-            setUploading(true);
+            if (isCurrentConversation(submissionConversationId, generation)) setUploading(true);
+            let materializedConversationId = submissionConversationId;
             try {
-                const id = await ensureConversation();
-                for (const draftId of draftIds) {
-                    const draft = getCreateDraftAttachment(draftId);
-                    if (draft) replacements.set(draftId, await uploadCreativeAsset(id, draft.file));
+                materializedConversationId = await ensureConversation(generation);
+                for (const { id, draft } of drafts) {
+                    replacements.set(id, await uploadCreativeAsset(materializedConversationId, draft.file));
                 }
-                return { conversationId: id, assetIds: assetIds.map((assetId) => replacements.get(assetId)?.id || assetId), replacements };
+                return { conversationId: materializedConversationId, assetIds: assetIds.map((assetId) => replacements.get(assetId)?.id || assetId), replacements };
             } finally {
-                if (replacements.size) {
+                if (isCurrentConversation(materializedConversationId, generation) && replacements.size) {
                     const uploadedAssets = Array.from(replacements.values());
                     setAssets((current) => [...current, ...uploadedAssets.filter((asset) => !current.some((item) => item.id === asset.id))]);
                     setSelectedAssetIds((current) => Array.from(new Set([...current, ...uploadedAssets.map((asset) => asset.id)])).slice(-20));
                     removeDraftAttachments(replacements.keys());
                 }
-                setUploading(false);
+                if (isCurrentConversation(materializedConversationId, generation)) setUploading(false);
             }
         },
-        [ensureConversation, removeDraftAttachments],
+        [ensureConversation, isCurrentConversation, removeDraftAttachments],
     );
 
     const watchRun = useCallback(
         (run: CreativeAgentRun, assistantMessageId: string, generation = conversationGenerationRef.current) => {
+            if (!isCurrentConversation(run.conversationId, generation)) return false;
             streamRef.current?.();
+            setSending(true);
+            submittingRef.current = true;
             setActiveRunId(run.id);
             setActiveRunStatus(run.status);
             streamRef.current = watchCreativeAgentRun(run.id, {
@@ -328,25 +353,27 @@ export function useCreateAgent() {
                 onProjectHandoff: (handoff) => {
                     if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
                     setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, metadata: { ...item.metadata, projectHandoff: handoff } } : item)));
-                    void materializeProject(handoff).catch(() => undefined);
+                    void materializeProject(handoff, generation).catch(() => undefined);
                 },
             });
+            return true;
         },
-        [materializeProject, refreshAssets, refreshConversation, refreshConversations, updateAssistant],
+        [isCurrentConversation, materializeProject, refreshAssets, refreshConversation, refreshConversations, updateAssistant],
     );
 
     useEffect(() => {
-        if (!conversationId || sending) return;
+        if (!conversationId || sending || activeConversationRef.current !== conversationId) return;
         const running = messages.find((item) => item.role === "assistant" && item.status === "running" && item.runId);
         if (!running?.runId) return;
+        const generation = conversationGenerationRef.current;
+        const expectedConversationId = conversationId;
         void getCreativeAgentRun(running.runId)
             .then((run) => {
-                setSending(true);
-                submittingRef.current = true;
-                watchRun(run, running.id, conversationGenerationRef.current);
+                if (!isCurrentConversation(expectedConversationId, generation) || run.conversationId !== expectedConversationId) return;
+                watchRun(run, running.id, generation);
             })
             .catch(() => undefined);
-    }, [conversationId, messages, sending, watchRun]);
+    }, [conversationId, isCurrentConversation, messages, sending, watchRun]);
 
     const executeSubmission = useCallback(
         async (snapshot: PendingCreateSubmission) => {
@@ -362,14 +389,13 @@ export function useCreateAgent() {
                     preferences: snapshot.preferences,
                 });
                 const run = created.run;
+                void refreshConversations();
+                const belongsToSubmission = !snapshot.conversationId || snapshot.conversationId === run.conversationId;
+                const canClaimCurrentView = snapshot.generation === conversationGenerationRef.current && belongsToSubmission && (!activeConversationRef.current || activeConversationRef.current === run.conversationId);
+                if (!canClaimCurrentView) return true;
                 failedSubmissionsRef.current.delete(snapshot.temporaryAssistantId);
-                if (snapshot.generation !== conversationGenerationRef.current) {
-                    submittingRef.current = false;
-                    return true;
-                }
                 activeConversationRef.current = run.conversationId;
                 setConversationId(run.conversationId);
-                setActiveRunId(run.id);
                 setRunDetails((current) => ({ ...current, [run.id]: run }));
                 setMessages((current) =>
                     current.map((item) => {
@@ -379,9 +405,9 @@ export function useCreateAgent() {
                     }),
                 );
                 watchRun(run, run.assistantMessageId, snapshot.generation);
-                void refreshConversations();
                 return true;
             } catch (error) {
+                if (!isCurrentConversation(snapshot.conversationId, snapshot.generation)) return false;
                 failedSubmissionsRef.current.set(snapshot.temporaryAssistantId, snapshot);
                 updateAssistant(snapshot.temporaryAssistantId, error instanceof Error ? error.message : "创作请求失败", "failed");
                 setSending(false);
@@ -398,22 +424,25 @@ export function useCreateAgent() {
             if (!content || sending || submittingRef.current) return false;
             submittingRef.current = true;
             const generation = conversationGenerationRef.current;
+            const submissionConversationId = activeConversationRef.current;
             stopWatching();
             setSending(true);
             const selectedIds = (options?.assetIds || selectedAssetIdsWithDrafts).slice(-20);
             let prepared: Awaited<ReturnType<typeof materializeDraftAttachments>>;
             try {
-                prepared = await materializeDraftAttachments(selectedIds);
+                prepared = await materializeDraftAttachments(selectedIds, generation, submissionConversationId);
             } catch (error) {
-                setSending(false);
-                submittingRef.current = false;
+                if (generation === conversationGenerationRef.current) {
+                    setSending(false);
+                    submittingRef.current = false;
+                }
                 throw error;
             }
             const now = Date.now();
             const sequence = messages.reduce((max, item) => Math.max(max, item.sequence), 0) + 1;
             const temporaryUserId = `message-${nanoid()}`;
             const temporaryAssistantId = `message-${nanoid()}`;
-            const submittedConversationId = prepared.conversationId || conversationId;
+            const submittedConversationId = prepared.conversationId || submissionConversationId;
             const optimisticConversationId = submittedConversationId || "pending";
             const assetIds = prepared.assetIds;
             const preferences = remapDraftAssetIds(options?.preferences, prepared.replacements);
@@ -429,92 +458,97 @@ export function useCreateAgent() {
                 temporaryUserId,
                 temporaryAssistantId,
             };
-            setMessages((current) => [
-                ...current,
-                { id: temporaryUserId, conversationId: optimisticConversationId, sequence, role: "user", status: "completed", content, metadata: { assetIds }, createdAt: now, updatedAt: now },
-                {
-                    id: temporaryAssistantId,
-                    conversationId: optimisticConversationId,
-                    sequence: sequence + 1,
-                    role: "assistant",
-                    status: "running",
-                    content: agentRequirementAcknowledgement(content, "chat", assetIds.length > 0),
-                    metadata: {},
-                    createdAt: now,
-                    updatedAt: now,
-                },
-            ]);
-            const consumedIds = new Set([...selectedIds, ...assetIds]);
-            setSelectedAssetIds((current) => current.filter((id) => !consumedIds.has(id)));
+            if (isCurrentConversation(submittedConversationId, generation)) {
+                setMessages((current) => [
+                    ...current,
+                    { id: temporaryUserId, conversationId: optimisticConversationId, sequence, role: "user", status: "completed", content, metadata: { assetIds }, createdAt: now, updatedAt: now },
+                    {
+                        id: temporaryAssistantId,
+                        conversationId: optimisticConversationId,
+                        sequence: sequence + 1,
+                        role: "assistant",
+                        status: "running",
+                        content: agentRequirementAcknowledgement(content, "chat", assetIds.length > 0),
+                        metadata: {},
+                        createdAt: now,
+                        updatedAt: now,
+                    },
+                ]);
+                const consumedIds = new Set([...selectedIds, ...assetIds]);
+                setSelectedAssetIds((current) => current.filter((id) => !consumedIds.has(id)));
+            }
             return executeSubmission(snapshot);
         },
-        [conversationId, executeSubmission, materializeDraftAttachments, messages, selectedAssetIdsWithDrafts, sending, stopWatching],
+        [executeSubmission, isCurrentConversation, materializeDraftAttachments, messages, selectedAssetIdsWithDrafts, sending, stopWatching],
     );
 
     const retrySubmission = useCallback(
         async (assistantMessageId: string) => {
             const snapshot = failedSubmissionsRef.current.get(assistantMessageId);
-            if (!snapshot || sending || submittingRef.current || snapshot.generation !== conversationGenerationRef.current) return false;
+            if (!snapshot || sending || submittingRef.current || !isCurrentConversation(snapshot.conversationId, snapshot.generation)) return false;
             submittingRef.current = true;
             stopWatching();
             setSending(true);
             updateAssistant(assistantMessageId, "正在重新提交创作请求", "running");
             return executeSubmission(snapshot);
         },
-        [executeSubmission, sending, stopWatching, updateAssistant],
+        [executeSubmission, isCurrentConversation, sending, stopWatching, updateAssistant],
     );
 
     const cancel = useCallback(async () => {
-        if (!activeRunId) return;
-        await controlCreativeAgentRun(activeRunId, "cancel");
+        const expectedConversationId = activeConversationRef.current;
+        if (!activeRunId || !expectedConversationId) return;
+        await controlCreativeAgentRun(activeRunId, "cancel", expectedConversationId);
     }, [activeRunId]);
 
     const control = useCallback(
         async (action: "pause" | "resume") => {
-            if (!activeRunId) return;
-            const result = await controlCreativeAgentRun(activeRunId, action);
+            const expectedConversationId = activeConversationRef.current;
+            const generation = conversationGenerationRef.current;
+            if (!activeRunId || !expectedConversationId) return;
+            const result = await controlCreativeAgentRun(activeRunId, action, expectedConversationId);
+            if (!isCurrentConversation(expectedConversationId, generation) || result.run.conversationId !== expectedConversationId) return;
             setActiveRunStatus(result.run.status);
             if (action === "resume") {
                 const assistantMessage = messages.find((item) => item.runId === result.run.id && item.role === "assistant");
-                if (assistantMessage) {
-                    submittingRef.current = true;
-                    watchRun(result.run, assistantMessage.id, conversationGenerationRef.current);
-                }
+                if (assistantMessage) watchRun(result.run, assistantMessage.id, generation);
             }
         },
-        [activeRunId, messages, watchRun],
+        [activeRunId, isCurrentConversation, messages, watchRun],
     );
 
     const retryTask = useCallback(
         async (runId: string, taskId: string) => {
+            const expectedConversationId = activeConversationRef.current;
+            const generation = conversationGenerationRef.current;
+            if (!expectedConversationId) return;
             const result = await retryCreativeAgentTask(runId, taskId);
+            if (!isCurrentConversation(expectedConversationId, generation) || result.conversationId !== expectedConversationId) return;
             setRunDetails((current) => ({ ...current, [runId]: result }));
             const assistantMessage = messages.find((item) => item.runId === runId && item.role === "assistant");
             if (assistantMessage) {
                 updateAssistant(assistantMessage.id, "正在重新生成失败任务…");
-                setSending(true);
-                submittingRef.current = true;
-                watchRun(result, assistantMessage.id, conversationGenerationRef.current);
+                watchRun(result, assistantMessage.id, generation);
             }
         },
-        [messages, updateAssistant, watchRun],
+        [isCurrentConversation, messages, updateAssistant, watchRun],
     );
 
     const retryRun = useCallback(
         async (runId: string) => {
-            const result = await controlCreativeAgentRun(runId, "retry");
+            const expectedConversationId = activeConversationRef.current;
+            const generation = conversationGenerationRef.current;
+            if (!expectedConversationId) return;
+            const result = await controlCreativeAgentRun(runId, "retry", expectedConversationId);
+            if (!isCurrentConversation(expectedConversationId, generation) || result.run.conversationId !== expectedConversationId) return;
             setRunDetails((current) => ({ ...current, [runId]: result.run }));
-            setActiveRunId(runId);
-            setActiveRunStatus(result.run.status);
             const assistantMessage = messages.find((item) => item.runId === runId && item.role === "assistant");
             if (assistantMessage) {
                 updateAssistant(assistantMessage.id, "正在重新分析并执行这次请求…", "running");
-                setSending(true);
-                submittingRef.current = true;
-                watchRun(result.run, assistantMessage.id, conversationGenerationRef.current);
+                watchRun(result.run, assistantMessage.id, generation);
             }
         },
-        [messages, updateAssistant, watchRun],
+        [isCurrentConversation, messages, updateAssistant, watchRun],
     );
 
     const renameConversation = useCallback(async (id: string, title: string) => {

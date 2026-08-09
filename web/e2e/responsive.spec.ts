@@ -115,6 +115,128 @@ async function mockExistingCreativeConversation(page: Page) {
     return id;
 }
 
+async function mockAgentConversationSwitchRace(page: Page) {
+    const timestamp = Date.now();
+    const conversationA = {
+        id: `e2e-running-a-${randomUUID()}`,
+        userId: "e2e-user",
+        surface: "chat",
+        source: "agent",
+        title: "运行中的对话 A",
+        status: "active",
+        contextSummary: "",
+        contextSummaryThroughSequence: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp + 1,
+        lastMessageAt: timestamp + 1,
+    };
+    const conversationB = {
+        ...conversationA,
+        id: `e2e-idle-b-${randomUUID()}`,
+        title: "空闲对话 B",
+        createdAt: timestamp - 1,
+        updatedAt: timestamp,
+        lastMessageAt: timestamp,
+    };
+    const run = {
+        id: `e2e-running-run-${randomUUID()}`,
+        conversationId: conversationA.id,
+        inputMessageId: "e2e-running-user",
+        assistantMessageId: "e2e-running-assistant",
+        status: "running",
+        assetIds: [],
+        tasks: [{ id: "e2e-running-task", title: "生成图片", type: "image", status: "running" }],
+        createdAt: timestamp,
+        updatedAt: timestamp + 1,
+    };
+    const messages = new Map([
+        [
+            conversationA.id,
+            [
+                { id: run.inputMessageId, conversationId: conversationA.id, runId: run.id, sequence: 1, role: "user", status: "completed", content: "A 对话正在生成海报", metadata: {}, createdAt: timestamp, updatedAt: timestamp },
+                { id: run.assistantMessageId, conversationId: conversationA.id, runId: run.id, sequence: 2, role: "assistant", status: "running", content: "正在生成 A 对话结果", metadata: {}, createdAt: timestamp + 1, updatedAt: timestamp + 1 },
+            ],
+        ],
+        [
+            conversationB.id,
+            [
+                { id: "e2e-idle-user", conversationId: conversationB.id, sequence: 1, role: "user", status: "completed", content: "B 对话自己的消息", metadata: {}, createdAt: timestamp, updatedAt: timestamp },
+                { id: "e2e-idle-assistant", conversationId: conversationB.id, sequence: 2, role: "assistant", status: "completed", content: "B 对话已经完成", metadata: {}, createdAt: timestamp, updatedAt: timestamp },
+            ],
+        ],
+    ]);
+    const conversations = new Map([
+        [conversationA.id, conversationA],
+        [conversationB.id, conversationB],
+    ]);
+    let runReads = 0;
+    let eventRequests = 0;
+    let controlRequests = 0;
+    let createRequests = 0;
+    let releaseDelayedRun = () => undefined;
+    let resolveDelayedRunRequested = () => undefined;
+    let resolveDelayedRunReturned = () => undefined;
+    const delayedRunRelease = new Promise<void>((resolve) => {
+        releaseDelayedRun = resolve;
+    });
+    const delayedRunRequested = new Promise<void>((resolve) => {
+        resolveDelayedRunRequested = resolve;
+    });
+    const delayedRunReturned = new Promise<void>((resolve) => {
+        resolveDelayedRunReturned = resolve;
+    });
+
+    await page.route(/\/api\/creative\/conversations(?:\?.*)?$/, async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return route.fulfill({ json: { code: 0, data: { conversations: [conversationA, conversationB], hasMore: false }, msg: "OK" } });
+    });
+    await page.route(/\/api\/creative\/conversations\/([^/?]+)$/, async (route) => {
+        const id = new URL(route.request().url()).pathname.split("/").at(-1) || "";
+        const conversation = conversations.get(id);
+        return conversation ? route.fulfill({ json: { code: 0, data: { conversation }, msg: "OK" } }) : route.fallback();
+    });
+    await page.route(/\/api\/creative\/conversations\/([^/?]+)\/messages(?:\?.*)?$/, async (route) => {
+        const id = new URL(route.request().url()).pathname.split("/").at(-2) || "";
+        return route.fulfill({ json: { code: 0, data: { messages: messages.get(id) || [] }, msg: "OK" } });
+    });
+    await page.route(/\/api\/creative\/conversations\/([^/?]+)\/assets$/, (route) => route.fulfill({ json: { code: 0, data: { assets: [] }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/agent/runs/${run.id}$`), async (route) => {
+        runReads += 1;
+        if (runReads === 2) {
+            resolveDelayedRunRequested();
+            await delayedRunRelease;
+        }
+        await route.fulfill({ json: { code: 0, data: { run }, msg: "OK" } });
+        if (runReads === 2) resolveDelayedRunReturned();
+    });
+    await page.route(new RegExp(`/api/agent/runs/${run.id}/events$`), async (route) => {
+        eventRequests += 1;
+        await route.abort("connectionrefused");
+    });
+    await page.route(new RegExp(`/api/agent/runs/${run.id}/(?:cancel|pause|resume|retry)$`), async (route) => {
+        controlRequests += 1;
+        await route.fulfill({ json: { code: 0, data: { run }, msg: "OK" } });
+    });
+    await page.route(/\/api\/agent\/runs$/, async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        createRequests += 1;
+        await route.fulfill({ json: { code: 0, data: { run, created: false }, msg: "OK" } });
+    });
+
+    return {
+        conversationA,
+        conversationB,
+        run,
+        delayedRunRequested,
+        delayedRunReturned,
+        releaseDelayedRun,
+        runReads: () => runReads,
+        eventRequests: () => eventRequests,
+        controlRequests: () => controlRequests,
+        createRequests: () => createRequests,
+    };
+}
+
 async function mockCreativeMediaRound(page: Page, imageBuffer: Buffer, options: { imageDataUrl?: string; outputCount?: number; outputDimensions?: { width: number; height: number } } = {}) {
     const id = `e2e-media-round-${randomUUID()}`;
     const runId = `e2e-run-${randomUUID()}`;
@@ -317,6 +439,71 @@ test("creative composer controls return to a neutral palette after selection", a
     await verifyNeutralControls("creative composer neutral controls dark");
 });
 
+test("creative composer optimizes the current prompt without sending it", async ({ page }) => {
+    let optimizationRequests = 0;
+    let runCreates = 0;
+    await page.route(/\/api\/agent\/prompt-optimization$/, async (route) => {
+        optimizationRequests += 1;
+        const body = (await route.request().postDataJSON()) as Record<string, unknown>;
+        expect(body).toMatchObject({ prompt: "做个国风人物海报", mode: "agent" });
+        await route.fulfill({ json: { code: 0, data: { prompt: "生成一张国风人物海报，突出人物主体与传统服饰细节。" }, msg: "OK" } });
+    });
+    await page.route(/\/api\/agent\/runs$/, async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        runCreates += 1;
+        return route.abort();
+    });
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await waitForCreativeComposerReady(page);
+
+    const input = page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" });
+    const optimize = page.getByRole("button", { name: "优化提示词" });
+    await expect(optimize).toBeDisabled();
+    await input.fill("做个国风人物海报");
+    await expect(optimize).toBeEnabled();
+    await optimize.click();
+
+    await expect(input).toHaveValue("生成一张国风人物海报，突出人物主体与传统服饰细节。");
+    expect(optimizationRequests).toBe(1);
+    expect(runCreates).toBe(0);
+    await expectNoHorizontalOverflow(page, "creative prompt optimizer");
+});
+
+test("creative composer ignores an optimization response after the user sends", async ({ page }) => {
+    let releaseOptimization = () => undefined;
+    const optimizationRelease = new Promise<void>((resolve) => {
+        releaseOptimization = resolve;
+    });
+    let runCreates = 0;
+    await page.route(/\/api\/agent\/prompt-optimization$/, async (route) => {
+        await optimizationRelease;
+        await route.fulfill({ json: { code: 0, data: { prompt: "这条迟到的优化结果不能覆盖输入框" }, msg: "OK" } });
+    });
+    await page.route(/\/api\/agent\/runs$/, async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        runCreates += 1;
+        await route.abort("connectionrefused");
+    });
+    try {
+        await page.goto("/create", { waitUntil: "domcontentloaded" });
+        await waitForCreativeComposerReady(page);
+
+        const input = page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" });
+        await input.fill("直接发送当前提示词");
+        await page.getByRole("button", { name: "优化提示词" }).click();
+        const send = page.getByRole("button", { name: "发送" });
+        await expect(send).toBeEnabled();
+        await send.click();
+        await expect.poll(() => runCreates).toBe(1);
+
+        releaseOptimization();
+        await expect(input).toHaveValue("直接发送当前提示词");
+        expect(runCreates).toBe(1);
+    } finally {
+        releaseOptimization();
+    }
+});
+
 test("Agent generation inputs apply immediately and reveal video frame slots", async ({ page }, testInfo) => {
     await page.goto("/create", { waitUntil: "domcontentloaded" });
     await waitForCreativeComposerReady(page);
@@ -326,6 +513,8 @@ test("Agent generation inputs apply immediately and reveal video frame slots", a
     await openComposerPopover(preferenceTrigger, preferencePopover);
 
     await preferencePopover.getByRole("button", { name: "打开图片自定义像素尺寸" }).click();
+    await expect(preferencePopover.getByText("修改后立即生效，例如 1024 × 1536")).toHaveCount(0);
+    await expect(preferencePopover.getByRole("button", { name: "恢复智能" })).toHaveCount(0);
     await preferencePopover.getByRole("textbox", { name: "自定义图片宽度" }).fill("1024");
     await preferencePopover.getByRole("textbox", { name: "自定义图片高度" }).fill("1536");
     await expect(preferencePopover.getByText("1024×1536", { exact: true })).toBeVisible();
@@ -442,7 +631,7 @@ test("creative composer renders uploaded images as thumbnails instead of filenam
     await expect(preview).toBeHidden();
 });
 
-test("creative conversation renders a result-first media round with reusable settings", async ({ page }, testInfo) => {
+test("creative conversation keeps successful media rounds copy-only", async ({ page }, testInfo) => {
     if (testInfo.project.name === "chromium") await page.setViewportSize({ width: 1672, height: 941 });
     const imageBuffer = readFileSync("public/generation-smoke.webp");
     const portraitDataUrl = `data:image/svg+xml;base64,${Buffer.from(
@@ -541,13 +730,10 @@ test("creative conversation renders a result-first media round with reusable set
         await testInfo.attach("深色单结果创作记录", { path: screenshotPath, contentType: "image/png" });
     }
 
-    await round.getByRole("button", { name: "重新编辑" }).click();
-    await expect(page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" })).toHaveValue("让参考图变成清透自然的电影感画面");
-    await expect(page.getByRole("button", { name: "当前创作类型：图片生成" })).toBeVisible();
+    await expect(round.getByRole("button", { name: "复制提示词" })).toBeVisible();
+    await expect(round.getByRole("button", { name: "重新编辑" })).toHaveCount(0);
+    await expect(round.getByRole("button", { name: "再次生成" })).toHaveCount(0);
     expect(fixture.repeatedRequest()).toBeUndefined();
-
-    await round.getByRole("button", { name: "再次生成" }).click();
-    await expect.poll(() => fixture.repeatedRequest()).toMatchObject({ prompt: "让参考图变成清透自然的电影感画面", assetIds: ["reference-one"], modelIds: ["e2e-image-model"], preferences: { mode: "image", image: { size: "1:1", quality: "high" } } });
     await expectNoHorizontalOverflow(page, `${testInfo.project.name} creative media round`);
 });
 
@@ -601,6 +787,40 @@ test("creative composer opens menus upward after entering a conversation", async
     await openComposerPopover(modeTrigger, modePopover);
     const [triggerRect, popoverRect] = await Promise.all([modeTrigger.evaluate((element) => element.getBoundingClientRect().toJSON()), modePopover.evaluate((element) => element.getBoundingClientRect().toJSON())]);
     expect(popoverRect.bottom, "conversation mode popover should open above its trigger").toBeLessThanOrEqual(triggerRect.top + 1);
+});
+
+test("switching conversations keeps the previous Agent run isolated and resumable", async ({ page }) => {
+    const fixture = await mockAgentConversationSwitchRace(page);
+    await page.goto(`/create?conversationId=${fixture.conversationA.id}`, { waitUntil: "domcontentloaded" });
+    await waitForCreativeComposerReady(page);
+    await expect(page.getByText("A 对话正在生成海报", { exact: true })).toBeVisible();
+    await fixture.delayedRunRequested;
+
+    let history = await openCreativeHistory(page);
+    await history.getByText("空闲对话 B", { exact: true }).click();
+    await expect(page.getByText("B 对话自己的消息", { exact: true })).toBeVisible();
+    await expect(page.getByText("A 对话正在生成海报", { exact: true })).toBeHidden();
+    await expect(history).toBeHidden();
+
+    fixture.releaseDelayedRun();
+    await fixture.delayedRunReturned;
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+
+    await expect(page.getByRole("button", { name: "发送" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "停止生成" })).toHaveCount(0);
+    expect(fixture.eventRequests(), "the delayed A run must not reconnect inside B").toBe(0);
+    expect(fixture.controlRequests(), "switching conversations must not control or cancel A").toBe(0);
+
+    history = await openCreativeHistory(page);
+    await history.getByText("运行中的对话 A", { exact: true }).click();
+    await expect(page.getByText("A 对话正在生成海报", { exact: true })).toBeVisible();
+    await expect(page.getByText("B 对话自己的消息", { exact: true })).toBeHidden();
+    await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible();
+    await expect.poll(fixture.eventRequests).toBeGreaterThan(0);
+
+    expect(fixture.runReads()).toBeGreaterThanOrEqual(4);
+    expect(fixture.createRequests(), "returning to A must reuse the persisted run").toBe(0);
+    expect(fixture.controlRequests(), "returning to A must not cancel, pause, resume, or retry it").toBe(0);
 });
 
 test("creative video first and last frame controls support upload, removal and reselection", async ({ page }, testInfo) => {
