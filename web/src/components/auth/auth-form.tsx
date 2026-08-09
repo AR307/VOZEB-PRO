@@ -5,7 +5,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, UserRound } from "lucide-react";
-import { App, Button, Input } from "antd";
+import { App, Button, Checkbox, Input } from "antd";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
@@ -55,6 +55,7 @@ export function AuthForm({
     const [displayName, setDisplayName] = useState("");
     const [password, setPassword] = useState("");
     const [referralCode, setReferralCode] = useState(initialReferralCode);
+    const [policyAccepted, setPolicyAccepted] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [sendingCode, setSendingCode] = useState(false);
     const isRegister = mode === "register";
@@ -69,7 +70,17 @@ export function AuthForm({
             const response = await fetch(isRegister ? "/api/auth/register" : "/api/auth/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, email, emailCode, displayName, password, referralCode: isRegister && !firstUser ? referralCode : undefined, referralSource, installToken: firstUser ? installToken.trim() : undefined }),
+                body: JSON.stringify({
+                    username,
+                    email,
+                    emailCode,
+                    displayName,
+                    password,
+                    referralCode: isRegister && !firstUser ? referralCode : undefined,
+                    referralSource,
+                    policyAccepted: isRegister && !firstUser ? policyAccepted : undefined,
+                    installToken: firstUser ? installToken.trim() : undefined,
+                }),
             });
             const payload = (await response.json()) as { user?: LocalUser; error?: string };
             if (!response.ok || !payload.user) throw new Error(payload.error || (isRegister ? "注册失败" : "登录失败"));
@@ -220,7 +231,32 @@ export function AuthForm({
                     />
                 </label>
 
-                <Button className="auth-submit-button" type="primary" htmlType="submit" size="large" block loading={submitting} disabled={disabled || !installTokenReady} icon={<ArrowRight className="size-4" />} iconPlacement="end">
+                {isRegister && !firstUser ? (
+                    <Checkbox checked={policyAccepted} disabled={submitting || disabled} onChange={(event) => setPolicyAccepted(event.target.checked)}>
+                        <span className="text-sm leading-6 text-stone-600 dark:text-stone-300">
+                            我已阅读并同意
+                            <a className="mx-1 font-medium text-stone-950 hover:underline dark:text-white" href={site.termsUrl || "/terms"} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                服务条款
+                            </a>
+                            和
+                            <a className="ml-1 font-medium text-stone-950 hover:underline dark:text-white" href={site.privacyUrl || "/privacy"} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                隐私政策
+                            </a>
+                        </span>
+                    </Checkbox>
+                ) : null}
+
+                <Button
+                    className="auth-submit-button"
+                    type="primary"
+                    htmlType="submit"
+                    size="large"
+                    block
+                    loading={submitting}
+                    disabled={disabled || !installTokenReady || (isRegister && !firstUser && !policyAccepted)}
+                    icon={<ArrowRight className="size-4" />}
+                    iconPlacement="end"
+                >
                     {firstUser ? "创建管理员并进入后台" : isRegister ? "注册并开始创作" : "登录并继续"}
                 </Button>
 

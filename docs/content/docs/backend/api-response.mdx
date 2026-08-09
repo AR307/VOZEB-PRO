@@ -11,6 +11,8 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 `GET /api/auth/session` 使用显式公开 DTO：只返回当前用户公开会话字段、站点展示、注册开关、公开计价与生成默认值、启用逻辑模型，以及指向站内 `/api/ai/system/{channelId}` 的可用渠道摘要。响应禁止包含渠道高级协议、真实上游地址、SMTP、支付密钥、完整 `advancedConfig`、Skill 指令或内部运营策略。
 
+`POST /api/auth/register` 的公开注册请求必须显式提交 `policyAccepted: true`。服务端不接受客户端提供协议版本，而是在创建用户的同一事务中读取当前站点条款/隐私链接与版本并保存同意时间；未同意时返回 `400`，管理员代建账号不会生成用户同意记录。首次安装管理员仍由一次性安装令牌保护，不属于公开注册协议流程。
+
 促销与优惠券新增接口使用 `{ code, data, msg }`，其中成功时 `code = 0`，业务数据位于 `data`，失败时 `data = null` 且 HTTP 状态与 `code` 一致：
 
 - `GET /api/billing/coupons`、`POST /api/billing/coupons/claim`

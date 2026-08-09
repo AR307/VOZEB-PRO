@@ -1,5 +1,6 @@
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, type QueryExecutor } from "@/lib/server/database";
 import { formatAccountId } from "@/lib/account-id";
+import { normalizeRegistrationPolicyConsent } from "@/lib/registration-consent";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import {
@@ -368,6 +369,13 @@ export function mapPostgresUser(row: Record<string, unknown>): StoredUser {
         planId: dbText(row.plan_id),
         pointsBalance: dbNumber(row.points_balance, DEFAULT_USER_POINTS),
         passwordHash: dbText(row.password_hash),
+        registrationConsent: normalizeRegistrationPolicyConsent({
+            termsVersion: row.terms_version,
+            termsUrl: row.terms_url,
+            privacyVersion: row.privacy_version,
+            privacyUrl: row.privacy_url,
+            acceptedAt: row.policy_accepted_at,
+        }),
         createdAt: dbIso(row.created_at),
         updatedAt: dbIso(row.updated_at),
         lastLoginAt: dbOptionalIso(row.last_login_at),
@@ -572,8 +580,8 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
     for (const user of users) {
         await db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             ON CONFLICT (id) DO UPDATE SET
                 account_id = EXCLUDED.account_id,
                 username = EXCLUDED.username,
@@ -586,6 +594,11 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
                 plan_id = EXCLUDED.plan_id,
                 points_balance = EXCLUDED.points_balance,
                 password_hash = EXCLUDED.password_hash,
+                terms_version = EXCLUDED.terms_version,
+                terms_url = EXCLUDED.terms_url,
+                privacy_version = EXCLUDED.privacy_version,
+                privacy_url = EXCLUDED.privacy_url,
+                policy_accepted_at = EXCLUDED.policy_accepted_at,
                 last_login_at = EXCLUDED.last_login_at,
                 created_at = EXCLUDED.created_at,
                 updated_at = EXCLUDED.updated_at
@@ -603,6 +616,11 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
                 user.planId,
                 user.pointsBalance,
                 user.passwordHash,
+                user.registrationConsent?.termsVersion || null,
+                user.registrationConsent?.termsUrl || null,
+                user.registrationConsent?.privacyVersion || null,
+                user.registrationConsent?.privacyUrl || null,
+                user.registrationConsent?.acceptedAt || null,
                 user.lastLoginAt || null,
                 user.createdAt,
                 user.updatedAt,

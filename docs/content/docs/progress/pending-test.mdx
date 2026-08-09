@@ -7,12 +7,13 @@ description: VOZEB PRO 当前版本需要人工或真实环境确认的事项
 
 ## v0.0.6 发布复测
 
+- 公开注册新增真实协议留痕：注册按钮在用户勾选服务条款与隐私政策前保持禁用，服务端再次校验 `policyAccepted`，并在用户创建事务中保存后台当前配置的两份协议版本、链接与同意时间；客户端不能伪造版本，管理员代建账号不生成用户同意记录。后台站点设置可分别维护协议链接和版本。PostgreSQL 使用完整性约束保证五个留痕字段同时存在或同时为空，JSON Provider、备份恢复和公开 Session 归一化保持一致。专项 7 个文件、30 项测试通过，TypeScript 通过；本地浏览器已验证桌面、390px 与 430px 的禁用/启用状态、协议新窗口链接和无横向溢出。认证页禁用主按钮现在具备明确的浅深主题样式；两个 CSP nonce 脚本显式忽略浏览器隐藏 nonce 值导致的水合属性差异，不改变随机 nonce 或生产 CSP。仍需在真实注册账号与生产 PostgreSQL 上核对落库记录，并由法律负责人审核实际协议文本与版本发布流程。
 - 生成任务人工介入原因已完成跨层统一：PostgreSQL 与文件 Provider 都恢复 `reviewReason`，文本、图片、视频、音频详情 API 和客户端轮询显示同一说明。当前数据库中的两条历史图片任务均为 `submission_outcome_unknown`，没有上游任务 ID 和可查询路径；系统保持 `needs_review`，不自动再次创建，避免重复生成或重复扣费。管理员仍需核对对应供应商账单与渠道日志后再决定失败、成功或继续查询。
 - 协议中心与新渠道选择已移除 VOZEB 推荐、Seedance 2.0 特价版和 GlobalAiOpc，粘贴对应供应商示例时只生成可复核的自定义协议草稿，不会重新出现退役协议名。现有可选协议覆盖 OpenAI、Gemini/Veo、Seedance、Stable Diffusion、火山方舟、sub2api、New API 和自定义协议；Nemoguard、Topic Control 等非创作安全模型不会进入创作目录。新增的 active media protocol matrix 以 TCP 夹具逐项验证 6 条图片协议、7 条视频创建/查询协议和 1 条 Gemini operation 查询路径，确认每个协议使用注册表声明的请求与结果字段，不会静默走路径回退。当前 PostgreSQL 审计实例启用的 New API 渠道提供文本、图片和音频默认模型，但没有启用视频逻辑模型，因此视频仍需配置真实渠道后完成生产闭环。
 - PostgreSQL 实际存在 59 张 `vozeb_pro_*` 表，全部能对应 Schema、Repository、外键、业务读取或旧表清理职责，没有发现可安全删除的冗余表。`generation_tasks`、Worker 心跳、Webhook 事件和 Agent Run 事件表均属于运行时必要数据；`check_ins` 只在表前缀注册表中保留，用于幂等清理旧表，当前数据库没有该表。
 - 邀请中心生成链接与 `/invite/[code]` 注册跳转已统一解析公开地址：有效公开 `NEXT_PUBLIC_SITE_URL` 继续作为规范域名；配置为 `localhost/127.0.0.1` 时自动使用当前访问 IP 或域名；只有配置可信代理跳数后才读取 `x-forwarded-host/proto`，HTTPS 跳转继续使用安全 Cookie。专项 4 个文件、11 项测试覆盖 IP、域名、代理和邀请归因；正式代理环境仍需用真实域名确认 Host、HTTPS 与 `VOZEB_PRO_TRUSTED_PROXY_HOPS` 一致。
 - 生成 Worker 的独立心跳不再被每次任务恢复请求重复写入，两个空闲 lane 会按 `2s → 4s → 8s → 10s` 退避，领取任务后立即恢复 250ms 批次节奏。真实 PostgreSQL 中，修改前 10 秒 `generation_tasks.seq_scan +27`、`generation_worker_heartbeats.n_tup_upd +10`；修改后 20 秒分别为 `+16` 与 `+2`，按相同时间归一化约下降 70% 与 90%，同时仍有一条真实 `polling` 任务继续更新。独立心跳、恢复路由和生产镜像契约专项 4 个文件、21 项通过；仍需在默认 Docker、宝塔、Render 和多实例环境验证空闲压力、通知唤醒与租约接管。
-- 本轮最终发布门禁已通过：Web `424` 个测试文件通过、`4` 个按环境跳过，`1822` 项测试通过、`7` 项跳过；依赖审计 0 漏洞，TypeScript、ESLint、Prettier、62 页生产构建和 Standalone 资源检查通过。Docs 的依赖审计、类型、索引和 36 页生产构建通过。Playwright 在桌面、390px、430px 共 `74` 项通过、`16` 项按项目互斥范围跳过；生产 CSP 的响应 nonce 与主题/Next.js 脚本一致、请求间不同且不含 `unsafe-inline`，浏览器控制台无 CSP 错误。支付配置、对象存储配置和业务备份恢复已补成功/失败管理员审计。当前环境没有 Docker CLI、隔离 PostgreSQL E2E URL、真实视频/支付/SMTP/S3/监控凭据，因此容器、真实支付、真实上游、多实例 Worker、邮件、对象存储和告警恢复仍需在发布环境验收。
+- 本轮最终发布门禁已通过：Web `429` 个测试文件通过、`4` 个按环境跳过，`1838` 项测试通过、`7` 项跳过；依赖审计 0 漏洞，TypeScript、ESLint、Prettier、62 页生产构建和 Standalone 资源检查通过。Docs 的依赖审计、类型、索引和 36 页生产构建通过。Playwright 在桌面、390px、430px 共 `74` 项通过、`16` 项按项目互斥范围跳过；生产 CSP 的响应 nonce 与主题/Next.js 脚本一致、请求间不同且不含 `unsafe-inline`，浏览器控制台无 CSP 错误。支付配置、对象存储配置和业务备份恢复已补成功/失败管理员审计。当前环境没有 Docker CLI、隔离 PostgreSQL E2E URL、真实视频/支付/SMTP/S3/监控凭据，因此容器、真实支付、真实上游、多实例 Worker、邮件、对象存储和告警恢复仍需在发布环境验收。
 
 ## 统一创作 Agent 输入复测
 

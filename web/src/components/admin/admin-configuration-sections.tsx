@@ -262,12 +262,22 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                 <Input value={settings.site.footerCopyright} maxLength={120} placeholder="© 2026 VOZEB PRO. All rights reserved." onChange={(event) => updateSiteSetting("footerCopyright", event.target.value)} />
                             </LabeledControl>
                             <div className="grid gap-4 md:grid-cols-2">
-                                <LabeledControl label="使用条款链接">
-                                    <Input value={settings.site.termsUrl} maxLength={2000} placeholder="/terms 或 https://..." onChange={(event) => updateSiteSetting("termsUrl", event.target.value)} />
-                                </LabeledControl>
-                                <LabeledControl label="隐私政策链接">
-                                    <Input value={settings.site.privacyUrl} maxLength={2000} placeholder="/privacy 或 https://..." onChange={(event) => updateSiteSetting("privacyUrl", event.target.value)} />
-                                </LabeledControl>
+                                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_96px] gap-3">
+                                    <LabeledControl label="使用条款链接">
+                                        <Input value={settings.site.termsUrl} maxLength={2000} placeholder="/terms 或 https://..." onChange={(event) => updateSiteSetting("termsUrl", event.target.value)} />
+                                    </LabeledControl>
+                                    <LabeledControl label="版本">
+                                        <Input value={settings.site.termsVersion} maxLength={80} placeholder="1.0" onChange={(event) => updateSiteSetting("termsVersion", event.target.value)} />
+                                    </LabeledControl>
+                                </div>
+                                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_96px] gap-3">
+                                    <LabeledControl label="隐私政策链接">
+                                        <Input value={settings.site.privacyUrl} maxLength={2000} placeholder="/privacy 或 https://..." onChange={(event) => updateSiteSetting("privacyUrl", event.target.value)} />
+                                    </LabeledControl>
+                                    <LabeledControl label="版本">
+                                        <Input value={settings.site.privacyVersion} maxLength={80} placeholder="1.0" onChange={(event) => updateSiteSetting("privacyVersion", event.target.value)} />
+                                    </LabeledControl>
+                                </div>
                             </div>
                             <div className="grid gap-3">
                                 {siteSocialItems.map((item) => {

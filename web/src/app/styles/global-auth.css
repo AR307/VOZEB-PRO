@@ -214,6 +214,21 @@
         color: #0f172a !important;
     }
 
+    .auth-submit-button.ant-btn:disabled,
+    .auth-submit-button.ant-btn:disabled:hover {
+        cursor: not-allowed;
+        border-color: #d6d3d1 !important;
+        background: #e7e5e4 !important;
+        color: #57534e !important;
+    }
+
+    .dark .auth-submit-button.ant-btn:disabled,
+    .dark .auth-submit-button.ant-btn:disabled:hover {
+        border-color: #44403c !important;
+        background: #292524 !important;
+        color: #d6d3d1 !important;
+    }
+
     .auth-form-header {
         padding-bottom: 8px;
     }

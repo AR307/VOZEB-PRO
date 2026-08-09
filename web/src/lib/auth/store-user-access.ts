@@ -7,6 +7,7 @@ import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEna
 import { assertInstallToken, InstallTokenError } from "@/lib/server/install-token";
 import { adjustPermanentPointsInAuthDb, adjustPermanentPointsInPostgresTransaction, walletClock } from "@/lib/server/points-wallet-service";
 import { bindReferralRelationshipAfterRegistration, normalizeReferralCode } from "@/lib/server/referral-service";
+import { createRegistrationPolicyConsent } from "@/lib/registration-consent";
 
 import { hashPassword, verifyPasswordWithDummy } from "./password";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
@@ -30,7 +31,7 @@ import { mutateAuthDb, readAuthDb, readPostgresAuthSettings } from "./store-repo
 import { publicUserFromAuthenticatedRecord, toPublicUser } from "./store-user-projection";
 import { type AuthDatabase, type EmailCodePurpose, type StoredUser, type UserRole, type UserStatus } from "./store-types";
 
-export async function createUser(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string; referralCode?: string; referralSource?: string; referralClientIp?: string }) {
+export async function createUser(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string; policyAccepted: boolean; referralCode?: string; referralSource?: string; referralClientIp?: string }) {
     const referralCode = normalizeReferralCode(input.referralCode);
     if (referralCode && !isPostgresDatabaseEnabled()) throw new AuthInputError("邀请功能需要启用 PostgreSQL", 501);
     const username = normalizeUsername(input.username);
@@ -49,6 +50,7 @@ export async function createUser(input: { username: string; email?: string; emai
             const settings = await readPostgresAuthSettings(client);
             if ((await repos.users.count()) === 0) throw new AuthInputError("请先通过安装向导创建管理员", 503);
             if (!settings.registrationEnabled) throw new AuthInputError("注册已关闭");
+            if (!input.policyAccepted) throw new AuthInputError("请先阅读并同意服务条款和隐私政策");
             if (settings.emailRegistrationEnabled && !email) throw new AuthInputError("请填写邮箱地址");
             assertNoIdentityConflict(await repos.users.findIdentityConflict({ username, email: email || undefined }), username, email);
             if (settings.emailRegistrationEnabled) {
@@ -68,6 +70,15 @@ export async function createUser(input: { username: string; email?: string; emai
                 planId: resolveDefaultPlan(settings.entitlements).id,
                 pointsBalance: 0,
                 passwordHash: await hashPassword(input.password),
+                registrationConsent: createRegistrationPolicyConsent(
+                    {
+                        termsVersion: settings.site.termsVersion,
+                        termsUrl: settings.site.termsUrl,
+                        privacyVersion: settings.site.privacyVersion,
+                        privacyUrl: settings.site.privacyUrl,
+                    },
+                    now,
+                ),
                 createdAt: now,
                 updatedAt: now,
             });
@@ -96,6 +107,7 @@ export async function createUser(input: { username: string; email?: string; emai
     return mutateAuthDb(async (db) => {
         if (db.users.length === 0) throw new AuthInputError("请先通过安装向导创建管理员", 503);
         if (!db.settings.registrationEnabled) throw new AuthInputError("注册已关闭");
+        if (!input.policyAccepted) throw new AuthInputError("请先阅读并同意服务条款和隐私政策");
         if (db.settings.emailRegistrationEnabled && !email) throw new AuthInputError("请填写邮箱地址");
         if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) throw new AuthInputError("用户名已存在");
         if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
@@ -114,6 +126,15 @@ export async function createUser(input: { username: string; email?: string; emai
             planId: resolveDefaultPlan(db.settings.entitlements).id,
             pointsBalance: 0,
             passwordHash: await hashPassword(input.password),
+            registrationConsent: createRegistrationPolicyConsent(
+                {
+                    termsVersion: db.settings.site.termsVersion,
+                    termsUrl: db.settings.site.termsUrl,
+                    privacyVersion: db.settings.site.privacyVersion,
+                    privacyUrl: db.settings.site.privacyUrl,
+                },
+                now,
+            ),
             createdAt: now,
             updatedAt: now,
         };

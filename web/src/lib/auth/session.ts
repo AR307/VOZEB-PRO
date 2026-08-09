@@ -106,7 +106,9 @@ export function serializePublicSettings(settings: AuthSettings) {
             seoDescription: settings.site.seoDescription,
             footerCopyright: settings.site.footerCopyright,
             termsUrl: settings.site.termsUrl,
+            termsVersion: settings.site.termsVersion,
             privacyUrl: settings.site.privacyUrl,
+            privacyVersion: settings.site.privacyVersion,
             homeShowcaseMode: settings.site.homeShowcaseMode,
             homeShowcaseItems: settings.site.homeShowcaseItems.map((item) => ({
                 id: item.id,

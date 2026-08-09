@@ -1,3 +1,5 @@
+import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
@@ -50,6 +52,7 @@ export type UserRecord = {
     planId: string;
     pointsBalance: number;
     passwordHash: string;
+    registrationConsent?: RegistrationPolicyConsent;
     lastLoginAt?: string;
     createdAt: string;
     updatedAt: string;

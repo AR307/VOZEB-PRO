@@ -1,6 +1,7 @@
 export type UserRole = "admin" | "user";
 export type UserStatus = "active" | "disabled";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
+import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
 import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -276,7 +277,9 @@ export type SiteSettings = {
     seoKeywords: string;
     footerCopyright: string;
     termsUrl: string;
+    termsVersion: string;
     privacyUrl: string;
+    privacyVersion: string;
     homeShowcaseMode: SiteShowcaseMode;
     homeShowcaseItems: SiteShowcaseItem[];
     friendLinks: SiteFriendLink[];
@@ -371,6 +374,7 @@ export type PublicUserSummary = {
 export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "hasActivePlan" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt"> & {
     avatarStorageKey?: string;
     passwordHash: string;
+    registrationConsent?: RegistrationPolicyConsent;
 };
 
 export type StoredSession = {

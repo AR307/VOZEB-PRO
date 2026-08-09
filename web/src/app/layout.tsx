@@ -71,7 +71,7 @@ export default async function RootLayout({
     return (
         <html lang="zh-CN" suppressHydrationWarning className="font-sans">
             <head>
-                <script id="theme-bootstrap" nonce={nonce} dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+                <script id="theme-bootstrap" nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
                 <link rel="icon" href="/favicon.ico" />
                 <link rel="shortcut icon" href="/favicon.ico" />
                 <link rel="apple-touch-icon" href="/favicon.ico" />
@@ -82,7 +82,7 @@ export default async function RootLayout({
                     fontFamily: '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif',
                 }}
             >
-                <script id="website-json-ld" nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(websiteStructuredData) }} />
+                <script id="website-json-ld" nonce={nonce} suppressHydrationWarning type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(websiteStructuredData) }} />
                 <AntdRegistry>
                     <AppProviders>{children}</AppProviders>
                 </AntdRegistry>

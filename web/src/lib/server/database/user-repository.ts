@@ -307,8 +307,8 @@ export class UsersRepository {
     async create(user: UserRecord) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             RETURNING *
             `,
             [
@@ -324,6 +324,11 @@ export class UsersRepository {
                 user.planId,
                 user.pointsBalance,
                 user.passwordHash,
+                user.registrationConsent?.termsVersion || null,
+                user.registrationConsent?.termsUrl || null,
+                user.registrationConsent?.privacyVersion || null,
+                user.registrationConsent?.privacyUrl || null,
+                user.registrationConsent?.acceptedAt || null,
                 user.lastLoginAt || null,
                 user.createdAt,
                 user.updatedAt,
@@ -335,11 +340,31 @@ export class UsersRepository {
     async createWithNextAccountId(user: Omit<UserRecord, "accountId">) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
-            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING *
             `,
-            [user.id, user.username, user.email || null, user.displayName, user.bio, user.avatarStorageKey || null, user.role, user.status, user.planId, user.pointsBalance, user.passwordHash, user.lastLoginAt || null, user.createdAt, user.updatedAt],
+            [
+                user.id,
+                user.username,
+                user.email || null,
+                user.displayName,
+                user.bio,
+                user.avatarStorageKey || null,
+                user.role,
+                user.status,
+                user.planId,
+                user.pointsBalance,
+                user.passwordHash,
+                user.registrationConsent?.termsVersion || null,
+                user.registrationConsent?.termsUrl || null,
+                user.registrationConsent?.privacyVersion || null,
+                user.registrationConsent?.privacyUrl || null,
+                user.registrationConsent?.acceptedAt || null,
+                user.lastLoginAt || null,
+                user.createdAt,
+                user.updatedAt,
+            ],
         );
         return mapUser(result.rows[0]);
     }

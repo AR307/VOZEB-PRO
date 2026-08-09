@@ -126,17 +126,32 @@ CREATE TABLE IF NOT EXISTS users (
     plan_id text NOT NULL DEFAULT 'free' REFERENCES entitlement_plans(id),
     points_balance numeric(18, 2) NOT NULL DEFAULT 0,
     password_hash text NOT NULL,
+    terms_version text,
+    terms_url text,
+    privacy_version text,
+    privacy_url text,
+    policy_accepted_at timestamptz,
     last_login_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT users_role CHECK (role IN ('admin', 'user')),
     CONSTRAINT users_status CHECK (status IN ('active', 'disabled')),
+    CONSTRAINT users_registration_consent_complete CHECK (
+        (terms_version IS NULL AND terms_url IS NULL AND privacy_version IS NULL AND privacy_url IS NULL AND policy_accepted_at IS NULL)
+        OR
+        (terms_version IS NOT NULL AND terms_url IS NOT NULL AND privacy_version IS NOT NULL AND privacy_url IS NOT NULL AND policy_accepted_at IS NOT NULL)
+    ),
     CONSTRAINT users_bio_length CHECK (char_length(bio) <= 160)
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_storage_key text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS account_id bigint;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_url text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_version text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_url text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS policy_accepted_at timestamptz;
 
 WITH sequence_state AS (
     SELECT CASE WHEN is_called THEN last_value ELSE 0 END AS reserved_max FROM user_account_id_seq
@@ -165,6 +180,13 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_bio_length') THEN
         ALTER TABLE users ADD CONSTRAINT users_bio_length CHECK (char_length(bio) <= 160);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_registration_consent_complete') THEN
+        ALTER TABLE users ADD CONSTRAINT users_registration_consent_complete CHECK (
+            (terms_version IS NULL AND terms_url IS NULL AND privacy_version IS NULL AND privacy_url IS NULL AND policy_accepted_at IS NULL)
+            OR
+            (terms_version IS NOT NULL AND terms_url IS NOT NULL AND privacy_version IS NOT NULL AND privacy_url IS NOT NULL AND policy_accepted_at IS NOT NULL)
+        );
     END IF;
 END;
 $$;

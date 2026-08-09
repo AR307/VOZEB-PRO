@@ -12,7 +12,9 @@ type PublicSiteSettings = {
     seoDescription?: string;
     footerCopyright?: string;
     termsUrl?: string;
+    termsVersion?: string;
     privacyUrl?: string;
+    privacyVersion?: string;
     homeShowcaseMode?: "random" | "custom";
     homeShowcaseItems?: Array<{ id: string; title: string; coverUrl: string; prompt: string; tags: string[]; category: string }>;
     friendLinks?: Array<{ id: string; label: string; url: string; enabled: boolean }>;

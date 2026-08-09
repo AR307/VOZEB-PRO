@@ -29,7 +29,9 @@ describe("site settings", () => {
         const settings = normalizeSiteSettings({
             footerCopyright: "© Monster Studio. All rights reserved.",
             termsUrl: "/custom-terms",
+            termsVersion: "2026.2",
             privacyUrl: "https://example.com/privacy",
+            privacyVersion: "3.1",
             socials: {
                 email: { enabled: true, label: "QQ", url: "mailto:owner@example.com" },
                 telegram: { enabled: true, label: "Telegram 社群", url: "https://t.me/example" },
@@ -41,7 +43,9 @@ describe("site settings", () => {
         expect(settings).toMatchObject({
             footerCopyright: "© Monster Studio. All rights reserved.",
             termsUrl: "/custom-terms",
+            termsVersion: "2026.2",
             privacyUrl: "https://example.com/privacy",
+            privacyVersion: "3.1",
             socials: {
                 email: { enabled: true, label: "QQ", url: "mailto:owner@example.com" },
                 telegram: { enabled: true, label: "Telegram 社群", url: "https://t.me/example" },

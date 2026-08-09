@@ -76,6 +76,7 @@ import {
 
 export { normalizeApiPath, normalizeSystemChannelAdvancedConfig, textOrEmpty } from "./store-normalizers-channel";
 import { currentQuotaDate, hashToken, normalizeEmail, normalizeUserBio } from "./store-auth-utils";
+import { normalizeRegistrationPolicyConsent } from "@/lib/registration-consent";
 
 export { currentQuotaDate, hashToken, normalizeDisplayName, normalizeEmail, normalizeUserBio, normalizeUsername, parseSessionCookie, randomNumericCode, validateEmail, validatePassword, validateUsername } from "./store-auth-utils";
 
@@ -95,6 +96,7 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
                   ...user,
                   accountId: formatAccountId(accountId),
                   bio: normalizeUserBio(legacyUser.bio),
+                  registrationConsent: normalizeRegistrationPolicyConsent(legacyUser.registrationConsent),
                   planId: resolvePlanById(settings.entitlements, user.planId).id,
                   pointsBalance: normalizePoints(legacyUser.pointsBalance, legacyQuotaToPoints(legacyUser.quota, resolveInitialUserPoints({ settings } as AuthDatabase, resolvePlanById(settings.entitlements, user.planId)))),
               } as StoredUser;
@@ -431,7 +433,9 @@ export function normalizeSiteSettings(settings: Partial<SiteSettings> | undefine
         seoKeywords: normalizeText(settings?.seoKeywords, DEFAULT_SITE_SETTINGS.seoKeywords, 240),
         footerCopyright: normalizeText(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, 120),
         termsUrl: normalizeLinkUrl(settings?.termsUrl, DEFAULT_SITE_SETTINGS.termsUrl),
+        termsVersion: normalizeText(settings?.termsVersion, DEFAULT_SITE_SETTINGS.termsVersion, 80),
         privacyUrl: normalizeLinkUrl(settings?.privacyUrl, DEFAULT_SITE_SETTINGS.privacyUrl),
+        privacyVersion: normalizeText(settings?.privacyVersion, DEFAULT_SITE_SETTINGS.privacyVersion, 80),
         homeShowcaseMode: settings?.homeShowcaseMode === "custom" ? "custom" : "random",
         homeShowcaseItems: normalizeSiteShowcaseItems(settings?.homeShowcaseItems),
         friendLinks: normalizeSiteFriendLinks(settings?.friendLinks),

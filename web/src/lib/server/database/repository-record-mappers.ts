@@ -1,4 +1,5 @@
 import { formatAccountId } from "@/lib/account-id";
+import { normalizeRegistrationPolicyConsent } from "@/lib/registration-consent";
 
 import type {
     AnnouncementRecord,
@@ -86,6 +87,13 @@ export function mapUser(row: Record<string, unknown>): UserRecord {
         planId: stringValue(row.plan_id),
         pointsBalance: numberValue(row.points_balance),
         passwordHash: stringValue(row.password_hash),
+        registrationConsent: normalizeRegistrationPolicyConsent({
+            termsVersion: row.terms_version,
+            termsUrl: row.terms_url,
+            privacyVersion: row.privacy_version,
+            privacyUrl: row.privacy_url,
+            acceptedAt: row.policy_accepted_at,
+        }),
         lastLoginAt: optionalIso(row.last_login_at),
         createdAt: isoValue(row.created_at),
         updatedAt: isoValue(row.updated_at),
