@@ -90,6 +90,7 @@ import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
 import type { Prompt } from "@/services/api/prompts";
+import { useAdminSensitiveAction } from "@/hooks/use-admin-sensitive-action";
 
 export type AdminDashboardProps = {
     initialUsers: PublicUser[];
@@ -153,11 +154,12 @@ import { useAdminDashboardTableModel } from "./use-admin-dashboard-table-model";
 
 export function useAdminDashboardController(props: AdminDashboardProps) {
     const state = useAdminDashboardState(props);
-    const data = useAdminDashboardDataActions({ state });
+    const { requestSensitiveAction, sensitiveActionModal } = useAdminSensitiveAction();
+    const data = useAdminDashboardDataActions({ state, requestSensitiveAction });
     const settings = useAdminDashboardSettingsActions({ state, data });
     useAdminDashboardEffects({ state, data, settingsActions: settings });
     const tables = useAdminDashboardTableModel({ state, data, settingsActions: settings });
-    return { ...state, ...data, ...settings, ...tables };
+    return { ...state, ...data, ...settings, ...tables, sensitiveActionModal };
 }
 
 export type AdminDashboardController = ReturnType<typeof useAdminDashboardController>;

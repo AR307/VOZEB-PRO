@@ -2,7 +2,7 @@ import * as OTPAuth from "otpauth";
 
 import { verifyPassword } from "@/lib/auth/password";
 import { AuthInputError } from "@/lib/auth/store-foundation";
-import { mutateAuthDb } from "@/lib/auth/store-repository";
+import { mutateAuthDb, readAuthDb } from "@/lib/auth/store-repository";
 import { getAuthSettings } from "@/lib/auth/store-settings-actions";
 import type { PublicUser, StoredUser } from "@/lib/auth/store-types";
 import { publicUserFromAuthenticatedRecord, toPublicUser } from "@/lib/auth/store-user-projection";
@@ -37,6 +37,26 @@ export function verifyAdminMfaForLogin(user: AdminMfaUser, token: unknown) {
     const value = normalizeToken(token);
     if (!value) throw new AdminMfaChallengeError();
     if (!validateToken(user.mfaSecretCiphertext, value)) throw new AuthInputError("动态验证码不正确", 401);
+}
+
+export async function verifyAdminSensitiveAction(userId: string, input: { currentPassword?: unknown; totpCode?: unknown }) {
+    const currentPassword = typeof input.currentPassword === "string" ? input.currentPassword : "";
+    if (!currentPassword) throw new AuthInputError("请输入当前密码");
+
+    let user: AdminMfaUser | undefined | null;
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        user = await createPostgresRepositories().users.getById(userId);
+    } else {
+        user = (await readAuthDb()).users.find((item) => item.id === userId);
+    }
+
+    assertActiveAdmin(user);
+    await assertPassword(user, currentPassword);
+    if (!user.mfaEnabledAt) return;
+    if (!user.mfaSecretCiphertext) throw new Error("管理员 MFA 状态不完整，请通过服务器恢复命令重置 MFA");
+    const token = requiredToken(input.totpCode);
+    if (!validateToken(user.mfaSecretCiphertext, token)) throw new AuthInputError("动态验证码不正确");
 }
 
 export async function beginAdminMfaSetup(userId: string, currentPassword: string) {

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({ db: undefined as AuthDatabase | undefined }));
 
 vi.mock("@/lib/auth/store-repository", () => ({
     mutateAuthDb: vi.fn(async (handler: (db: AuthDatabase) => unknown) => handler(mocks.db!)),
+    readAuthDb: vi.fn(async () => mocks.db!),
 }));
 vi.mock("@/lib/auth/store-settings-actions", () => ({ getAuthSettings: vi.fn(async () => mocks.db!.settings) }));
 vi.mock("@/lib/server/database", () => ({
@@ -18,7 +19,7 @@ vi.mock("@/lib/server/database", () => ({
 
 import { hashPassword } from "@/lib/auth/password";
 import { emptyDb } from "@/lib/auth/store-normalizers";
-import { AdminMfaChallengeError, beginAdminMfaSetup, disableAdminMfa, enableAdminMfa, verifyAdminMfaForLogin } from "./admin-mfa-service";
+import { AdminMfaChallengeError, beginAdminMfaSetup, disableAdminMfa, enableAdminMfa, verifyAdminMfaForLogin, verifyAdminSensitiveAction } from "./admin-mfa-service";
 
 describe("administrator MFA service", () => {
     beforeEach(async () => {
@@ -78,5 +79,18 @@ describe("administrator MFA service", () => {
 
     it("does not require MFA for regular users", () => {
         expect(() => verifyAdminMfaForLogin({ ...mocks.db!.users[0], role: "user", mfaEnabledAt: new Date().toISOString(), mfaSecretCiphertext: "invalid" }, undefined)).not.toThrow();
+    });
+
+    it("verifies the current password and requires TOTP only when MFA is enabled", async () => {
+        await expect(verifyAdminSensitiveAction("admin-one", { currentPassword: "wrong" })).rejects.toThrow("当前密码不正确");
+        await expect(verifyAdminSensitiveAction("admin-one", { currentPassword: "admin-password" })).resolves.toBeUndefined();
+
+        const setup = await beginAdminMfaSetup("admin-one", "admin-password");
+        const authenticator = OTPAuth.URI.parse(setup.uri) as OTPAuth.TOTP;
+        await enableAdminMfa("admin-one", authenticator.generate(), "current-session");
+
+        await expect(verifyAdminSensitiveAction("admin-one", { currentPassword: "admin-password" })).rejects.toThrow("请输入动态验证码");
+        await expect(verifyAdminSensitiveAction("admin-one", { currentPassword: "admin-password", totpCode: "invalid" })).rejects.toThrow("动态验证码不正确");
+        await expect(verifyAdminSensitiveAction("admin-one", { currentPassword: "admin-password", totpCode: authenticator.generate() })).resolves.toBeUndefined();
     });
 });

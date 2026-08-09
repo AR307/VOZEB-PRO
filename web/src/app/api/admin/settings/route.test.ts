@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     setAuthSettings: vi.fn(),
     safeRecordAuditLog: vi.fn(async () => undefined),
+    verifyAdminSensitiveAction: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin", role: "admin" })) }));
@@ -12,6 +13,7 @@ vi.mock("@/lib/auth/store", async (importOriginal) => {
     return { ...actual, getAuthSettings: mocks.getAuthSettings, setAuthSettings: mocks.setAuthSettings };
 });
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin" })), safeRecordAuditLog: mocks.safeRecordAuditLog }));
+vi.mock("@/lib/server/admin-mfa-service", () => ({ verifyAdminSensitiveAction: mocks.verifyAdminSensitiveAction }));
 
 import { PATCH } from "./route";
 
@@ -26,6 +28,7 @@ describe("admin settings model routing", () => {
         vi.clearAllMocks();
         mocks.getAuthSettings.mockResolvedValue(savedSettings);
         mocks.setAuthSettings.mockImplementation(async (patch) => ({ ...savedSettings, ...patch }));
+        mocks.verifyAdminSensitiveAction.mockResolvedValue(undefined);
     });
 
     it("saves a consistent channel, logical model, and default snapshot", async () => {
@@ -37,6 +40,7 @@ describe("admin settings model routing", () => {
             }),
         );
         expect(response.status).toBe(200);
+        expect(mocks.verifyAdminSensitiveAction).toHaveBeenCalledWith("admin", expect.objectContaining({ currentPassword: "admin-password", totpCode: "123456" }));
         expect(mocks.setAuthSettings).toHaveBeenCalledWith(
             expect.objectContaining({
                 systemChannels: [expect.objectContaining({ id: "one", apiKey: "saved-secret", webhookSecret: savedSettings.systemChannels[0].webhookSecret })],
@@ -92,5 +96,5 @@ describe("admin settings model routing", () => {
 });
 
 function request(body: unknown) {
-    return new Request("http://localhost/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    return new Request("http://localhost/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...(body as object), currentPassword: "admin-password", totpCode: "123456" }) });
 }

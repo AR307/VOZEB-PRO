@@ -9,6 +9,7 @@ import type { AdminBillingSummary } from "@/lib/admin-billing-types";
 import type { AdminGenerationOverviewSummary } from "@/lib/admin-generation-overview";
 import type { AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, PublicUserSummary, UserRole, UserStatus } from "@/lib/auth/store";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
+import type { AdminSensitiveActionProof, AdminSensitiveActionRequest } from "@/lib/admin-sensitive-action";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { Prompt } from "@/services/api/prompts";
@@ -53,7 +54,7 @@ export const ANNOUNCEMENT_PAGE_SIZE = 12;
 
 import type { AdminDashboardState } from "./use-admin-dashboard-state";
 
-export function useAdminDashboardDataActions({ state }: { state: AdminDashboardState }) {
+export function useAdminDashboardDataActions({ state, requestSensitiveAction }: { state: AdminDashboardState; requestSensitiveAction: AdminSensitiveActionRequest }) {
     const {
         currentUser,
         message,
@@ -185,12 +186,18 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     };
 
     const saveSettings = async (patch: Partial<AuthSettings>, successText = "设置已保存") => {
+        const proof = await requestSensitiveAction({
+            title: "保存系统设置",
+            description: "将更新后台系统配置；其中可能包含渠道、邮件、模型、权益或站点运行参数。",
+            confirmText: "验证并保存",
+        });
+        if (!proof) return false;
         setSettingsLoading(true);
         try {
             const response = await fetch("/api/admin/settings", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(patch),
+                body: JSON.stringify({ ...patch, ...proof }),
             });
             const payload = (await response.json()) as { settings?: AuthSettings; error?: string };
             if (!response.ok || !payload.settings) throw new Error(payload.error || "更新设置失败");
@@ -260,12 +267,18 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     };
 
     const updateUser = async (userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "status" | "pointsBalance">> & { password?: string }) => {
+        const proof = await requestSensitiveAction({
+            title: "保存用户变更",
+            description: "将修改用户的账号资料、角色、状态、密码或积分余额。",
+            confirmText: "验证并保存",
+        });
+        if (!proof) return null;
         setUpdatingUserId(userId);
         try {
             const response = await fetch(`/api/admin/users/${userId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(patch),
+                body: JSON.stringify({ ...patch, ...proof }),
             });
             const payload = (await response.json()) as { user?: PublicUser; error?: string };
             if (!response.ok || !payload.user) throw new Error(payload.error || "更新用户失败");
@@ -281,6 +294,12 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     };
 
     const createUser = async (value: UserEditorValue) => {
+        const proof = await requestSensitiveAction({
+            title: "创建用户",
+            description: "将创建新的登录账号，并按当前表单写入角色、状态和初始积分。",
+            confirmText: "验证并创建",
+        });
+        if (!proof) return null;
         setUpdatingUserId("__new__");
         try {
             const response = await fetch("/api/admin/users", {
@@ -294,6 +313,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
                     role: value.role,
                     status: value.status,
                     pointsBalance: toNumberOrZero(value.pointsBalance),
+                    ...proof,
                 }),
             });
             const payload = (await response.json()) as { user?: PublicUser; error?: string };
@@ -311,9 +331,20 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     };
 
     const deleteUser = async (userId: string) => {
+        const proof = await requestSensitiveAction({
+            title: "删除用户",
+            description: "将删除该用户及其聚合业务记录；仍被其他业务引用的媒体会按引用保护规则保留。",
+            confirmText: "验证并删除",
+            danger: true,
+        });
+        if (!proof) return;
         setUpdatingUserId(userId);
         try {
-            const response = await fetch(`/api/admin/users/${userId}`, { method: "DELETE" });
+            const response = await fetch(`/api/admin/users/${userId}`, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(proof),
+            });
             const payload = (await response.json()) as { error?: string };
             if (!response.ok) throw new Error(payload.error || "删除用户失败");
             setSelectedUserIds((items) => items.filter((id) => id !== userId));
@@ -333,12 +364,24 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
             return;
         }
 
+        const proof = await requestSensitiveAction({
+            title: "批量删除用户",
+            description: `将逐个删除已选择的 ${deletable.length} 个用户，每个删除请求都会在服务端重新验证当前身份。`,
+            confirmText: "验证并批量删除",
+            danger: true,
+        });
+        if (!proof) return;
+
         setBulkDeletingUsers(true);
         const deletedIds: string[] = [];
         const failedMessages: string[] = [];
         try {
             for (const user of deletable) {
-                const response = await fetch(`/api/admin/users/${user.id}`, { method: "DELETE" });
+                const response = await fetch(`/api/admin/users/${user.id}`, {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(proof satisfies AdminSensitiveActionProof),
+                });
                 const payload = (await response.json().catch(() => null)) as { error?: string } | null;
                 if (response.ok) {
                     deletedIds.push(user.id);

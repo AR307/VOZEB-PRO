@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
+import { isAuthInputError } from "@/lib/auth/store";
+import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { isBillingInputError, refundBillingOrder } from "@/lib/server/billing-service";
 
@@ -19,8 +21,9 @@ export async function POST(request: Request, context: RouteContext) {
 
     const { id } = await context.params;
     try {
-        const body = await readJsonBody<{ reason?: unknown; rawPayload?: unknown }>(request);
-        const result = await refundBillingOrder(id, { ...body, operatorUserId: currentUser.id });
+        const body = await readJsonBody<{ reason?: unknown; currentPassword?: unknown; totpCode?: unknown }>(request);
+        await verifyAdminSensitiveAction(currentUser.id, body);
+        const result = await refundBillingOrder(id, { reason: body.reason, operatorUserId: currentUser.id });
         const providerRefund = "providerRefund" in result ? result.providerRefund : undefined;
         await safeRecordAuditLog({
             action: "admin.billing.order.refund",
@@ -51,7 +54,7 @@ export async function POST(request: Request, context: RouteContext) {
             target: { type: "billing_order", id },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+        if (isAuthInputError(error) || isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         console.error("Admin refund billing order failed", error);
         return NextResponse.json({ error: "退款标记失败" }, { status: 500 });
     }

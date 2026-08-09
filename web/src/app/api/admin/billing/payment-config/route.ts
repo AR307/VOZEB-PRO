@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
+import { isAuthInputError } from "@/lib/auth/store";
 import type { PaymentProviderId } from "@/lib/payment-config-types";
 import { PAYMENT_PROVIDER_DEFINITIONS } from "@/lib/payment-config-types";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
+import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { savePaymentProviderConfig } from "@/lib/server/payment-config-store";
 import { getPaymentConfigSummary } from "@/lib/server/payment-config-status";
 import { BillingInputError } from "@/lib/server/billing-errors";
@@ -28,9 +30,10 @@ export async function PATCH(request: Request) {
 
     let providerId: PaymentProviderId | undefined;
     try {
-        const body = await readJsonBody<{ providerId?: unknown; enabled?: unknown; values?: unknown }>(request);
+        const body = await readJsonBody<{ providerId?: unknown; enabled?: unknown; values?: unknown; currentPassword?: unknown; totpCode?: unknown }>(request);
         providerId = normalizeProviderId(body.providerId);
         if (!providerId) return NextResponse.json({ error: "支付渠道无效" }, { status: 400 });
+        await verifyAdminSensitiveAction(currentUser.id, body);
         await savePaymentProviderConfig({
             providerId,
             enabled: body.enabled === true,
@@ -53,7 +56,7 @@ export async function PATCH(request: Request) {
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
         console.error("Payment config save failed", error);
-        return NextResponse.json({ error: error instanceof Error ? error.message : "保存支付配置失败" }, { status: error instanceof BillingInputError ? error.status : 500 });
+        return NextResponse.json({ error: error instanceof Error ? error.message : "保存支付配置失败" }, { status: isAuthInputError(error) || error instanceof BillingInputError ? error.status : 500 });
     }
 }
 

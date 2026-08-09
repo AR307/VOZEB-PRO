@@ -4,6 +4,7 @@ import { createUserByAdmin, isAuthInputError, listPublicUsersPage, type UserRole
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser, serializeCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
+import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 
 export const runtime = "nodejs";
 
@@ -30,9 +31,10 @@ export async function POST(request: Request) {
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
     if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
-    let body: { username?: unknown; displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; status?: unknown; pointsBalance?: unknown; planId?: unknown } = {};
+    let body: { username?: unknown; displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; status?: unknown; pointsBalance?: unknown; planId?: unknown; currentPassword?: unknown; totpCode?: unknown } = {};
     try {
-        body = await readJsonBody<{ username?: unknown; displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; status?: unknown; pointsBalance?: unknown; planId?: unknown }>(request);
+        body = await readJsonBody<typeof body>(request);
+        await verifyAdminSensitiveAction(currentUser.id, body);
         const role = body.role === "admin" ? "admin" : "user";
         const status = body.status === "disabled" ? "disabled" : "active";
         const user = await createUserByAdmin({

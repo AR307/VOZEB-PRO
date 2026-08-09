@@ -85,7 +85,7 @@ export function AuthForm({
                     installToken: firstUser ? installToken.trim() : undefined,
                 }),
             });
-            const payload = (await response.json()) as { user?: LocalUser; error?: string; mfaRequired?: boolean };
+            const payload = (await response.json()) as { user?: LocalUser; error?: string; mfaRequired?: boolean; securityNotice?: { networkChanged: boolean; deviceChanged: boolean } };
             if (!isRegister && payload.mfaRequired) {
                 setMfaRequired(true);
                 message.info("请输入身份验证器动态码");
@@ -93,7 +93,12 @@ export function AuthForm({
             }
             if (!response.ok || !payload.user) throw new Error(payload.error || (isRegister ? "注册失败" : "登录失败"));
             setUser(payload.user);
-            message.success(isRegister ? "注册成功" : "登录成功");
+            if (!isRegister && payload.securityNotice) {
+                const changed = [payload.securityNotice.deviceChanged ? "设备" : "", payload.securityNotice.networkChanged ? "网络" : ""].filter(Boolean).join("和");
+                message.warning(`检测到登录${changed}发生变化，请在账户与安全中核对登录记录`);
+            } else {
+                message.success(isRegister ? "注册成功" : "登录成功");
+            }
             router.replace(nextPath);
             router.refresh();
         } catch (error) {

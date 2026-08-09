@@ -5,6 +5,7 @@ import { modelRoutingValidationErrors, normalizeDefaultModelsConfig, synchronize
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { mergeSystemChannelSecrets, serializeAdminSettings, systemChannelWebhookSecretValidationError } from "@/lib/server/admin-channel-config";
+import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { invalidatePublicSiteSettings } from "@/lib/server/site-metadata";
 import { channelProtocolValidationErrors } from "@/lib/channel-protocol-registry";
@@ -25,7 +26,9 @@ export async function PATCH(request: Request) {
     if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     try {
-        const [body, currentSettings] = await Promise.all([readJsonBody<Partial<AuthSettings>>(request), getAuthSettings()]);
+        const body = await readJsonBody<Partial<AuthSettings> & { currentPassword?: unknown; totpCode?: unknown }>(request);
+        await verifyAdminSensitiveAction(currentUser.id, body);
+        const currentSettings = await getAuthSettings();
         const patch: Partial<AuthSettings> = {};
         if (body.site) patch.site = body.site;
         if (typeof body.registrationEnabled === "boolean") patch.registrationEnabled = body.registrationEnabled;

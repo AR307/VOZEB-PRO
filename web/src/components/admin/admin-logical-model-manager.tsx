@@ -170,7 +170,8 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
 
             <Drawer
                 title="模型路由设置"
-                size="min(760px, 100vw)"
+                size={760}
+                styles={{ wrapper: { maxWidth: "100vw" } }}
                 open={drawerOpen}
                 destroyOnHidden
                 onClose={() => setDrawerOpen(false)}

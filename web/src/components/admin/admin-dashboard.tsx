@@ -188,6 +188,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
         setupSummary,
         headerActions,
         message,
+        sensitiveActionModal,
         promptForm,
         userForm,
         logoInputRef,
@@ -619,6 +620,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
             <Modal title="生成日志详情" open={Boolean(viewingGenerationLog)} footer={null} onCancel={() => setViewingGenerationLog(null)} width={860}>
                 {viewingGenerationLog ? <GenerationLogDetail log={viewingGenerationLog} /> : null}
             </Modal>
+            {sensitiveActionModal}
             <Modal title="CDK 明细" open={Boolean(viewingCdkCode)} footer={null} onCancel={() => setViewingCdkCode(null)} width={760}>
                 {viewingCdkCode ? (
                     <div className="space-y-3">

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     setSessionCookie: vi.fn(),
     safeRecordAuditLog: vi.fn(),
     checkAuthRateLimit: vi.fn(),
+    safeGetLoginSecurityNotice: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({
@@ -14,7 +15,11 @@ vi.mock("@/lib/auth/store", () => ({
     isAuthInputError: (error: unknown) => Boolean(error && typeof error === "object" && "status" in error),
 }));
 vi.mock("@/lib/auth/session", () => ({ serializeCurrentUser: vi.fn((user) => user), setSessionCookie: mocks.setSessionCookie }));
-vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn((_request, user) => user), safeRecordAuditLog: mocks.safeRecordAuditLog }));
+vi.mock("@/lib/server/audit-log-store", () => ({
+    auditActorFromRequest: vi.fn((_request, user) => ({ ...user, ip: "203.0.113.11", userAgent: "Browser B" })),
+    safeGetLoginSecurityNotice: mocks.safeGetLoginSecurityNotice,
+    safeRecordAuditLog: mocks.safeRecordAuditLog,
+}));
 vi.mock("@/lib/server/security", () => ({ AUTH_LOGIN_RATE_LIMIT: { maxRequests: 8, windowMs: 1 }, checkAuthRateLimit: mocks.checkAuthRateLimit }));
 
 import { AdminMfaChallengeError } from "@/lib/server/admin-mfa-service";
@@ -24,6 +29,18 @@ describe("POST /api/auth/login administrator MFA", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.checkAuthRateLimit.mockResolvedValue({ allowed: true, remaining: 1, resetAt: Date.now() });
+        mocks.safeGetLoginSecurityNotice.mockResolvedValue(undefined);
+    });
+
+    it("returns a security notice when the successful login environment changed", async () => {
+        mocks.authenticateUser.mockResolvedValue({ id: "admin-one", username: "admin", role: "admin" });
+        mocks.createSession.mockResolvedValue("session.token");
+        mocks.safeGetLoginSecurityNotice.mockResolvedValue({ networkChanged: true, deviceChanged: false, previousLoginAt: "2026-08-09T10:00:00.000Z" });
+
+        const response = await POST(loginRequest({ username: "admin", password: "password", totpCode: "123456" }));
+
+        expect(await response.json()).toMatchObject({ securityNotice: { networkChanged: true, deviceChanged: false } });
+        expect(mocks.safeGetLoginSecurityNotice).toHaveBeenCalledWith("admin-one", expect.objectContaining({ ip: "203.0.113.11", userAgent: "Browser B" }));
     });
 
     it("returns a challenge without creating a session after password verification", async () => {

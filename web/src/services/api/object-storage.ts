@@ -1,6 +1,7 @@
 "use client";
 
 import type { ExternalStorageFilesPayload, ObjectStorageDeleteResult, ObjectStorageMigrationResult, ObjectStorageSettings, ObjectStorageSettingsUpdate } from "@/lib/object-storage-contract";
+import type { AdminSensitiveActionProof } from "@/lib/admin-sensitive-action";
 
 type ApiPayload<T> = { code?: number; data?: T; msg?: string; error?: string };
 
@@ -8,8 +9,8 @@ export async function getObjectStorageSettings() {
     return request<ObjectStorageSettings>("/api/admin/object-storage");
 }
 
-export async function saveObjectStorageSettings(input: ObjectStorageSettingsUpdate) {
-    return request<ObjectStorageSettings>("/api/admin/object-storage", { method: "PATCH", headers: jsonHeaders, body: JSON.stringify(input) });
+export async function saveObjectStorageSettings(input: ObjectStorageSettingsUpdate, proof: AdminSensitiveActionProof) {
+    return request<ObjectStorageSettings>("/api/admin/object-storage", { method: "PATCH", headers: jsonHeaders, body: JSON.stringify({ ...input, ...proof }) });
 }
 
 export async function testObjectStorageSettings() {
@@ -27,12 +28,12 @@ export async function getExternalStorageFiles(input: { prefix?: string; cursor?:
     return request<ExternalStorageFilesPayload>(`/api/admin/object-storage/files?${query}`);
 }
 
-export async function deleteExternalStorageFiles(keys: string[]) {
-    return request<ObjectStorageDeleteResult>("/api/admin/object-storage/files", { method: "DELETE", headers: jsonHeaders, body: JSON.stringify({ keys }) });
+export async function deleteExternalStorageFiles(keys: string[], proof: AdminSensitiveActionProof) {
+    return request<ObjectStorageDeleteResult>("/api/admin/object-storage/files", { method: "DELETE", headers: jsonHeaders, body: JSON.stringify({ keys, ...proof }) });
 }
 
-export async function migrateLocalMedia(limit = 20) {
-    return request<ObjectStorageMigrationResult>("/api/admin/object-storage/sync", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ limit }) });
+export async function migrateLocalMedia(proof: AdminSensitiveActionProof, limit = 20) {
+    return request<ObjectStorageMigrationResult>("/api/admin/object-storage/sync", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ limit, ...proof }) });
 }
 
 async function request<T>(url: string, init?: RequestInit) {

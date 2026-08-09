@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBodyResult } from "@/lib/auth/request";
+import { isAuthInputError } from "@/lib/auth/store";
 import type { ObjectStorageSettingsUpdate } from "@/lib/object-storage-contract";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
+import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { getObjectStorageAdminSettings, saveObjectStorageAdminSettings } from "@/lib/server/object-storage-config";
 import { checkConfiguredObjectStorage } from "@/lib/server/object-storage-service";
 
@@ -21,9 +23,10 @@ export async function PATCH(request: Request) {
     if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     if (currentUser.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     try {
-        const parsed = await readJsonBodyResult<Partial<ObjectStorageSettingsUpdate>>(request);
+        const parsed = await readJsonBodyResult<Partial<ObjectStorageSettingsUpdate> & { currentPassword?: unknown; totpCode?: unknown }>(request);
         if (!parsed.ok) return NextResponse.json({ code: parsed.status, data: null, msg: parsed.message }, { status: parsed.status });
         const body = parsed.data;
+        await verifyAdminSensitiveAction(currentUser.id, body);
         const data = await saveObjectStorageAdminSettings({
             enabled: body.enabled === true,
             endpoint: stringValue(body.endpoint),
@@ -51,7 +54,8 @@ export async function PATCH(request: Request) {
             target: { type: "object_storage", id: "primary" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        return NextResponse.json({ code: 400, data: null, msg: error instanceof Error ? error.message : "外部存储配置保存失败" }, { status: 400 });
+        const status = isAuthInputError(error) ? error.status : 400;
+        return NextResponse.json({ code: status, data: null, msg: error instanceof Error ? error.message : "外部存储配置保存失败" }, { status });
     }
 }
 

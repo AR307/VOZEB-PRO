@@ -122,7 +122,8 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     return (
         <Drawer
             title="接入新渠道"
-            size="min(736px, 100vw)"
+            size={736}
+            styles={{ wrapper: { maxWidth: "100vw" } }}
             open={open}
             destroyOnHidden
             mask={{ closable: false }}

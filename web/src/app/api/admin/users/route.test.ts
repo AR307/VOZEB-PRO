@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     listPublicUsersPage: vi.fn(),
     createUserByAdmin: vi.fn(),
+    verifyAdminSensitiveAction: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser, serializeCurrentUser: vi.fn((user) => user) }));
@@ -13,8 +14,9 @@ vi.mock("@/lib/auth/store", () => ({
     listPublicUsersPage: mocks.listPublicUsersPage,
 }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({})), safeRecordAuditLog: vi.fn() }));
+vi.mock("@/lib/server/admin-mfa-service", () => ({ verifyAdminSensitiveAction: mocks.verifyAdminSensitiveAction }));
 
-import { GET } from "./route";
+import { GET, POST } from "./route";
 
 describe("admin users route", () => {
     beforeEach(() => {
@@ -27,6 +29,22 @@ describe("admin users route", () => {
             pageSize: 20,
             summary: { total: 80, active: 70, disabled: 10, admins: 2, activeAdmins: 2, usersWithPlan: 12, totalPointsBalance: 3200 },
         });
+        mocks.verifyAdminSensitiveAction.mockResolvedValue(undefined);
+        mocks.createUserByAdmin.mockResolvedValue({ id: "user-two", username: "new-user", role: "user", status: "active" });
+    });
+
+    it("verifies the administrator before creating a user", async () => {
+        const response = await POST(
+            new Request("http://localhost/api/admin/users", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ username: "new-user", password: "new-password", currentPassword: "admin-password", totpCode: "123456" }),
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.verifyAdminSensitiveAction).toHaveBeenCalledWith("admin-one", expect.objectContaining({ currentPassword: "admin-password", totpCode: "123456" }));
+        expect(mocks.createUserByAdmin).toHaveBeenCalledOnce();
     });
 
     it("requires an authenticated administrator", async () => {

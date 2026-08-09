@@ -5,6 +5,7 @@ import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { deleteGenerationLogsByUserId } from "@/lib/server/generation-log-store";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
+import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     try {
         const { id } = await context.params;
-        const body = await readJsonBody<{ displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; status?: unknown; pointsBalance?: unknown; planId?: unknown }>(request);
+        const body = await readJsonBody<{ displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; status?: unknown; pointsBalance?: unknown; planId?: unknown; currentPassword?: unknown; totpCode?: unknown }>(request);
+        await verifyAdminSensitiveAction(currentUser.id, body);
         const patch: { displayName?: string; email?: string; password?: string; role?: UserRole; status?: UserStatus; pointsBalance?: number; planId?: string } = {};
 
         if (typeof body.displayName === "string") patch.displayName = body.displayName;
@@ -59,6 +61,8 @@ export async function DELETE(request: Request, context: RouteContext) {
 
     try {
         const { id } = await context.params;
+        const body = await readJsonBody<{ currentPassword?: unknown; totpCode?: unknown }>(request);
+        await verifyAdminSensitiveAction(currentUser.id, body);
         await deleteUserByAdmin(currentUser.id, id);
         await deleteGenerationLogsByUserId(id);
         await safeRecordAuditLog({

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminMediaTypeTabs } from "@/components/admin/admin-media-type-tabs";
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminAccountId, AdminUserSearchSelect } from "@/components/admin/admin-user-identity";
+import { useAdminSensitiveAction } from "@/hooks/use-admin-sensitive-action";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { managedMediaTypeLabel, mediaSourceGroupOptions, mediaSourceLabel } from "@/lib/media-management-contract";
 import type { ExternalStorageFile, ExternalStorageFilesPayload, ObjectStorageMigrationResult, ObjectStorageSettings, ObjectStorageSettingsUpdate } from "@/lib/object-storage-contract";
@@ -17,6 +18,7 @@ const PAGE_SIZE = 30;
 
 export function AdminExternalStorage() {
     const { message } = App.useApp();
+    const { requestSensitiveAction, sensitiveActionModal } = useAdminSensitiveAction();
     const [form] = Form.useForm<ObjectStorageSettingsUpdate>();
     const enabled = Form.useWatch("enabled", form);
     const [settings, setSettings] = useState<ObjectStorageSettings>();
@@ -83,9 +85,15 @@ export function AdminExternalStorage() {
     }, [cursor, loadFiles, ownerUserId, prefix, settings?.bucket, settings?.updatedAt, source, type]);
 
     const save = async (values: ObjectStorageSettingsUpdate) => {
+        const proof = await requestSensitiveAction({
+            title: "保存外部存储配置",
+            description: "将更新媒体写入位置、Bucket、访问密钥与路径规则；只影响后续新写入的媒体。",
+            confirmText: "验证并保存",
+        });
+        if (!proof) return;
         setSaving(true);
         try {
-            const next = await saveObjectStorageSettings(values);
+            const next = await saveObjectStorageSettings(values, proof);
             setSettings(next);
             form.setFieldsValue({ accessKeyId: "", secretAccessKey: "" });
             message.success("外部存储配置已保存");
@@ -111,11 +119,18 @@ export function AdminExternalStorage() {
     };
 
     const migrate = async () => {
+        const proof = await requestSensitiveAction({
+            title: "迁移本地媒体",
+            description: "每个文件只有在外部存储上传与登记成功后才会删除本地源文件。迁移期间每个批次都会重新验证身份。",
+            confirmText: "验证并开始迁移",
+            danger: true,
+        });
+        if (!proof) return;
         setSyncing(true);
         const total: ObjectStorageMigrationResult = { migrated: 0, skipped: 0, failed: 0, remaining: 0, errors: [] };
         try {
             for (let batch = 0; batch < 200; batch += 1) {
-                const result = await migrateLocalMedia(PAGE_SIZE);
+                const result = await migrateLocalMedia(proof, PAGE_SIZE);
                 total.migrated += result.migrated;
                 total.skipped = Math.max(total.skipped, result.skipped);
                 total.failed += result.failed;
@@ -141,9 +156,16 @@ export function AdminExternalStorage() {
 
     const remove = useCallback(
         async (keys: string[]) => {
+            const proof = await requestSensitiveAction({
+                title: keys.length > 1 ? "批量删除外部对象" : "删除外部对象",
+                description: `将请求删除 ${keys.length} 个外部存储对象，仍被业务记录引用的对象会由服务端保留。`,
+                confirmText: "验证并删除",
+                danger: true,
+            });
+            if (!proof) return;
             setDeleting(true);
             try {
-                const result = await deleteExternalStorageFiles(keys);
+                const result = await deleteExternalStorageFiles(keys, proof);
                 if (result.blocked.length) message.warning(`${result.blocked.length} 个对象仍被业务记录引用，已保留`);
                 else message.success(`已删除 ${result.deleted} 个对象`);
                 await loadFiles(cursor, prefix, type, source, ownerUserId);
@@ -153,7 +175,7 @@ export function AdminExternalStorage() {
                 setDeleting(false);
             }
         },
-        [cursor, loadFiles, message, ownerUserId, prefix, source, type],
+        [cursor, loadFiles, message, ownerUserId, prefix, requestSensitiveAction, source, type],
     );
 
     const columns = useMemo<TableColumnsType<ExternalStorageFile>>(
@@ -476,6 +498,7 @@ export function AdminExternalStorage() {
             >
                 {preview ? <MediaViewer file={preview} /> : null}
             </Modal>
+            {sensitiveActionModal}
         </div>
     );
 }

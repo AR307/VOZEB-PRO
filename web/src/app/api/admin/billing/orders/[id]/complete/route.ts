@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
+import { isAuthInputError } from "@/lib/auth/store";
+import { verifyAdminSensitiveAction } from "@/lib/server/admin-mfa-service";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { completeBillingOrderPayment, isBillingInputError } from "@/lib/server/billing-service";
 
@@ -19,14 +21,29 @@ export async function POST(request: Request, context: RouteContext) {
 
     try {
         const { id } = await context.params;
-        const body = await readJsonBody<{ provider?: unknown; channel?: unknown; providerTradeId?: unknown; providerPaymentId?: unknown; rawPayload?: unknown; paidAt?: unknown }>(request);
+        const body = await readJsonBody<{
+            provider?: unknown;
+            channel?: unknown;
+            providerTradeId?: unknown;
+            providerPaymentId?: unknown;
+            paidAt?: unknown;
+            currentPassword?: unknown;
+            totpCode?: unknown;
+        }>(request);
+        await verifyAdminSensitiveAction(currentUser.id, body);
         const result = await completeBillingOrderPayment({
             orderId: id,
             provider: body.provider,
             channel: body.channel,
             providerTradeId: body.providerTradeId,
             providerPaymentId: body.providerPaymentId,
-            rawPayload: body.rawPayload ?? body,
+            rawPayload: {
+                provider: body.provider,
+                channel: body.channel,
+                providerTradeId: body.providerTradeId,
+                providerPaymentId: body.providerPaymentId,
+                paidAt: body.paidAt,
+            },
             paidAt: body.paidAt,
         });
         await safeRecordAuditLog({
@@ -50,7 +67,7 @@ export async function POST(request: Request, context: RouteContext) {
             target: { type: "billing_order" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+        if (isAuthInputError(error) || isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         console.error("Admin complete billing order failed", error);
         return NextResponse.json({ error: "确认支付失败" }, { status: 500 });
     }

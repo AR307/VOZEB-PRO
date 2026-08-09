@@ -26,7 +26,7 @@ export function AdminChannelDetailDrawer({ open, channel, settings, fetching, on
     if (!channel) return null;
     const status = channelWorkspaceStatus(channel);
     return (
-        <Drawer title={channel.name || "渠道详情"} size="min(720px, 100vw)" open={open} destroyOnHidden onClose={onClose}>
+        <Drawer title={channel.name || "渠道详情"} size={720} styles={{ wrapper: { maxWidth: "100vw" } }} open={open} destroyOnHidden onClose={onClose}>
             <Tabs
                 items={[
                     {

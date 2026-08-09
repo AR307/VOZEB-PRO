@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { authenticateUser, createSession, isAuthInputError } from "@/lib/auth/store";
 import { readJsonBody } from "@/lib/auth/request";
 import { serializeCurrentUser, setSessionCookie } from "@/lib/auth/session";
-import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
+import { auditActorFromRequest, safeGetLoginSecurityNotice, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { isAdminMfaChallengeError } from "@/lib/server/admin-mfa-service";
 import { AUTH_LOGIN_RATE_LIMIT, checkAuthRateLimit } from "@/lib/server/security";
 
@@ -29,12 +29,13 @@ export async function POST(request: Request) {
         }
 
         const user = await authenticateUser({ username, password: body.password || "", totpCode: body.totpCode });
-        const sessionValue = await createSession(user.id);
-        const response = NextResponse.json({ user: serializeCurrentUser(user) });
+        const actor = auditActorFromRequest(request, user);
+        const [sessionValue, securityNotice] = await Promise.all([createSession(user.id), safeGetLoginSecurityNotice(user.id, actor)]);
+        const response = NextResponse.json({ user: serializeCurrentUser(user), securityNotice });
         setSessionCookie(response, sessionValue, request);
         await safeRecordAuditLog({
             action: "auth.login",
-            actor: auditActorFromRequest(request, user),
+            actor,
             target: { type: "user", id: user.id, label: user.username },
         });
         return response;

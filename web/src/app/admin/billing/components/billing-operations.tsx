@@ -9,6 +9,8 @@ import { AlertTriangle, CheckCircle2, CircleDollarSign, Copy, CreditCard, FileTe
 
 import type { PaymentConfigRequirement, PaymentConfigSummary, PaymentProviderConfig, PaymentProviderConfigField } from "@/lib/payment-config-types";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
+import { useAdminSensitiveAction } from "@/hooks/use-admin-sensitive-action";
+import type { AdminSensitiveActionProof } from "@/lib/admin-sensitive-action";
 import type { AdminBillingSummary as BillingSummary } from "@/lib/admin-billing-types";
 import type { BillingOrder, BillingOrderStatus, BillingProduct } from "@/services/api/billing";
 import { BillingReconciliationImport } from "./billing-reconciliation-import";
@@ -94,6 +96,7 @@ import {
 
 export function BillingOperations({ initialTab = "orders", initialPaymentConfig, embedded = false, hideTabs = false }: { initialTab?: BillingTab; initialPaymentConfig?: PaymentConfigSummary; embedded?: boolean; hideTabs?: boolean }) {
     const { message, modal } = App.useApp();
+    const { requestSensitiveAction, sensitiveActionModal } = useAdminSensitiveAction();
     const [productForm] = Form.useForm<ProductFormValue>();
     const [activeTab, setActiveTab] = useState<BillingTab>(initialTab);
     const [summary, setSummary] = useState<BillingSummary | null>(null);
@@ -190,13 +193,13 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
         if (activeTab === "payments" && !paymentConfig) void loadPaymentConfig();
     }, [activeTab, loadPaymentConfig, paymentConfig]);
 
-    const runOrderAction = async (order: BillingOrder, action: "complete" | "close" | "refund", reason?: string) => {
+    const runOrderAction = async (order: BillingOrder, action: "complete" | "close" | "refund", reason?: string, proof?: AdminSensitiveActionProof) => {
         setActionOrderId(`${action}:${order.id}`);
         try {
             const response = await fetch(`/api/admin/billing/orders/${order.id}/${action}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(action === "complete" ? { provider: order.provider || "manual", channel: "admin-manual", providerTradeId: order.providerOrderId || order.orderNo } : { reason }),
+                body: JSON.stringify(action === "complete" ? { provider: order.provider || "manual", channel: "admin-manual", providerTradeId: order.providerOrderId || order.orderNo, ...proof } : { reason, ...proof }),
             });
             const payload = (await response.json().catch(() => null)) as { error?: string } | null;
             if (!response.ok) throw new Error(payload?.error || "订单操作失败");
@@ -209,15 +212,19 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
         }
     };
 
+    const authorizeOrderAction = async (order: BillingOrder, action: "complete" | "refund", reason?: string) => {
+        const proof = await requestSensitiveAction({
+            title: action === "complete" ? "确认订单收款" : "确认订单退款",
+            description: action === "complete" ? "确认后会开通套餐并发放积分。请先核实支付商或线下收款记录。" : "确认后会执行退款流程并撤回对应权益，请先核实支付商退款状态。",
+            confirmText: action === "complete" ? "验证并确认收款" : "验证并退款",
+            danger: action === "refund",
+        });
+        if (proof) await runOrderAction(order, action, reason, proof);
+    };
+
     const confirmOrderAction = (order: BillingOrder, action: "complete" | "close" | "refund") => {
         if (action === "complete") {
-            modal.confirm({
-                title: "确认这笔订单已收款？",
-                content: "确认后会开通套餐并发放积分。请只对人工确认或已经核实的收款订单执行。",
-                okText: "确认收款",
-                cancelText: "取消",
-                onOk: () => runOrderAction(order, action),
-            });
+            void authorizeOrderAction(order, action);
             return;
         }
 
@@ -237,7 +244,10 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
             okText: action === "close" ? "关闭订单" : "标记退款",
             cancelText: "取消",
             okButtonProps: { danger: action === "refund" },
-            onOk: () => runOrderAction(order, action, reason),
+            onOk: () => {
+                if (action === "close") return runOrderAction(order, action, reason);
+                queueMicrotask(() => void authorizeOrderAction(order, action, reason));
+            },
         });
     };
 
@@ -683,6 +693,7 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
             {activeTab === "coupons" ? <CouponTemplatePanel products={products} productsLoading={productsLoading} /> : null}
 
             {activeTab === "payments" ? <PaymentConfigPanel paymentConfig={paymentConfig} loading={paymentConfigLoading} embedded={embedded} onRefresh={loadPaymentConfig} onCopy={(value) => void copyText(value, message)} /> : null}
+            {sensitiveActionModal}
         </div>
     );
 }

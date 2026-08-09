@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     saveSettings: vi.fn(),
     check: vi.fn(),
     audit: vi.fn(),
+    verifyAdminSensitiveAction: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.user }));
@@ -15,6 +16,7 @@ vi.mock("@/lib/server/object-storage-config", () => ({
     saveObjectStorageAdminSettings: mocks.saveSettings,
 }));
 vi.mock("@/lib/server/object-storage-service", () => ({ checkConfiguredObjectStorage: mocks.check }));
+vi.mock("@/lib/server/admin-mfa-service", () => ({ verifyAdminSensitiveAction: mocks.verifyAdminSensitiveAction }));
 
 import { GET, PATCH, POST } from "./route";
 
@@ -35,6 +37,7 @@ describe("administrator object storage API", () => {
         mocks.user.mockResolvedValue({ id: "admin", role: "admin" });
         mocks.getSettings.mockResolvedValue(settings);
         mocks.saveSettings.mockResolvedValue(settings);
+        mocks.verifyAdminSensitiveAction.mockResolvedValue(undefined);
     });
 
     it("requires an administrator for configuration and connection checks", async () => {
@@ -60,11 +63,12 @@ describe("administrator object storage API", () => {
             new Request("http://localhost/api/admin/object-storage", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...settings, accessKeyId: "new-access", secretAccessKey: "new-secret", forcePathStyle: true }),
+                body: JSON.stringify({ ...settings, accessKeyId: "new-access", secretAccessKey: "new-secret", forcePathStyle: true, currentPassword: "admin-password", totpCode: "123456" }),
             }),
         );
 
         expect(response.status).toBe(200);
+        expect(mocks.verifyAdminSensitiveAction).toHaveBeenCalledWith("admin", expect.objectContaining({ currentPassword: "admin-password", totpCode: "123456" }));
         expect(mocks.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, accessKeyId: "new-access", secretAccessKey: "new-secret", forcePathStyle: true }));
         expect(mocks.audit).toHaveBeenCalledWith(
             expect.objectContaining({
