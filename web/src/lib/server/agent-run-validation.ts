@@ -25,6 +25,9 @@ export type AgentPlan = {
         seconds?: number;
         voice?: string;
         format?: string;
+        generateAudio?: boolean;
+        watermark?: boolean;
+        speed?: number;
         dependencies?: string[];
         assetIds?: string[];
     }>;
@@ -53,13 +56,18 @@ export function validateAgentPlan(value: unknown): asserts value is AgentPlan {
                 !item?.title?.trim() ||
                 !item?.prompt?.trim() ||
                 !["text", "image", "video", "audio"].includes(item.type) ||
+                (item.seconds !== undefined && (!Number.isFinite(Number(item.seconds)) || Number(item.seconds) <= 0)) ||
+                (item.generateAudio !== undefined && typeof item.generateAudio !== "boolean") ||
+                (item.watermark !== undefined && typeof item.watermark !== "boolean") ||
+                (item.speed !== undefined && (!Number.isFinite(Number(item.speed)) || Number(item.speed) <= 0)) ||
                 (item.assetIds !== undefined && (!Array.isArray(item.assetIds) || item.assetIds.some((id) => typeof id !== "string" || !id.trim()))),
         )
     )
         throw new Error("模型返回的任务参数无效");
     if (plan.decisions && (!Array.isArray(plan.decisions) || plan.decisions.length > 8 || plan.decisions.some((item) => !item?.label?.trim() || !item?.value?.trim() || !item?.reason?.trim()))) throw new Error("模型返回的决策摘要无效");
     const ids = new Set(plan.deliverables.map((item, index) => item.id?.trim() || `task-${index}`));
-    if (ids.size !== plan.deliverables.length || plan.deliverables.some((item) => item.dependencies?.some((dependency) => !ids.has(dependency)))) throw new Error("模型返回的任务依赖无效");
+    if (ids.size !== plan.deliverables.length || plan.deliverables.some((item) => item.dependencies?.some((dependency) => typeof dependency !== "string" || !ids.has(dependency.trim())))) throw new Error("模型返回的任务依赖无效");
+    assertAcyclicDependencies(plan);
 }
 
 export function validateAgentPlanGenerationMode(plan: AgentPlan, mode?: CreativeGenerationMode) {
@@ -87,7 +95,22 @@ export function resolveAgentTaskCount(type: AgentPlan["deliverables"][number]["t
 export function resolveAgentVideoSeconds(type: AgentPlan["deliverables"][number]["type"], planned: unknown, skillDefault: unknown, backendDefault: unknown) {
     if (type !== "video") return undefined;
     const value = [planned, skillDefault, backendDefault].map(Number).find((item) => Number.isFinite(item) && item > 0) || 5;
-    return Math.max(1, Math.min(20, Math.floor(value)));
+    return Math.max(1, Math.floor(value));
+}
+
+function assertAcyclicDependencies(plan: AgentPlan) {
+    const dependencies = new Map(plan.deliverables.map((item, index) => [item.id?.trim() || `task-${index}`, (item.dependencies || []).map((dependency) => dependency.trim())]));
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (id: string) => {
+        if (visiting.has(id)) throw new Error("模型返回的任务依赖存在循环");
+        if (visited.has(id)) return;
+        visiting.add(id);
+        for (const dependency of dependencies.get(id) || []) visit(dependency);
+        visiting.delete(id);
+        visited.add(id);
+    };
+    for (const id of dependencies.keys()) visit(id);
 }
 
 export function agentChildTaskTerminal(status: unknown): "success" | "error" | "cancelled" | null {

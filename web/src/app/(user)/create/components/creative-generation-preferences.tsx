@@ -8,7 +8,9 @@ import { audioFormatLabel, audioFormatOptions, audioVoiceLabel, audioVoiceOption
 import type { CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { cn } from "@/lib/utils";
 
+import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement } from "./creative-composer-popover";
 import { creativeComposerToolButtonClass } from "./creative-composer-styles";
+import { PositiveNumberField, SuggestedPositiveIntegerField, SwitchPreference, VideoQualityField } from "./creative-generation-preference-fields";
 
 export type MediaCapability = "image" | "video" | "audio";
 
@@ -82,30 +84,20 @@ export function CreativeGenerationPreferences({
     capabilities?: readonly MediaCapability[];
     preferences: CreativeGenerationPreferences;
     triggerLabel?: string;
-    placement?: "topLeft" | "bottomLeft";
+    placement?: CreativeComposerPopoverPlacement;
     onCapabilityChange?: (capability: MediaCapability) => void;
     onChange: (patch: PreferencePatch) => void;
 }) {
     const [open, setOpen] = useState(false);
-    const [narrowViewport, setNarrowViewport] = useState(false);
     const availableCapabilities = capabilities.length ? capabilities : [capability];
     const activeCapability = availableCapabilities.includes(capability) ? capability : availableCapabilities[0];
     const summary = triggerLabel || generationPreferenceSummary(activeCapability, preferences);
-    const resolvedPlacement = narrowViewport ? (placement === "bottomLeft" ? "bottom" : "top") : placement;
-
-    useEffect(() => {
-        const media = window.matchMedia("(max-width: 640px)");
-        const update = () => setNarrowViewport(media.matches);
-        update();
-        media.addEventListener("change", update);
-        return () => media.removeEventListener("change", update);
-    }, []);
 
     return (
         <Popover
             trigger="click"
-            placement={resolvedPlacement}
-            autoAdjustOverflow={false}
+            placement={placement}
+            autoAdjustOverflow={creativeComposerPopoverOverflow(placement)}
             arrow={false}
             open={open}
             onOpenChange={setOpen}
@@ -150,7 +142,6 @@ function PreferencePanel({ capability, preferences, onChange }: { capability: Me
     const selectedSize = capability === "image" ? preferences.image?.size || "auto" : preferences.video?.size || "auto";
     const selectedQuality = capability === "image" ? preferences.image?.quality || "auto" : preferences.video?.quality || "auto";
     const selectedCount = capability === "image" ? preferences.image?.count || 1 : preferences.video?.count || 1;
-    const qualityOptions = capability === "image" ? imageQualityOptions : videoQualityOptions;
     const [customEditorOpen, setCustomEditorOpen] = useState(Boolean(parseCustomDimensions(selectedSize)));
     const [section, setSection] = useState<"canvas" | "output">("canvas");
 
@@ -167,6 +158,7 @@ function PreferencePanel({ capability, preferences, onChange }: { capability: Me
             <div className="grid grid-cols-2 gap-1.5">
                 <PreferenceSelect label="音色" ariaLabel="选择音色" value={preferences.audio?.voice || "alloy"} options={audioVoiceOptions} onChange={(voice) => onChange({ voice })} />
                 <PreferenceSelect label="格式" ariaLabel="选择音频格式" value={preferences.audio?.format || "mp3"} options={audioFormatOptions} onChange={(format) => onChange({ format })} />
+                <PositiveNumberField className="col-span-2" label="语速" ariaLabel="输入音频语速" value={preferences.audio?.speed || 1} suffix="x" onChange={(speed) => onChange({ speed })} />
             </div>
         );
     }
@@ -256,15 +248,21 @@ function PreferencePanel({ capability, preferences, onChange }: { capability: Me
                 </div>
             ) : (
                 <div className="grid gap-2.5">
-                    <CompactOptionGroup
-                        label={capability === "image" ? "画质" : "清晰度"}
-                        ariaLabel={`选择${capability === "image" ? "图片画质" : "视频清晰度"}`}
-                        value={selectedQuality}
-                        options={qualityOptions}
-                        onChange={(quality) => onChange({ quality })}
-                    />
+                    {capability === "video" ? (
+                        <VideoQualityField value={selectedQuality} options={videoQualityOptions} onChange={(quality) => onChange({ quality })} />
+                    ) : (
+                        <CompactOptionGroup label="画质" ariaLabel="选择图片画质" value={selectedQuality} options={imageQualityOptions} onChange={(quality) => onChange({ quality })} />
+                    )}
                     <GenerationCountGroup key={capability} capability={capability} value={selectedCount} onChange={(count) => onChange({ count })} />
-                    {capability === "video" ? <CompactOptionGroup label="时长" ariaLabel="选择视频时长" value={preferences.video?.seconds || 5} options={videoDurationOptions} columns={2} onChange={(seconds) => onChange({ seconds })} /> : null}
+                    {capability === "video" ? (
+                        <>
+                            <SuggestedPositiveIntegerField label="时长" ariaLabel="输入视频时长" value={preferences.video?.seconds || 5} suffix="秒" options={videoDurationOptions} onChange={(seconds) => onChange({ seconds })} />
+                            <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-[#e3e8ec] bg-[#fafbfc] p-2 dark:border-[#343b44] dark:bg-[#1f242a]">
+                                <SwitchPreference label="生成声音" checked={preferences.video?.generateAudio ?? true} onChange={(generateAudio) => onChange({ generateAudio })} />
+                                <SwitchPreference label="添加水印" checked={preferences.video?.watermark ?? false} onChange={(watermark) => onChange({ watermark })} />
+                            </div>
+                        </>
+                    ) : null}
                 </div>
             )}
         </div>
@@ -477,16 +475,25 @@ function PreferenceSummaryIcon({ capability, preferences }: { capability: MediaC
 }
 
 export function generationPreferenceSummary(capability: MediaCapability, preferences: CreativeGenerationPreferences) {
-    if (capability === "audio") return `${audioVoiceLabel(preferences.audio?.voice || "alloy")} · ${audioFormatLabel(preferences.audio?.format || "mp3")}`;
+    if (capability === "audio") return `${audioVoiceLabel(preferences.audio?.voice || "alloy")} · ${audioFormatLabel(preferences.audio?.format || "mp3")} · ${preferences.audio?.speed || 1}x`;
     const size = capability === "image" ? preferences.image?.size || "auto" : preferences.video?.size || "auto";
     const quality = capability === "image" ? preferences.image?.quality || "auto" : preferences.video?.quality || "auto";
     const count = capability === "image" ? preferences.image?.count || 1 : preferences.video?.count || 1;
     const countLabel = count > 1 ? ` · ${count}${capability === "image" ? "张" : "条"}` : "";
     const sizeLabel = size === "auto" ? "智能比例" : formatSizeLabel(size);
-    const qualityLabel = (capability === "image" ? imageQualityOptions : videoQualityOptions).find((item) => item.value === quality)?.label || quality;
+    const qualityLabel = capability === "image" ? imageQualityOptions.find((item) => item.value === quality)?.label || quality : videoQualityLabel(quality);
     const referenceLabel = capability === "video" ? videoReferenceModeOptions.find((item) => item.value === (preferences.video?.referenceMode || "reference"))?.label : undefined;
-    if (size === "auto" && quality === "auto") return capability === "video" ? `智能参数 · ${preferences.video?.seconds || 5}秒${countLabel}` : `智能参数${countLabel}`;
-    return capability === "video" ? `${sizeLabel} · ${qualityLabel} · ${preferences.video?.seconds || 5}秒${referenceLabel && referenceLabel !== "智能参考" ? ` · ${referenceLabel}` : ""}${countLabel}` : `${sizeLabel} · ${qualityLabel}${countLabel}`;
+    if (capability === "image") return size === "auto" && quality === "auto" ? `智能参数${countLabel}` : `${sizeLabel} · ${qualityLabel}${countLabel}`;
+    const parameterLabel = size === "auto" && quality === "auto" ? "智能参数" : `${sizeLabel} · ${qualityLabel}`;
+    const audioLabel = (preferences.video?.generateAudio ?? true) ? "有声" : "无声";
+    const watermarkLabel = (preferences.video?.watermark ?? false) ? "带水印" : "无水印";
+    return `${parameterLabel} · ${preferences.video?.seconds || 5}秒 · ${audioLabel} · ${watermarkLabel}${referenceLabel && referenceLabel !== "智能参考" ? ` · ${referenceLabel}` : ""}${countLabel}`;
+}
+
+function videoQualityLabel(value: string) {
+    const preset = videoQualityOptions.find((item) => item.value === value)?.label;
+    if (preset) return preset;
+    return /^\d+$/.test(value) ? `${value}P` : value;
 }
 
 function parseCustomDimensions(value?: string) {

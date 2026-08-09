@@ -34,6 +34,19 @@ describe("validateAgentPlan", () => {
         expect(() => validateAgentPlan({ objective: "发布", deliverables: [{ id: "image", title: "主图", type: "image", prompt: "做图", dependencies: ["missing"] }] })).toThrow("任务依赖无效");
     });
 
+    it("rejects self and multi-task dependency cycles", () => {
+        expect(() => validateAgentPlan({ objective: "发布", deliverables: [{ id: "image", title: "主图", type: "image", prompt: "做图", dependencies: ["image"] }] })).toThrow("任务依赖存在循环");
+        expect(() =>
+            validateAgentPlan({
+                objective: "发布",
+                deliverables: [
+                    { id: "copy", title: "文案", type: "text", prompt: "写文案", dependencies: ["image"] },
+                    { id: "image", title: "主图", type: "image", prompt: "做图", dependencies: ["copy"] },
+                ],
+            }),
+        ).toThrow("任务依赖存在循环");
+    });
+
     it("accepts model choices and validates visible decision summaries", () => {
         expect(() =>
             validateAgentPlan({
@@ -105,7 +118,7 @@ describe("validateAgentPlan", () => {
 
     it("keeps Agent video duration aligned with the real video task range", () => {
         expect(resolveAgentVideoSeconds("video", "5", undefined, 10)).toBe(5);
-        expect(resolveAgentVideoSeconds("video", 60, 10, 5)).toBe(20);
+        expect(resolveAgentVideoSeconds("video", 60, 10, 5)).toBe(60);
         expect(resolveAgentVideoSeconds("video", undefined, 10, 5)).toBe(10);
         expect(resolveAgentVideoSeconds("video", undefined, undefined, 6)).toBe(6);
         expect(resolveAgentVideoSeconds("image", 10, 10, 10)).toBeUndefined();

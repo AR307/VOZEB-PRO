@@ -112,9 +112,11 @@ describe("Agent Run resume concurrency", () => {
                 { id: "done", type: "image", status: "completed", taskId: "image-done" },
             ],
         };
-        mocks.getAgentRun.mockResolvedValue(run);
-        mocks.setAgentRunStatus.mockResolvedValue({ ...run, status: "cancelled" });
-        mocks.fetchInternalApi.mockResolvedValue(new Response(null, { status: 200 }));
+        let current = run;
+        mocks.getAgentRun.mockImplementation(async () => current);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => (current = { ...current, ...patch }));
+        mocks.setAgentRunStatus.mockImplementation(async (_run, status) => (current = { ...current, status }));
+        mocks.fetchInternalApi.mockImplementation(async () => Response.json({ task: { status: "cancelled" } }));
 
         const response = await POST(new Request("http://localhost/api/agent/runs/run/cancel", { method: "POST", headers: { cookie: "session=test" } }), {
             params: Promise.resolve({ id: "run", action: "cancel" }),
@@ -136,6 +138,89 @@ describe("Agent Run resume concurrency", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalledWith(expect.stringContaining("video-failed"), expect.anything());
         expect(mocks.fetchInternalApi).not.toHaveBeenCalledWith(expect.stringContaining("image-done"), expect.anything());
         expect(mocks.fetchInternalApi).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ method: "PATCH", headers: { "Content-Type": "application/json", cookie: "session=test" }, body: JSON.stringify({ status: "cancelled" }) }));
+        expect(mocks.updateAgentRunById).toHaveBeenCalledWith(
+            "run",
+            expect.objectContaining({ status: "paused", executionId: undefined, cancellation: expect.objectContaining({ pendingChildTaskIds: expect.arrayContaining(["image-pending", "video-one"]) }) }),
+            expect.objectContaining({ type: "run.cancel.requested" }),
+            ["planning", "running", "paused"],
+        );
+        expect(mocks.setAgentRunStatus).toHaveBeenCalledWith(expect.objectContaining({ status: "paused" }), "cancelled");
+    });
+
+    it("keeps the Agent paused when a child cancellation result cannot be confirmed", async () => {
+        const run = {
+            id: "run",
+            userId: "user",
+            status: "running",
+            tasks: [
+                { id: "image", type: "image", status: "running", taskId: "image-one" },
+                { id: "video", type: "video", status: "running", taskId: "video-one" },
+            ],
+        };
+        let current = run;
+        mocks.getAgentRun.mockImplementation(async () => current);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => (current = { ...current, ...patch }));
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("image-one")) return Response.json({ task: { status: "cancelled" } });
+            if (url.endsWith("video-one") && init?.method === "PATCH") throw new Error("connection reset");
+            throw new Error("status unavailable");
+        });
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/cancel", { method: "POST", headers: { cookie: "session=test" } }), {
+            params: Promise.resolve({ id: "run", action: "cancel" }),
+        });
+
+        expect(response.status).toBe(502);
+        await expect(response.json()).resolves.toMatchObject({ data: { run: { status: "paused", cancellation: { pendingCount: 1 } }, pendingCount: 1 } });
+        expect(mocks.setAgentRunStatus).not.toHaveBeenCalled();
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "cancel_requested" }));
+    });
+
+    it("confirms an already accepted child cancellation through GET on retry", async () => {
+        const run = {
+            id: "run",
+            userId: "user",
+            status: "paused",
+            cancellation: { requestedAt: 100, pendingChildTaskIds: ["video-one"] },
+            tasks: [{ id: "video", type: "video", status: "running", taskId: "video-one" }],
+        };
+        let current = run;
+        mocks.getAgentRun.mockImplementation(async () => current);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => (current = { ...current, ...patch }));
+        mocks.setAgentRunStatus.mockImplementation(async (_run, status) => (current = { ...current, status }));
+        mocks.fetchInternalApi.mockImplementation(async (_url: string, init?: RequestInit) => (init?.method === "PATCH" ? Response.json({ error: "当前任务无法取消" }, { status: 409 }) : Response.json({ task: { status: "cancelled" } })));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/cancel", { method: "POST", headers: { cookie: "session=test" } }), {
+            params: Promise.resolve({ id: "run", action: "cancel" }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(mocks.fetchInternalApi).toHaveBeenCalledWith("http://localhost/api/video-tasks/video-one", { headers: { cookie: "session=test" } });
+        expect(mocks.setAgentRunStatus).toHaveBeenCalledWith(expect.objectContaining({ status: "paused" }), "cancelled");
+    });
+
+    it("accepts a child that reached a successful terminal state during cancellation", async () => {
+        const run = { id: "run", userId: "user", status: "running", tasks: [{ id: "image", type: "image", status: "running", taskId: "image-one" }] };
+        let current = run;
+        mocks.getAgentRun.mockImplementation(async () => current);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => (current = { ...current, ...patch }));
+        mocks.setAgentRunStatus.mockImplementation(async (_run, status) => (current = { ...current, status }));
+        mocks.fetchInternalApi.mockImplementation(async (_url: string, init?: RequestInit) => (init?.method === "PATCH" ? Response.json({ error: "当前任务无法取消" }, { status: 409 }) : Response.json({ task: { status: "success" } })));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/cancel", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "cancel" }) });
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAgentRunStatus).toHaveBeenCalledOnce();
+    });
+
+    it("does not resume a Run with a persisted cancellation request", async () => {
+        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "paused", cancellation: { requestedAt: 100, pendingChildTaskIds: ["video-one"] }, tasks: [] });
+
+        const response = await POST(request(), context());
+
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toMatchObject({ msg: "任务正在取消，无法恢复" });
+        expect(mocks.setAgentRunStatus).not.toHaveBeenCalled();
     });
 
     it("rejects a control request when the visible conversation does not own the run", async () => {

@@ -131,6 +131,28 @@ describe("directAgentPlan", () => {
         expect(task).toMatchObject({ type: "image", ratio: "16:9", quality: "high", count: 4 });
     });
 
+    it("统一 Agent 将视频声音水印与音频语速写入真实任务快照", () => {
+        const plan = {
+            intent: "generation",
+            objective: "生成带配音的视频和旁白",
+            reply: "开始生成",
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: "生成带配音的视频和旁白" }, direction: { summary: "电影感" } },
+            deliverables: [
+                { id: "video", title: "视频", type: "video", model: "video-pro", prompt: "产品视频", count: 1, quality: "720", seconds: 5, generateAudio: true, watermark: false, dependencies: [] },
+                { id: "audio", title: "旁白", type: "audio", model: "audio-pro", prompt: "产品旁白", count: 1, voice: "alloy", format: "mp3", speed: 1, dependencies: [] },
+            ],
+        };
+
+        const [video, audio] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, "生成产品视频", "chat", [], undefined, {
+            video: { quality: "2160", seconds: 60, generateAudio: false, watermark: true },
+            audio: { voice: "nova", format: "wav", speed: 1.25 },
+        });
+
+        expect(video).toMatchObject({ type: "video", quality: "2160", seconds: 60, generateAudio: false, watermark: true });
+        expect(audio).toMatchObject({ type: "audio", voice: "nova", format: "wav", speed: 1.25 });
+    });
+
     it("即使 Planner 漏掉资产也会把用户明确选择的首尾帧注入视频任务", () => {
         const plan = {
             intent: "generation",
@@ -264,16 +286,18 @@ describe("directAgentPlan", () => {
 
 function generationSettings() {
     return {
-        defaultModels: { textModel: "text-pro", imageModel: "image-pro", videoModel: "video-pro", audioModel: "" },
+        defaultModels: { textModel: "text-pro", imageModel: "image-pro", videoModel: "video-pro", audioModel: "audio-pro" },
         systemChannels: [
             { id: "image-channel", name: "图片", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", models: ["vendor/image-pro"] },
             { id: "text-channel", name: "文本", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", models: ["vendor/text-pro"] },
             { id: "video-channel", name: "视频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", models: ["vendor/video-pro"] },
+            { id: "audio-channel", name: "音频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", models: ["vendor/audio-pro"] },
         ],
         logicalModels: [
             { id: "image-pro", name: "专业图片模型", capability: "image", enabled: true, bindings: [{ id: "binding-image", channelId: "image-channel", upstreamModel: "vendor/image-pro", enabled: true, priority: 1 }] },
             { id: "text-pro", name: "文本模型", capability: "text", enabled: true, bindings: [{ id: "binding-text", channelId: "text-channel", upstreamModel: "vendor/text-pro", enabled: true, priority: 1 }] },
             { id: "video-pro", name: "专业视频模型", capability: "video", enabled: true, bindings: [{ id: "binding-video", channelId: "video-channel", upstreamModel: "vendor/video-pro", enabled: true, priority: 1 }] },
+            { id: "audio-pro", name: "专业音频模型", capability: "audio", enabled: true, bindings: [{ id: "binding-audio", channelId: "audio-channel", upstreamModel: "vendor/audio-pro", enabled: true, priority: 1 }] },
         ],
         generationDefaults: { canvasImageCount: 1, imageSize: "1:1", imageQuality: "high", videoSeconds: 5, videoQuality: "720p", audioVoice: "alloy", audioFormat: "mp3" },
     };

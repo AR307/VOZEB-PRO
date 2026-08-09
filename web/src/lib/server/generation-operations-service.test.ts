@@ -2,13 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     listStoredGenerationTaskRecords: vi.fn(),
-    generationTaskPointsCost: vi.fn(() => 3),
+    listStoredGenerationTaskRecordsByRunIds: vi.fn(),
+    generationTaskPointsCost: vi.fn((_payload: Record<string, unknown>) => 3),
     findPublicUserIdsByKeyword: vi.fn(),
     getPublicUsersByIds: vi.fn(),
     getAuthSettings: vi.fn(),
 }));
 
-vi.mock("@/lib/server/generation-task-store", () => ({ listStoredGenerationTaskRecords: mocks.listStoredGenerationTaskRecords, generationTaskPointsCost: mocks.generationTaskPointsCost }));
+vi.mock("@/lib/server/generation-task-store", () => ({
+    listStoredGenerationTaskRecords: mocks.listStoredGenerationTaskRecords,
+    listStoredGenerationTaskRecordsByRunIds: mocks.listStoredGenerationTaskRecordsByRunIds,
+    generationTaskPointsCost: mocks.generationTaskPointsCost,
+}));
 vi.mock("@/lib/auth/store", () => ({ findPublicUserIdsByKeyword: mocks.findPublicUserIdsByKeyword, getPublicUsersByIds: mocks.getPublicUsersByIds, getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/channel-runtime-health", () => ({
     getChannelRuntimeHealth: vi.fn(() => ({ channelId: "channel-one", capability: "image", consecutiveFailures: 0 })),
@@ -20,8 +25,10 @@ import { listAdminGenerationOperations } from "./generation-operations-service";
 describe("generation operations aggregation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.generationTaskPointsCost.mockReturnValue(3);
         mocks.findPublicUserIdsByKeyword.mockResolvedValue(["user-one"]);
         mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", accountId: "0001", username: "creator", displayName: "创作者" }]);
+        mocks.listStoredGenerationTaskRecordsByRunIds.mockResolvedValue([]);
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
             items: [task()],
             all: [task()],
@@ -48,6 +55,8 @@ describe("generation operations aggregation", () => {
             model: "image-model",
             pointsCost: 3,
             retryTaskId: "child-failed",
+            leaseExpired: false,
+            pointsBreakdown: { planner: 3, childTasks: 0, total: 3 },
         });
         expect(result.summary).toMatchObject({ total: 1, failed: 1, totalPointsCost: 3 });
         expect(result.agentPerformance).toEqual(expect.objectContaining({ sampleSize: 0 }));
@@ -56,7 +65,64 @@ describe("generation operations aggregation", () => {
         expect(mocks.findPublicUserIdsByKeyword).toHaveBeenCalledWith("0001");
         expect(mocks.listStoredGenerationTaskRecords).toHaveBeenNthCalledWith(1, { page: 1, search: "0001", searchUserIds: ["user-one"], includeAll: false });
         expect(mocks.listStoredGenerationTaskRecords).toHaveBeenNthCalledWith(2, { page: 1, pageSize: 100, type: "agent", search: "0001", searchUserIds: ["user-one"], includeAll: true });
+        expect(mocks.listStoredGenerationTaskRecordsByRunIds).toHaveBeenCalledWith(["task-one"]);
         expect(JSON.stringify(result)).not.toContain("amountCents");
+    });
+
+    it("shows planner audit, child-task points and only marks an actually expired lease", async () => {
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(5_000);
+        mocks.generationTaskPointsCost.mockImplementation((payload: Record<string, unknown>) => Number(payload.pointsCost) || 0);
+        mocks.listStoredGenerationTaskRecords.mockResolvedValue({
+            items: [
+                {
+                    ...task(),
+                    status: "running",
+                    executionPhase: "polling",
+                    provider: "openai",
+                    queryPath: "/videos/task-upstream",
+                    workerId: "worker-one",
+                    leaseUntil: 4_999,
+                    lastHeartbeatAt: 4_500,
+                    nextPollAt: 5_100,
+                    payload: {
+                        ...task().payload,
+                        pointsCost: undefined,
+                        plannerAudit: {
+                            schemaVersion: 1,
+                            mode: "model",
+                            logicalModelId: "planner",
+                            channelId: "planner-backup",
+                            upstreamModel: "vendor/planner",
+                            protocol: "chat",
+                            elapsedMs: 1200,
+                            pointsCost: 1.25,
+                            skills: [{ id: "skill-one", name: "商品视觉", sourceCommit: "abcdef" }],
+                        },
+                    },
+                },
+            ],
+            all: [],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            summary: { total: 1, active: 1, success: 0, failed: 0, averageDurationMs: 0, totalPointsCost: 1.25, byType: { agent: 1 }, byStatus: { running: 1 } },
+        });
+        mocks.listStoredGenerationTaskRecordsByRunIds.mockResolvedValue([{ ...task(), id: "child-one", type: "video", runId: "task-one", status: "success", payload: { pointsCost: 4.5 } }]);
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+        nowSpy.mockRestore();
+
+        expect(result.items[0]).toMatchObject({
+            model: "planner",
+            channelId: "planner-backup",
+            provider: "openai",
+            queryPath: "/videos/task-upstream",
+            workerId: "worker-one",
+            leaseExpired: true,
+            pointsCost: 5.75,
+            pointsBreakdown: { planner: 1.25, childTasks: 4.5, total: 5.75 },
+            plannerAudit: { schemaVersion: 1, protocol: "chat", skills: [{ id: "skill-one", name: "商品视觉", sourceCommit: "abcdef" }] },
+        });
     });
 
     it("shows the persisted review reason when a task has no terminal error", async () => {

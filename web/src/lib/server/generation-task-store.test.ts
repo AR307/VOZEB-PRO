@@ -23,7 +23,10 @@ import {
     getStoredGenerationTask,
     getStoredGenerationTaskByRequest,
     getStoredGenerationTaskByUpstream,
+    generationTaskPointsCost,
+    listStoredGenerationTaskRecordsByRunIds,
     listStoredGenerationTaskRecords,
+    queryStoredGenerationTasks,
     mutateStoredGenerationTask,
     summarizeStoredGenerationTaskCosts,
     withGenerationConcurrencyLimit,
@@ -182,6 +185,33 @@ describe("mutateStoredGenerationTask", () => {
         vi.mocked(postgresQuery).mockClear();
         vi.mocked(getDatabaseProvider).mockReturnValue("file");
     });
+
+    it("pushes Agent conversation, project and surface filters into PostgreSQL before limiting", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [], command: "SELECT", rowCount: 0, oid: 0, fields: [] });
+
+        await queryStoredGenerationTasks("agent", { userId: "user", conversationId: "conversation-one", projectId: "project-one", surface: "canvas", limit: 50 });
+
+        const [statement, params] = vi.mocked(postgresQuery).mock.calls[0] || [];
+        expect(String(statement)).toContain("user_id = $1");
+        expect(String(statement)).toContain("task_type = $2");
+        expect(String(statement)).toContain("conversation_id = $3");
+        expect(String(statement)).toContain("project_id = $4");
+        expect(String(statement)).toContain("surface = $5");
+        expect(String(statement)).toContain("ORDER BY updated_at DESC, id DESC LIMIT $6");
+        expect(params).toEqual(["user", "agent", "conversation-one", "project-one", "canvas", 50]);
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+    });
+
+    it("applies the same scoped filters before limiting with the file provider", async () => {
+        const now = Date.now();
+        mocks.records = [
+            { id: "run-new-wrong", userId: "user", type: "agent", status: "running", conversationId: "other", projectId: "project-one", surface: "canvas", payload: { id: "run-new-wrong" }, createdAt: now, updatedAt: now + 2, expiresAt: now + 60_000 },
+            { id: "run-match", userId: "user", type: "agent", status: "running", conversationId: "conversation-one", projectId: "project-one", surface: "canvas", payload: { id: "run-match" }, createdAt: now, updatedAt: now + 1, expiresAt: now + 60_000 },
+        ];
+
+        await expect(queryStoredGenerationTasks<{ id: string }>("agent", { userId: "user", conversationId: "conversation-one", projectId: "project-one", surface: "canvas", limit: 1 })).resolves.toEqual([{ id: "run-match" }]);
+    });
 });
 
 describe("listStoredGenerationTaskRecords", () => {
@@ -196,6 +226,19 @@ describe("listStoredGenerationTaskRecords", () => {
         const result = await listStoredGenerationTaskRecords({ search: "0001", searchUserIds: ["user-one"], includeAll: false });
 
         expect(result.items.map((item) => item.id)).toEqual(["task-one"]);
+    });
+
+    it("loads only child records for the requested Agent runs and counts planner billing", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+        const now = Date.now();
+        mocks.records = [
+            { id: "agent-one", userId: "user", type: "agent", status: "running", runId: "agent-one", payload: {}, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
+            { id: "child-one", userId: "user", type: "image", status: "success", runId: "agent-one", payload: { pointsCost: 2 }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
+            { id: "child-other", userId: "user", type: "video", status: "success", runId: "agent-two", payload: { pointsCost: 4 }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
+        ];
+
+        await expect(listStoredGenerationTaskRecordsByRunIds(["agent-one"])).resolves.toEqual([expect.objectContaining({ id: "child-one", runId: "agent-one" })]);
+        expect(generationTaskPointsCost({ plannerAudit: { pointsCost: 1.25 } })).toBe(1.25);
     });
 
     it("pushes PostgreSQL filters, pagination and aggregate summary into database queries", async () => {

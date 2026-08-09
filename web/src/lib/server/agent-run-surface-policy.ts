@@ -1,6 +1,6 @@
 import type { AuthSettings } from "@/lib/auth/store";
 import type { CreativeAsset, CreativeConversationContext, CreativeSurface } from "@/lib/creative-runtime-contract";
-import type { AgentRun, AgentRunTask } from "@/lib/server/agent-run-store";
+import type { AgentRun, AgentRunPlannerContextSummary, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 import { resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
 
@@ -10,17 +10,12 @@ export function availableAgentSkills(settings: AuthSettings, surface: CreativeSu
 }
 
 export function selectAgentSkills(settings: AuthSettings, surface: CreativeSurface, requestedSkillIds: string[] = []) {
-    const available = availableAgentSkills(settings, surface);
-    const requested = new Set(requestedSkillIds.map((id) => id.trim()).filter(Boolean));
-    return available.filter((skill) => requested.has(skill.id)).slice(0, 6);
+    const available = new Map(availableAgentSkills(settings, surface).map((skill) => [skill.id, skill]));
+    return Array.from(new Set(requestedSkillIds.map((id) => id.trim()).filter(Boolean))).flatMap((id) => (available.has(id) ? [available.get(id)!] : []));
 }
 
 export function plannerAgentSkills(settings: AuthSettings, run: Pick<AgentRun, "surface" | "selectedSkillIds">) {
-    const requested = new Set((run.selectedSkillIds || []).map((id) => id.trim()).filter(Boolean));
-    if (!requested.size) return [];
-    return availableAgentSkills(settings, run.surface)
-        .filter((skill) => requested.has(skill.id))
-        .slice(0, 6);
+    return selectAgentSkills(settings, run.surface, run.selectedSkillIds || []);
 }
 
 export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string) {
@@ -52,30 +47,55 @@ export function agentPlannerInput(
     availableModels: Array<{ id: string; name: string; capability: string }>,
     settings: AuthSettings,
 ) {
+    return buildAgentPlannerInput(run, conversationContext, referencedAssets, referenceSource, availableSkills, availableModels, settings).input;
+}
+
+export function buildAgentPlannerInput(
+    run: AgentRun,
+    conversationContext: CreativeConversationContext,
+    referencedAssets: CreativeAsset[],
+    referenceSource: "current-turn-explicit" | "conversation-memory-candidates" | "none",
+    availableSkills: AuthSettings["agentSkills"],
+    availableModels: Array<{ id: string; name: string; capability: string }>,
+    settings: AuthSettings,
+): { input: Record<string, unknown>; summary: AgentRunPlannerContextSummary } {
     const planningProfile = resolveAgentPlanningProfile(run);
     const selectedNodeIds = run.surface === "canvas" ? selectedCanvasNodeIds(run.snapshot) : [];
-    const recentMessages = conversationContext.recentMessages.slice(-6);
+    const prioritizedModels = prioritizeAgentPlannerModels(availableModels, run, settings);
     const payload = {
-        requirement: run.prompt.slice(0, 12_000),
+        requirement: run.prompt,
         conversationContext: {
-            summary: conversationContext.summary.slice(0, 3000),
-            recentMessages: recentMessages.map((item) => ({ role: item.role, content: item.content.slice(0, 800), sequence: item.sequence })),
+            summary: conversationContext.summary,
+            recentMessages: conversationContext.recentMessages.map((item) => ({ role: item.role, content: item.content, sequence: item.sequence })),
         },
         surface: run.surface,
         ...(run.projectId ? { projectId: run.projectId } : {}),
         ...(run.surface === "canvas" ? { canvasSnapshot: compactCanvasSnapshot(run.snapshot) } : run.surface === "drama" ? { projectSnapshot: compactProjectSnapshot(run.snapshot) } : {}),
         ...(selectedNodeIds.length ? { currentTurnSelection: { selectedNodeIds, rule: "这些节点是本轮明确附件；编辑任务不得改用历史节点" } } : {}),
         referenceContext: { source: referenceSource },
-        referencedAssets: referencedAssets.slice(-6).map(plannerAssetSummary),
+        referencedAssets: referencedAssets.map(plannerAssetSummary),
         requestedSkillIds: run.selectedSkillIds || [],
         ...(run.generationPreferences ? { generationPreferences: run.generationPreferences } : {}),
-        availableSkills: availableSkills.slice(0, 20).map(plannerSkillSummary),
-        availableModels: availableModels.slice(0, 40),
+        availableSkills: availableSkills.map(plannerSkillSummary),
+        availableModels: prioritizedModels,
         defaultModels: settings.defaultModels,
         generationDefaults: settings.generationDefaults,
         planningBudget: { complexity: planningProfile.complexity, maxOutputTokens: planningProfile.maxOutputTokens },
     };
-    return fitPlannerInput(payload, planningProfile.maxInputChars);
+    return fitPlannerInput(payload, planningProfile.maxInputChars, {
+        referenceSource,
+        protectedModelIds: protectedPlannerModelIds(run, settings, planningProfile.capabilities),
+    });
+}
+
+export function prioritizeAgentPlannerModels<T extends { id: string; capability: string }>(models: T[], run: Pick<AgentRun, "requestedModelIds" | "surface" | "prompt" | "snapshot" | "generationPreferences">, settings: AuthSettings) {
+    const profile = resolveAgentPlanningProfile(run);
+    const requestedOrder = new Map((run.requestedModelIds || []).map((id, index) => [id, index]));
+    const defaultOrder = new Map(defaultPlannerModelIds(settings, profile.capabilities).map((id, index) => [id, index]));
+    return models
+        .map((model, index) => ({ model, index }))
+        .sort((left, right) => modelPriority(left.model.id, requestedOrder, defaultOrder) - modelPriority(right.model.id, requestedOrder, defaultOrder) || left.index - right.index)
+        .map(({ model }) => model);
 }
 
 function plannerSkillSummary(skill: AuthSettings["agentSkills"][number]) {
@@ -155,54 +175,142 @@ function compactValue(value: unknown, depth: number): unknown {
     return undefined;
 }
 
-function fitPlannerInput<T extends Record<string, unknown>>(payload: T, maxChars: number): T {
-    if (JSON.stringify(payload).length <= maxChars) return payload;
-    const conversationContext = record(payload.conversationContext);
-    const canvasSnapshot = record(payload.canvasSnapshot);
-    const compact = {
-        ...payload,
-        conversationContext: {
-            summary: text(conversationContext.summary).slice(0, 1600),
-            recentMessages: records(conversationContext.recentMessages)
-                .slice(-4)
-                .map((message) => ({ ...message, content: text(message.content).slice(0, 400) })),
+function fitPlannerInput(payload: Record<string, unknown>, maxChars: number, options: { referenceSource: "current-turn-explicit" | "conversation-memory-candidates" | "none"; protectedModelIds: Set<string> }) {
+    const input = structuredClone(payload);
+    const original = plannerContextIds(input);
+    const context = record(input.conversationContext);
+    const messages = records(context.recentMessages);
+    context.recentMessages = messages;
+    input.conversationContext = context;
+
+    const latestMessage = messages.at(-1);
+    while (serializedLength(input) > maxChars && messages.length && messages[0] !== latestMessage) messages.shift();
+    shrinkRecordTextToFit(input, context, "summary", maxChars);
+    compactRecordsToFit(input, messages, ["content"], maxChars);
+
+    const assets = records(input.referencedAssets);
+    input.referencedAssets = assets;
+    if (options.referenceSource === "conversation-memory-candidates") while (serializedLength(input) > maxChars && assets.length) assets.pop();
+    else compactRecordsToFit(input, assets, ["textContent", "title", "mimeType", "url"], maxChars);
+
+    const canvasSnapshot = record(input.canvasSnapshot);
+    if (Object.keys(canvasSnapshot).length) {
+        const connections = records(canvasSnapshot.connections);
+        canvasSnapshot.connections = connections;
+        while (serializedLength(input) > maxChars && connections.length) connections.pop();
+        const selected = new Set(strings(canvasSnapshot.selectedNodeIds));
+        const nodes = records(canvasSnapshot.nodes);
+        canvasSnapshot.nodes = nodes;
+        removeUnprotectedRecordsToFit(input, nodes, (node) => selected.has(text(node.id)) || text(node.type) === "config", maxChars);
+        compactRecordsToFit(
+            input,
+            nodes.map((node) => record(node.metadata)),
+            ["content", "url"],
+            maxChars,
+        );
+    }
+
+    const projectSnapshot = record(input.projectSnapshot);
+    const projectKeys = Object.keys(projectSnapshot);
+    while (serializedLength(input) > maxChars && projectKeys.length) delete projectSnapshot[projectKeys.pop()!];
+
+    const skills = records(input.availableSkills);
+    input.availableSkills = skills;
+    compactRecordsToFit(input, skills, ["plannerSummary", "name", "workspaces"], maxChars);
+
+    const models = records(input.availableModels);
+    input.availableModels = models;
+    compactRecordsToFit(input, models, ["name"], maxChars);
+    removeUnprotectedRecordsToFit(input, models, (model) => options.protectedModelIds.has(text(model.id)), maxChars);
+
+    shrinkRecordTextToFit(input, input, "requirement", maxChars);
+    while (serializedLength(input) > maxChars && skills.length) skills.pop();
+    while (serializedLength(input) > maxChars && assets.length && options.referenceSource !== "current-turn-explicit") assets.pop();
+
+    const final = plannerContextIds(input);
+    const summary: AgentRunPlannerContextSummary = {
+        maxInputChars: maxChars,
+        serializedChars: serializedLength(input),
+        kept: final,
+        omitted: {
+            modelIds: difference(original.modelIds, final.modelIds),
+            skillIds: difference(original.skillIds, final.skillIds),
+            assetIds: difference(original.assetIds, final.assetIds),
+            recentMessageSequences: differenceNumbers(original.recentMessageSequences, final.recentMessageSequences),
         },
-        referencedAssets: records(payload.referencedAssets)
-            .slice(-4)
-            .map((asset) => ({ ...asset, textContent: text(asset.textContent).slice(0, 300) || undefined })),
-        availableSkills: records(payload.availableSkills)
-            .slice(0, 8)
-            .map((skill) => ({ ...skill, plannerSummary: text(skill.plannerSummary).slice(0, 120) })),
-        ...(Object.keys(canvasSnapshot).length ? { canvasSnapshot: { ...canvasSnapshot, nodes: records(canvasSnapshot.nodes).slice(0, 10) } } : {}),
     };
-    if (JSON.stringify(compact).length <= maxChars) return compact as T;
-    const reduced = {
-        ...compact,
-        conversationContext: { summary: text(record(compact.conversationContext).summary).slice(0, 800), recentMessages: records(record(compact.conversationContext).recentMessages).slice(-2) },
-        projectSnapshot: compactValue(compact.projectSnapshot, 2),
-        canvasSnapshot: Object.keys(canvasSnapshot).length ? { ...record(compact.canvasSnapshot), nodes: records(record(compact.canvasSnapshot).nodes).slice(0, 6) } : undefined,
-        availableSkills: records(compact.availableSkills).slice(0, 4),
+    return { input, summary };
+}
+
+function protectedPlannerModelIds(run: Pick<AgentRun, "requestedModelIds">, settings: AuthSettings, capabilities: Set<string>) {
+    return new Set([...(run.requestedModelIds || []), ...defaultPlannerModelIds(settings, capabilities)].map((id) => id.trim()).filter(Boolean));
+}
+
+function defaultPlannerModelIds(settings: AuthSettings, capabilities: Set<string>) {
+    return [
+        ["text", settings.defaultModels.textModel],
+        ["image", settings.defaultModels.imageModel],
+        ["video", settings.defaultModels.videoModel],
+        ["audio", settings.defaultModels.audioModel],
+    ].flatMap(([capability, id]) => (capabilities.has(capability) && id ? [id] : []));
+}
+
+function modelPriority(id: string, requested: Map<string, number>, defaults: Map<string, number>) {
+    if (requested.has(id)) return requested.get(id)!;
+    if (defaults.has(id)) return requested.size + defaults.get(id)!;
+    return requested.size + defaults.size;
+}
+
+function shrinkRecordTextToFit(root: Record<string, unknown>, target: Record<string, unknown>, key: string, maxChars: number) {
+    let value = text(target[key]);
+    while (serializedLength(root) > maxChars && value) {
+        const overflow = serializedLength(root) - maxChars;
+        value = value.slice(0, Math.max(0, value.length - Math.max(1, overflow)));
+        target[key] = value;
+    }
+}
+
+function compactRecordsToFit(root: Record<string, unknown>, values: Array<Record<string, unknown>>, keys: string[], maxChars: number) {
+    for (const key of keys) {
+        for (let index = values.length - 1; index >= 0 && serializedLength(root) > maxChars; index -= 1) delete values[index][key];
+    }
+}
+
+function removeUnprotectedRecordsToFit(root: Record<string, unknown>, values: Array<Record<string, unknown>>, protectedRecord: (value: Record<string, unknown>) => boolean, maxChars: number) {
+    for (let index = values.length - 1; index >= 0 && serializedLength(root) > maxChars; index -= 1) {
+        if (!protectedRecord(values[index])) values.splice(index, 1);
+    }
+}
+
+function plannerContextIds(input: Record<string, unknown>) {
+    return {
+        modelIds: records(input.availableModels)
+            .map((item) => text(item.id))
+            .filter(Boolean),
+        skillIds: records(input.availableSkills)
+            .map((item) => text(item.id))
+            .filter(Boolean),
+        assetIds: records(input.referencedAssets)
+            .map((item) => text(item.id))
+            .filter(Boolean),
+        recentMessageSequences: records(record(input.conversationContext).recentMessages)
+            .map((item) => Number(item.sequence))
+            .filter((value) => Number.isFinite(value)),
     };
-    if (JSON.stringify(reduced).length <= maxChars) return reduced as T;
-    const minimal = {
-        requirement: "",
-        surface: payload.surface,
-        projectId: payload.projectId,
-        currentTurnSelection: payload.currentTurnSelection,
-        referenceContext: payload.referenceContext,
-        referencedAssets: records(reduced.referencedAssets).slice(-2),
-        conversationContext: { summary: text(record(reduced.conversationContext).summary).slice(0, 300), recentMessages: [] },
-        canvasSnapshot: Object.keys(record(reduced.canvasSnapshot)).length ? { ...record(reduced.canvasSnapshot), nodes: records(record(reduced.canvasSnapshot).nodes).slice(0, 4) } : undefined,
-        projectSnapshot: compactValue(reduced.projectSnapshot, 1),
-        requestedSkillIds: payload.requestedSkillIds,
-        generationPreferences: payload.generationPreferences,
-        availableSkills: records(reduced.availableSkills).slice(0, 2),
-        availableModels: records(payload.availableModels).slice(0, 12),
-        defaultModels: payload.defaultModels,
-        planningBudget: payload.planningBudget,
-    };
-    const remaining = Math.max(200, maxChars - JSON.stringify(minimal).length - 16);
-    return { ...minimal, requirement: text(payload.requirement).slice(0, remaining) } as unknown as T;
+}
+
+function serializedLength(value: unknown) {
+    return JSON.stringify(value).length;
+}
+
+function difference(values: string[], kept: string[]) {
+    const keep = new Set(kept);
+    return values.filter((value) => !keep.has(value));
+}
+
+function differenceNumbers(values: number[], kept: number[]) {
+    const keep = new Set(kept);
+    return values.filter((value) => !keep.has(value));
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -215,6 +323,10 @@ function records(value: unknown): Array<Record<string, unknown>> {
 
 function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
+}
+
+function strings(value: unknown) {
+    return Array.isArray(value) ? value.map(text).filter(Boolean) : [];
 }
 
 function number(value: unknown) {

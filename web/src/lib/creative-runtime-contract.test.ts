@@ -26,16 +26,16 @@ describe("normalizeCreativeRunRequest", () => {
                 preferences: {
                     mode: "video",
                     image: { size: " 1024 × 1536 ", quality: "high", count: 12 },
-                    video: { size: " 9：16 ", quality: "1080P", seconds: 10, count: 12 },
-                    audio: { voice: " nova ", format: " wav " },
+                    video: { size: " 9：16 ", quality: " 2160P ", seconds: 10, count: 12, generateAudio: false, watermark: true },
+                    audio: { voice: " nova ", format: " wav ", speed: 1.25 },
                 },
             }),
         ).toMatchObject({
             preferences: {
                 mode: "video",
                 image: { size: "1024x1536", quality: "high", count: 10 },
-                video: { size: "9:16", quality: "1080", seconds: 10, count: 10 },
-                audio: { voice: "nova", format: "wav" },
+                video: { size: "9:16", quality: "2160", seconds: 10, count: 10, generateAudio: false, watermark: true },
+                audio: { voice: "nova", format: "wav", speed: 1.25 },
             },
         });
     });

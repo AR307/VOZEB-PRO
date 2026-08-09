@@ -67,4 +67,16 @@ describe("useCreateAgent submission retry", () => {
         expect(source.slice(executeStart, cancelStart)).toContain("if (!canClaimCurrentView) return true");
         expect(source.slice(cancelStart, controlStart)).toContain('controlCreativeAgentRun(activeRunId, "cancel", expectedConversationId)');
     });
+
+    it("does not mark a running message as failed when only the event connection stops", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-agent.ts"), "utf8");
+        const watchStart = source.indexOf("const watchRun");
+        const connectionErrorStart = source.indexOf("onConnectionError:", watchStart);
+        const connectionErrorSource = source.slice(connectionErrorStart, source.indexOf("onProjectHandoff:", connectionErrorStart));
+
+        expect(connectionErrorSource).toContain('updateAssistant(assistantMessageId, text, "running")');
+        expect(connectionErrorSource).not.toContain('"failed"');
+        expect(connectionErrorSource).not.toContain("setActiveRunId(undefined)");
+        expect(connectionErrorSource).not.toContain("setActiveRunStatus(undefined)");
+    });
 });

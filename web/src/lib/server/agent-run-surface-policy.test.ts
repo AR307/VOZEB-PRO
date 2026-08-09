@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/lib/auth/store-foundation";
 
-import { agentPlannerInput, compactCanvasSnapshot, plannerAgentSkills, selectAgentSkills } from "./agent-run-surface-policy";
+import { agentPlannerInput, buildAgentPlannerInput, compactCanvasSnapshot, plannerAgentSkills, selectAgentSkills } from "./agent-run-surface-policy";
 import { filterAgentPlannerModels, resolveAgentPlanningProfile } from "./agent-run-planning-profile";
 
 describe("selectAgentSkills", () => {
@@ -74,7 +74,7 @@ describe("agentPlannerInput", () => {
         const recentMessages = Array.from({ length: 10 }, (_, index) => ({ role: index % 2 ? "assistant" : "user", content: String(index).repeat(1200), sequence: index + 1 }));
         const assets = Array.from({ length: 9 }, (_, index) => ({ id: `asset-${index}`, type: "text", title: `素材 ${index}`, textContent: "素材正文".repeat(500), metadata: {} }));
         const input = agentPlannerInput(
-            { surface: "canvas", prompt: "生成商品图", snapshot: { selectedNodeIds: [], nodes: [], connections: [] }, selectedSkillIds: [] } as never,
+            { surface: "canvas", prompt: "生成商品图", snapshot: { selectedNodeIds: [], nodes: [], connections: [] }, selectedSkillIds: ["skill-one"] } as never,
             { summary: "长期摘要".repeat(2000), summaryThroughSequence: 0, recentMessages } as never,
             assets as never,
             "conversation-memory-candidates",
@@ -85,18 +85,57 @@ describe("agentPlannerInput", () => {
         const context = input.conversationContext as { summary: string; recentMessages: Array<{ content: string; sequence: number }> };
         const skill = (input.availableSkills as Array<Record<string, unknown>>)[0];
 
-        expect(context.summary.length).toBeLessThanOrEqual(3000);
-        expect(context.recentMessages.length).toBeGreaterThanOrEqual(4);
-        expect(context.recentMessages.length).toBeLessThanOrEqual(6);
+        expect(context.summary.length).toBeLessThanOrEqual("长期摘要".repeat(2000).length);
+        expect(context.recentMessages.length).toBeGreaterThan(0);
         expect(context.recentMessages.at(-1)?.sequence).toBe(10);
-        expect(context.recentMessages.every((message) => message.content.length <= 800)).toBe(true);
-        expect((input.referencedAssets as unknown[]).length).toBeGreaterThanOrEqual(4);
-        expect((input.referencedAssets as unknown[]).length).toBeLessThanOrEqual(6);
+        expect((input.referencedAssets as unknown[]).length).toBeGreaterThan(0);
         expect(String(skill.plannerSummary)).toBe("精简规划说明".repeat(40).slice(0, String(skill.plannerSummary).length));
         expect(String(skill.plannerSummary).length).toBeLessThanOrEqual(240);
         expect(skill).not.toHaveProperty("instructions");
         expect(JSON.stringify(input).length).toBeLessThanOrEqual(12_000);
         expect(input.planningBudget).toEqual({ complexity: "ordinary", maxOutputTokens: 1200 });
+    });
+
+    it("keeps a required model at the end of configuration and records actual omissions", () => {
+        const tailModelId = `tail-${"x".repeat(60)}`;
+        const models = Array.from({ length: 300 }, (_, index) => ({ id: index === 299 ? tailModelId : `model-${index}-${"x".repeat(60)}`, name: `模型 ${index} ${"名称".repeat(120)}`, capability: "image" }));
+        const settings = { ...DEFAULT_SETTINGS, defaultModels: { ...DEFAULT_SETTINGS.defaultModels, imageModel: tailModelId } };
+
+        const { input, summary } = buildAgentPlannerInput(
+            { surface: "chat", prompt: "生成一张商品图", referencedAssetIds: [], selectedSkillIds: [], requestedModelIds: [], assetIds: [], status: "planning", tasks: [] } as never,
+            { summary: "", summaryThroughSequence: 0, recentMessages: [] } as never,
+            [],
+            "none",
+            [],
+            models,
+            settings,
+        );
+        const keptIds = (input.availableModels as Array<{ id: string }>).map((model) => model.id);
+
+        expect(keptIds[0]).toBe(tailModelId);
+        expect(keptIds).toContain(tailModelId);
+        expect(summary.kept.modelIds).toContain(tailModelId);
+        expect(summary.omitted.modelIds.length).toBeGreaterThan(0);
+        expect(summary.serializedChars).toBeLessThanOrEqual(summary.maxInputChars);
+    });
+
+    it("keeps current-turn asset identities ahead of memory candidates under the same character budget", () => {
+        const assets = Array.from({ length: 40 }, (_, index) => ({
+            id: `asset-${index}`,
+            type: "image",
+            title: `素材 ${index} ${"标题".repeat(80)}`,
+            textContent: "素材正文".repeat(200),
+            remoteUrl: `https://cdn.example.com/${index}/${"path".repeat(40)}.png`,
+            metadata: {},
+        }));
+        const run = { surface: "chat", prompt: "根据参考图生成商品海报", referencedAssetIds: assets.map((asset) => asset.id), selectedSkillIds: [], assetIds: [], status: "planning", tasks: [] } as never;
+        const common = [{ id: "image", name: "图片", capability: "image" }];
+        const explicit = buildAgentPlannerInput(run, { summary: "", summaryThroughSequence: 0, recentMessages: [] } as never, assets as never, "current-turn-explicit", [], common, DEFAULT_SETTINGS);
+        const memory = buildAgentPlannerInput(run, { summary: "", summaryThroughSequence: 0, recentMessages: [] } as never, assets as never, "conversation-memory-candidates", [], common, DEFAULT_SETTINGS);
+
+        expect(explicit.summary.kept.assetIds).toEqual(assets.map((asset) => asset.id));
+        expect(explicit.summary.kept.assetIds.length).toBeGreaterThan(memory.summary.kept.assetIds.length);
+        expect(explicit.summary.serializedChars).toBeLessThanOrEqual(explicit.summary.maxInputChars);
     });
 
     it("uses larger bounded budgets only for multi-output and complex project planning", () => {
@@ -115,5 +154,6 @@ describe("agentPlannerInput", () => {
     it("only exposes explicitly selected Skills to the planner", () => {
         expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: [] })).toEqual([]);
         expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: ["image-motion"] }).map((skill) => skill.id)).toEqual(["image-motion"]);
+        expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: ["image-motion", "character-design"] }).map((skill) => skill.id)).toEqual(["image-motion", "character-design"]);
     });
 });

@@ -4,6 +4,7 @@ import { getLatestCreativeRunEventId, listCreativeRunEvents } from "@/lib/server
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { waitForCreativeRunEvent } from "@/lib/server/creative-run-event-signal";
+import { publicAgentRunEvent, publicAgentRunSnapshot } from "@/lib/server/agent-run-public";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 2400;
@@ -58,12 +59,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
                     }
                     const events = await listCreativeRunEvents(run.id, cursor);
                     for (const event of events) {
-                        controller.enqueue(encoder.encode(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+                        controller.enqueue(encoder.encode(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(publicAgentRunEvent(event))}\n\n`));
                         cursor = event.id;
                     }
                     const snapshotVersion = `${current.status}:${current.updatedAt}`;
                     if (snapshotVersion !== lastSnapshotVersion) {
-                        controller.enqueue(encoder.encode(`event: run.snapshot\ndata: ${JSON.stringify({ id: current.id, status: current.status, tasks: current.tasks, timings: current.timings, updatedAt: current.updatedAt })}\n\n`));
+                        controller.enqueue(encoder.encode(`event: run.snapshot\ndata: ${JSON.stringify(publicAgentRunSnapshot(current))}\n\n`));
                         lastSnapshotVersion = snapshotVersion;
                     }
                     if (["completed", "failed", "cancelled"].includes(current.status)) {

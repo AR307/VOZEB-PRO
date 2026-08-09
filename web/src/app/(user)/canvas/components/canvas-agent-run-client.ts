@@ -1,5 +1,7 @@
 import type { CanvasAgentOp } from "../utils/canvas-agent-ops";
 import type { CanvasAgentRunStage, CanvasAgentStableStageKey } from "./canvas-agent-progress";
+import { getCreativeAgentRun } from "@/services/api/creative";
+import { ClientSessionExpiredError, stopIfClientSessionExpired } from "@/services/api/session-expiration";
 
 type RunHandlers = {
     onPlan: (ops: CanvasAgentOp[], reply: string) => void;
@@ -13,7 +15,8 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers) {
     return new Promise<void>((resolve, reject) => {
         const stream = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
         let appliedPlan = false;
-        let connectionErrors = 0;
+        let connectionInterrupted = false;
+        let reconciliation: Promise<void> | null = null;
         let settled = false;
         let paused: boolean | undefined;
         let latestStageKey: CanvasAgentStableStageKey = "planning";
@@ -36,6 +39,44 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers) {
         const reportStage = (stage: CanvasAgentRunStage) => {
             if (stage.key !== "reconnecting") latestStageKey = stage.key;
             handlers.onStage(stage);
+        };
+        const reconcileRun = async () => {
+            if (await stopIfClientSessionExpired()) {
+                reportStage({ key: "reconnecting", resumeKey: latestStageKey, text: "登录状态已失效，任务仍可能在后台运行；重新登录后可继续查看" });
+                finish();
+                return;
+            }
+            try {
+                const run = await getCreativeAgentRun(runId);
+                if (settled) return;
+                if (run.status === "completed") {
+                    handlers.onAssistant("Agent 任务已完成，结果已经返回。", latestOutput);
+                    finish();
+                    return;
+                }
+                if (run.status === "cancelled") {
+                    handlers.onAssistant("Agent 任务已取消。");
+                    finish();
+                    return;
+                }
+                if (run.status === "failed") {
+                    const failed = run.tasks.find((task) => task.status === "failed");
+                    if (!latestFailedTask && failed) handlers.onAssistant(`「${failed.title || "创作任务"}」执行失败：${failed.error || "生成服务暂时不可用"}`, { runId, taskId: failed.id, title: failed.title || "创作任务失败" });
+                    else if (!latestFailedTask) handlers.onAssistant("Agent 执行失败", { runId, title: "Agent 执行失败" });
+                    finish();
+                    return;
+                }
+                setPaused(run.status === "paused");
+                reportStage({ key: "reconnecting", resumeKey: latestStageKey, text: run.status === "paused" ? "任务仍在后台保存，当前处于暂停状态" : "任务仍在后台运行，正在恢复连接" });
+            } catch (error) {
+                if (settled) return;
+                if (error instanceof ClientSessionExpiredError) {
+                    reportStage({ key: "reconnecting", resumeKey: latestStageKey, text: "登录状态已失效，任务仍可能在后台运行；重新登录后可继续查看" });
+                    finish();
+                    return;
+                }
+                reportStage({ key: "reconnecting", resumeKey: latestStageKey, text: "暂时无法确认实时状态，任务仍会在后台继续运行" });
+            }
         };
 
         stream.addEventListener("run.planning", () => reportStage({ key: "planning", text: "正在理解需求并分析当前画布" }));
@@ -137,13 +178,16 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers) {
             if (payload.status === "planning" || payload.status === "running") setPaused(false);
         });
         stream.onopen = () => {
-            connectionErrors = 0;
+            if (connectionInterrupted && !settled) reportStage({ key: latestStageKey, text: "连接已恢复，任务继续运行" });
+            connectionInterrupted = false;
         };
         stream.onerror = () => {
             if (settled) return;
-            connectionErrors += 1;
-            if (connectionErrors >= 5) finish(new Error("Agent 事件连接多次重试后仍无法恢复"));
-            else reportStage({ key: "reconnecting", resumeKey: latestStageKey, text: `连接暂时中断，正在进行第 ${connectionErrors} 次自动恢复` });
+            connectionInterrupted = true;
+            reportStage({ key: "reconnecting", resumeKey: latestStageKey, text: "连接暂时中断，正在确认后台任务状态" });
+            reconciliation ||= reconcileRun().finally(() => {
+                reconciliation = null;
+            });
         };
     });
 }

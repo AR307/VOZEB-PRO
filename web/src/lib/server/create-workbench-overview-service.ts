@@ -6,7 +6,7 @@ import type { StoredGenerationLog } from "@/lib/server/generation-log-types";
 import { listAgentRuns, type AgentRun } from "@/lib/server/agent-run-store";
 
 export async function getCreateWorkbenchOverview(userId: string): Promise<CreateWorkbenchOverviewPayload> {
-    const [latestProject, generation, agentRuns] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(userId), listAgentRuns(userId, 20)]);
+    const [latestProject, generation, agentRuns] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(userId), listAgentRuns({ userId, surface: "chat", limit: 20 })]);
     const runningTasks = [...buildCreateAgentRunOverview(agentRuns), ...generation.runningTasks]
         .filter((task, index, tasks) => tasks.findIndex((candidate) => candidate.id === task.id) === index)
         .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))

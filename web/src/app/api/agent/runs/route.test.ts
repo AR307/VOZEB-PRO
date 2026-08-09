@@ -24,7 +24,7 @@ vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTas
 vi.mock("@/lib/server/agent-run-store", () => ({ createAgentRun: mocks.createAgentRun, getAgentRunByClientRequestId: mocks.getAgentRunByClientRequestId, listAgentRuns: mocks.listAgentRuns }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
-import { maxDuration, POST } from "./route";
+import { GET, maxDuration, POST } from "./route";
 
 describe("POST /api/agent/runs", () => {
     beforeEach(() => {
@@ -78,6 +78,21 @@ describe("POST /api/agent/runs", () => {
         });
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "new-run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "created" }));
         expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
+    });
+});
+
+describe("GET /api/agent/runs", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.getCurrentUser.mockResolvedValue({ id: "user" });
+        mocks.listAgentRuns.mockResolvedValue([]);
+    });
+
+    it("passes entity filters to the store instead of filtering a fixed in-memory page", async () => {
+        const response = await GET(new Request("http://localhost/api/agent/runs?conversationId=conversation-one&projectId=project-one&surface=canvas"));
+
+        expect(response.status).toBe(200);
+        expect(mocks.listAgentRuns).toHaveBeenCalledWith({ userId: "user", conversationId: "conversation-one", projectId: "project-one", surface: "canvas", limit: 50 });
     });
 });
 

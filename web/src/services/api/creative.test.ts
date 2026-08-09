@@ -1,8 +1,18 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ refreshUserPointsIfSystem: vi.fn(async () => undefined) }));
+const mocks = vi.hoisted(() => ({ refreshUserPointsIfSystem: vi.fn(async () => undefined), stopIfClientSessionExpired: vi.fn(async () => false) }));
 
 vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: mocks.refreshUserPointsIfSystem }));
+vi.mock("@/services/api/session-expiration", () => {
+    class ClientSessionExpiredError extends Error {}
+    return {
+        ClientSessionExpiredError,
+        stopIfClientSessionExpired: mocks.stopIfClientSessionExpired,
+        throwIfClientSessionExpired: (response: Response) => {
+            if (response.status === 401) throw new ClientSessionExpiredError();
+        },
+    };
+});
 
 import { controlCreativeAgentRun, createCreativeAgentRun, listCreativeConversationPage, listCreativeMessages, watchCreativeAgentRun } from "./creative";
 import type { CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
@@ -25,6 +35,10 @@ class FakeEventSource extends EventTarget {
 }
 
 describe("统一创作 Agent 事件流", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.stopIfClientSessionExpired.mockResolvedValue(false);
+    });
     afterEach(() => vi.unstubAllGlobals());
 
     it("returns planning, task and final replies to one conversation", () => {
@@ -125,6 +139,74 @@ describe("统一创作 Agent 事件流", () => {
 
         expect(FakeEventSource.instance.closed).toBe(true);
         expect(terminal).toEqual([]);
+    });
+
+    it("keeps observing a non-terminal backend run after an SSE interruption", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => Response.json({ code: 0, data: { run: { id: "run-recover", conversationId: "conversation", inputMessageId: "input", assistantMessageId: "assistant", status: "running", assetIds: [], tasks: [] } }, msg: "OK" })),
+        );
+        const progress: string[] = [];
+        const terminal: unknown[] = [];
+        const errors: string[] = [];
+        watchCreativeAgentRun("run-recover", {
+            onProgress: (text) => progress.push(text),
+            onTerminal: (status) => terminal.push(status),
+            onConnectionError: (message) => errors.push(message),
+        });
+
+        FakeEventSource.instance.onerror?.();
+        await vi.waitFor(() => expect(progress).toContain("任务仍在后台运行，正在恢复连接"));
+
+        expect(FakeEventSource.instance.closed).toBe(false);
+        expect(terminal).toEqual([]);
+        expect(errors).toEqual([]);
+    });
+
+    it("uses the persisted terminal state after an SSE interruption", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    code: 0,
+                    data: {
+                        run: { id: "run-failed", conversationId: "conversation", inputMessageId: "input", assistantMessageId: "assistant", status: "failed", assetIds: [], tasks: [{ id: "video", title: "视频", status: "failed", error: "上游明确失败" }] },
+                    },
+                    msg: "OK",
+                }),
+            ),
+        );
+        const terminal: unknown[] = [];
+        watchCreativeAgentRun("run-failed", {
+            onProgress: () => undefined,
+            onTerminal: (status, text) => terminal.push({ status, text }),
+            onConnectionError: () => undefined,
+        });
+
+        FakeEventSource.instance.onerror?.();
+        await vi.waitFor(() => expect(terminal).toEqual([{ status: "failed", text: "上游明确失败" }]));
+
+        expect(FakeEventSource.instance.closed).toBe(true);
+    });
+
+    it("does not turn an expired login into a business failure", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        mocks.stopIfClientSessionExpired.mockResolvedValue(true);
+        const terminal: unknown[] = [];
+        const errors: string[] = [];
+        watchCreativeAgentRun("run-auth", {
+            onProgress: () => undefined,
+            onTerminal: (status) => terminal.push(status),
+            onConnectionError: (message) => errors.push(message),
+        });
+
+        FakeEventSource.instance.onerror?.();
+        await vi.waitFor(() => expect(errors).toEqual(["登录状态已失效，任务仍可能在后台运行；重新登录后可继续查看"]));
+
+        expect(terminal).toEqual([]);
+        expect(FakeEventSource.instance.closed).toBe(true);
     });
 });
 

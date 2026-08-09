@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { cn } from "@/lib/utils";
 
+import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement } from "./creative-composer-popover";
 import { creativeComposerToolButtonClass } from "./creative-composer-styles";
 import { CreativeGenerationPreferences as GenerationPreferencesControl, mediaCapabilityLabel, type MediaCapability } from "./creative-generation-preferences";
 
@@ -30,12 +31,12 @@ export function CreativeGenerationControls({
     smartPlanning: boolean;
     creationMode: "agent" | CreativeGenerationMode;
     generationPreferences: CreativeGenerationPreferences;
-    placement: "topLeft" | "bottomLeft";
+    placement: CreativeComposerPopoverPlacement;
     onToggleModel: (model: CreativeModelOption) => void;
     onClearModels: () => void;
     onToggleSmartPlanning: () => void;
     onCapabilityChange: (capability: MediaCapability) => void;
-    onChangeGenerationPreference: (capability: MediaCapability, patch: Record<string, string | number>) => void;
+    onChangeGenerationPreference: (capability: MediaCapability, patch: Record<string, string | number | boolean>) => void;
 }) {
     const [modelPickerOpen, setModelPickerOpen] = useState(false);
     const [preferredCapability, setPreferredCapability] = useState<MediaCapability>("image");
@@ -49,7 +50,7 @@ export function CreativeGenerationControls({
             <Popover
                 trigger="click"
                 placement={placement}
-                autoAdjustOverflow={false}
+                autoAdjustOverflow={creativeComposerPopoverOverflow(placement)}
                 arrow={false}
                 open={modelPickerOpen}
                 onOpenChange={setModelPickerOpen}
@@ -164,7 +165,7 @@ export function CreativeGenerationControls({
                     setPreferredCapability(capability);
                     onCapabilityChange(capability);
                 }}
-                onChange={(patch) => onChangeGenerationPreference(creationMode === "agent" ? preferredCapability : activeCapability, patch as Record<string, string | number>)}
+                onChange={(patch) => onChangeGenerationPreference(creationMode === "agent" ? preferredCapability : activeCapability, patch as Record<string, string | number | boolean>)}
             />
         </>
     );

@@ -8,6 +8,7 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { publicAgentRun } from "@/lib/server/agent-run-public";
 
 export const maxDuration = 2400;
 
@@ -50,5 +51,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const cookie = request.headers.get("cookie") || "";
     await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "task_retry" });
     after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id] }));
-    return NextResponse.json({ code: 0, data: { run: updated }, msg: "OK" });
+    return NextResponse.json({ code: 0, data: { run: publicAgentRun(updated) }, msg: "OK" });
 }

@@ -27,6 +27,10 @@ describe("resolveVideoGenerationParameters", () => {
         expect(resolveVideoGenerationParameters({ videoSeconds: "-1" }, defaults).videoSeconds).toBe(-1);
     });
 
+    it("does not impose a platform duration ceiling before provider normalization", () => {
+        expect(resolveVideoGenerationParameters({ videoSeconds: "60" }, defaults).videoSeconds).toBe(60);
+    });
+
     it("selects the first supported duration that is not shorter than the request", () => {
         expect(resolveUpstreamVideoDuration(7, 5, { durationRange: "5、8、10 秒" })).toBe(8);
         expect(resolveUpstreamVideoDuration(12, 5, { durationRange: "5、8、10 秒" })).toBe(10);

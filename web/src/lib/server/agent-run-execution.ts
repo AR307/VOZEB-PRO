@@ -20,7 +20,7 @@ import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-referen
 import type { AgentFunctionCallResult } from "./agent-function-call";
 import { agentSurfaceImageSize, canvasSnapshotNodes, isMediaReferenceType, resolveAgentTaskRatio, resolveCanvasTaskTargetNodeId } from "./agent-run-task-input";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "./system-ai-billing";
-import { acceptsMediaReference, mergeTaskReferences, normalizeConstrainedTextResult, reviewCorrection, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
+import { acceptsMediaReference, mergeTaskReferences, normalizeConstrainedTextResult, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
 
 export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
 export { acceptsMediaReference, mergeTaskReferences, normalizeConstrainedTextResult, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
@@ -126,9 +126,12 @@ export const agentPlanTool = {
                         count: { type: "number", minimum: 1, maximum: 10 },
                         ratio: { type: "string", maxLength: 20 },
                         quality: { type: "string", maxLength: 20 },
-                        seconds: { type: "number", minimum: 1, maximum: 20 },
+                        seconds: { type: "number", minimum: 1 },
                         voice: { type: "string", maxLength: 80 },
                         format: { type: "string", maxLength: 20 },
+                        generateAudio: { type: "boolean" },
+                        watermark: { type: "boolean" },
+                        speed: { type: "number", exclusiveMinimum: 0 },
                         dependencies: { type: "array", maxItems: 20, items: { type: "string", maxLength: 120 } },
                         assetIds: { type: "array", maxItems: 20, items: { type: "string", maxLength: 160 } },
                     },
@@ -221,7 +224,10 @@ export function normalizeTasks(
             seconds: item.type === "video" && generationPreferences?.video?.seconds ? generationPreferences.video.seconds : resolveAgentVideoSeconds(item.type, item.seconds, defaults.videoSeconds, globalDefaults.videoSeconds),
             voice: item.type === "audio" ? generationPreferences?.audio?.voice || item.voice?.trim() || textDefault(defaults.voice) || globalDefaults.audioVoice : item.voice?.trim() || textDefault(defaults.voice),
             format: item.type === "audio" ? generationPreferences?.audio?.format || item.format?.trim() || textDefault(defaults.format) || globalDefaults.audioFormat : item.format?.trim() || textDefault(defaults.format),
-            dependencies: item.dependencies || [],
+            generateAudio: item.type === "video" ? (generationPreferences?.video?.generateAudio ?? item.generateAudio) : undefined,
+            watermark: item.type === "video" ? (generationPreferences?.video?.watermark ?? item.watermark) : undefined,
+            speed: item.type === "audio" ? (generationPreferences?.audio?.speed ?? item.speed) : undefined,
+            dependencies: (item.dependencies || []).map((dependency) => dependency.trim()),
             status: "ready",
             attempts: 0,
         };
@@ -339,38 +345,10 @@ export async function executeTasks(runId: string, origin: string, cookie: string
             if (run.tasks.every((task) => task.status === "completed")) {
                 if (!run.reviewed && shouldBlockOnReview(run)) {
                     const review = await reviewCompletedTasks(run, origin, cookie);
-                    if (review.retryTaskIds.length) {
-                        await updateAgentRunById(
-                            runId,
-                            {
-                                reviewed: true,
-                                review,
-                                tasks: run.tasks.map((task) =>
-                                    review.retryTaskIds.includes(task.id)
-                                        ? {
-                                              ...task,
-                                              status: "ready",
-                                              attempts: Math.max(1, task.attempts),
-                                              taskId: undefined,
-                                              taskIds: undefined,
-                                              childTasks: undefined,
-                                              result: undefined,
-                                              error: undefined,
-                                              prompt: `${task.prompt}\n\n复盘修正：${reviewCorrection(review, task.id)}`,
-                                          }
-                                        : task,
-                                ),
-                            },
-                            { type: "run.review.retry", data: { review } },
-                            ["running"],
-                            executionId,
-                        );
-                        continue;
-                    }
                     await updateAgentRunById(
                         runId,
                         { reviewed: true, review, reviewStatus: review.status === "unavailable" ? "review_unavailable" : "review_completed", timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), reviewCompletedAt: Date.now() } },
-                        { type: review.status === "unavailable" ? "run.review.unavailable" : "run.review.passed", data: { review } },
+                        { type: review.status === "unavailable" ? "run.review.unavailable" : review.status === "needs_revision" ? "run.review.needs_revision" : "run.review.passed", data: { review } },
                         ["running"],
                         executionId,
                     );
@@ -506,7 +484,7 @@ export async function requestFunctionCall(
         allowNaturalLanguage,
         onInvalidResponse: (headers) => refundTextResponse(userId, billingModel, headers),
     });
-    return readFunctionCallResult(call.arguments, call.headers);
+    return readFunctionCallResult(call.arguments, call.headers, call.protocol, call.elapsedMs);
 }
 
 export function responseOutputText(payload: { output_text?: string; output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }) {
@@ -520,10 +498,12 @@ export function responseOutputText(payload: { output_text?: string; output?: Arr
     );
 }
 
-export function readFunctionCallResult(argumentsText: string, headers: Headers): AgentFunctionCallResult {
+export function readFunctionCallResult(argumentsText: string, headers: Headers, protocol?: AgentFunctionCallResult["protocol"], elapsedMs?: number): AgentFunctionCallResult {
     const pointsRemaining = Number(headers.get("x-vozeb-pro-points-remaining"));
     return {
         arguments: argumentsText,
+        protocol,
+        elapsedMs,
         pointsRemaining: Number.isFinite(pointsRemaining) ? pointsRemaining : undefined,
         ...readSystemAiBilling(headers),
     };
@@ -641,9 +621,17 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
         apiKey: "",
         apiFormat: channel.apiFormat || "openai",
         model,
-        ...(task.type === "image" ? { quality: task.quality || "high", size: task.ratio || "auto" } : {}),
-        ...(task.type === "video" ? { size: task.ratio || "16:9", videoSeconds: String(task.seconds || 5), vquality: task.quality || "720", videoGenerateAudio: "true", videoWatermark: "false" } : {}),
-        ...(task.type === "audio" ? { voice: task.voice || "alloy", format: task.format || "mp3", speed: "1" } : {}),
+        ...(task.type === "image" ? { ...(task.quality ? { quality: task.quality } : {}), ...(task.ratio ? { size: task.ratio } : {}) } : {}),
+        ...(task.type === "video"
+            ? {
+                  ...(task.ratio ? { size: task.ratio } : {}),
+                  ...(task.seconds ? { videoSeconds: String(task.seconds) } : {}),
+                  ...(task.quality ? { vquality: task.quality } : {}),
+                  ...(task.generateAudio !== undefined ? { videoGenerateAudio: String(task.generateAudio) } : {}),
+                  ...(task.watermark !== undefined ? { videoWatermark: String(task.watermark) } : {}),
+              }
+            : {}),
+        ...(task.type === "audio" ? { ...(task.voice ? { voice: task.voice } : {}), ...(task.format ? { format: task.format } : {}), ...(task.speed ? { speed: String(task.speed) } : {}) } : {}),
     };
     const path = task.type === "image" ? "/api/image-tasks" : task.type === "video" ? "/api/video-generation-tasks" : task.type === "audio" ? "/api/audio-tasks" : "/api/text-tasks";
     const references = taskReferences(task);

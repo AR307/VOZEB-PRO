@@ -11,6 +11,7 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { cn } from "@/lib/utils";
 
+import { creativeComposerPopoverOverflow, useCreativeComposerPopoverPlacement } from "./creative-composer-popover";
 import { creativeComposerToolButtonClass } from "./creative-composer-styles";
 import { shouldShowVideoFrameControls } from "./creative-composer-video-mode";
 import { CreativeGenerationControls, type CreativeModelOption } from "./creative-generation-controls";
@@ -91,7 +92,7 @@ export function CreativeComposer({
     onToggleSmartPlanning: () => void;
     onChangeCreationMode: (mode: "agent" | CreativeGenerationMode) => void;
     onChangeGenerationCapability: (capability: CreativeModelOption["capability"]) => void;
-    onChangeGenerationPreference: (capability: CreativeModelOption["capability"], patch: Record<string, string | number>) => void;
+    onChangeGenerationPreference: (capability: CreativeModelOption["capability"], patch: Record<string, string | number | boolean>) => void;
     onSelectVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">, assetId: string) => void;
     onUploadVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">) => void;
     onRemoveVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">) => void;
@@ -116,6 +117,7 @@ export function CreativeComposer({
     const mediaAttachments = visibleAttachments.filter((asset) => (asset.type === "image" || asset.type === "video") && Boolean(asset.serverUrl || asset.remoteUrl));
     const otherAttachments = visibleAttachments.filter((asset) => !mediaAttachments.some((media) => media.id === asset.id));
     const popoverPlacement = centered ? "bottomLeft" : "topLeft";
+    const composerPopoverPlacement = useCreativeComposerPopoverPlacement(popoverPlacement);
 
     useEffect(() => setReady(true), []);
 
@@ -337,8 +339,8 @@ export function CreativeComposer({
                     <div className="hide-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto sm:gap-2">
                         <Popover
                             trigger="click"
-                            placement={popoverPlacement}
-                            autoAdjustOverflow={false}
+                            placement={composerPopoverPlacement}
+                            autoAdjustOverflow={creativeComposerPopoverOverflow(composerPopoverPlacement)}
                             arrow={false}
                             open={modePickerOpen}
                             onOpenChange={setModePickerOpen}
@@ -399,7 +401,7 @@ export function CreativeComposer({
                             smartPlanning={smartPlanning}
                             creationMode={creationMode}
                             generationPreferences={generationPreferences}
-                            placement={popoverPlacement}
+                            placement={composerPopoverPlacement}
                             onToggleModel={onToggleModel}
                             onClearModels={onClearModels}
                             onToggleSmartPlanning={onToggleSmartPlanning}
@@ -408,8 +410,8 @@ export function CreativeComposer({
                         />
                         <Popover
                             trigger="click"
-                            placement={popoverPlacement}
-                            autoAdjustOverflow={false}
+                            placement={composerPopoverPlacement}
+                            autoAdjustOverflow={creativeComposerPopoverOverflow(composerPopoverPlacement)}
                             arrow={false}
                             open={skillPickerOpen}
                             onOpenChange={setSkillPickerOpen}

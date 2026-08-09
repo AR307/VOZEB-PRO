@@ -4,10 +4,11 @@ import { CreativeRuntimeInputError, type CreativeGenerationPreferences, type Cre
 import { extractImageSizeFromPrompt } from "@/lib/image-size";
 import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-reference-contract";
 import { createCreativeRunBundle, getCreativeAssetsByIds, getCreativeRunByClientRequestId, mutateCreativeRun } from "./creative-runtime-store";
-import { getStoredGenerationTask, listStoredGenerationTasks } from "./generation-task-store";
+import { getStoredGenerationTask, queryStoredGenerationTasks } from "./generation-task-store";
 import { cancelledRunCanvasOps, taskCanvasEventOps } from "./agent-run-canvas-ops";
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 import { agentTaskCompletionMessage } from "./agent-run-messages";
+import type { AgentRunPlannerAudit } from "./agent-run-audit";
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentRunReviewStatus = "review_pending" | "reviewing" | "review_completed" | "review_unavailable";
@@ -42,6 +43,9 @@ export type AgentRunTask = {
     seconds?: number;
     voice?: string;
     format?: string;
+    generateAudio?: boolean;
+    watermark?: boolean;
+    speed?: number;
     dependencies: string[];
     status: "ready" | "running" | "completed" | "failed" | "cancelled";
     attempts: number;
@@ -79,9 +83,23 @@ export type AgentRun = {
     reviewed: boolean;
     reviewStatus?: AgentRunReviewStatus;
     reviewAttempts?: number;
+    plannerContext?: AgentRunPlannerContextSummary;
+    plannerAudit?: AgentRunPlannerAudit;
+    cancellation?: AgentRunCancellation;
     timings?: AgentRunTimings;
     createdAt: number;
     updatedAt: number;
+};
+export type AgentRunCancellation = {
+    requestedAt: number;
+    pendingChildTaskIds: string[];
+    lastError?: string;
+};
+export type AgentRunPlannerContextSummary = {
+    maxInputChars: number;
+    serializedChars: number;
+    kept: { modelIds: string[]; skillIds: string[]; assetIds: string[]; recentMessageSequences: number[] };
+    omitted: { modelIds: string[]; skillIds: string[]; assetIds: string[]; recentMessageSequences: number[] };
 };
 export type AgentRunTimings = {
     requestAcceptedAt: number;
@@ -152,7 +170,7 @@ function selectedCanvasNodeIds(snapshot: unknown) {
 }
 
 export const getAgentRun = (id: string) => getStoredGenerationTask<AgentRun>("agent", id);
-export const listAgentRuns = (userId: string, limit?: number) => listStoredGenerationTasks<AgentRun>("agent", userId, limit);
+export const listAgentRuns = (options: { userId: string; conversationId?: string; projectId?: string; surface?: CreativeSurface; limit?: number }) => queryStoredGenerationTasks<AgentRun>("agent", options);
 export async function getAgentRunByClientRequestId(userId: string, clientRequestId: string) {
     return getCreativeRunByClientRequestId<AgentRun>(userId, clientRequestId);
 }
@@ -166,7 +184,7 @@ export async function setAgentRunStatus(run: AgentRun, status: AgentRunStatus) {
             const tasks = status === "cancelled" ? cancelActiveTasks(current.tasks) : current.tasks;
             const ops = status === "cancelled" && current.surface === "canvas" ? cancelledRunCanvasOps(current.id, tasks) : [];
             return {
-                run: { ...current, status, tasks, executionId: undefined },
+                run: { ...current, status, tasks, executionId: undefined, ...(status === "cancelled" ? { cancellation: undefined } : {}) },
                 event: { type: `run.${status}`, ...(ops.length ? { data: { ops } } : {}) },
                 assistant: terminalAssistant(status),
             };
@@ -190,7 +208,12 @@ function cancelActiveTasks(tasks: AgentRunTask[]) {
 
 export async function updateAgentRunById(
     id: string,
-    patch: Partial<Pick<AgentRun, "status" | "executionId" | "tasks" | "foundation" | "projectHandoff" | "projectHandoffEmitted" | "review" | "reviewed" | "reviewStatus" | "reviewAttempts" | "assetIds" | "timings">>,
+    patch: Partial<
+        Pick<
+            AgentRun,
+            "status" | "executionId" | "tasks" | "foundation" | "projectHandoff" | "projectHandoffEmitted" | "review" | "reviewed" | "reviewStatus" | "reviewAttempts" | "plannerContext" | "plannerAudit" | "cancellation" | "assetIds" | "timings"
+        >
+    >,
     event?: { type: string; data?: unknown },
     allowedStatuses?: AgentRunStatus[],
     expectedExecutionId?: string,

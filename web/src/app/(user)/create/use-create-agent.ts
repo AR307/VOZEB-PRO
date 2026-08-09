@@ -344,11 +344,8 @@ export function useCreateAgent() {
                 },
                 onConnectionError: (text) => {
                     if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
-                    updateAssistant(assistantMessageId, text, "failed");
-                    setSending(false);
-                    submittingRef.current = false;
-                    setActiveRunId(undefined);
-                    setActiveRunStatus(undefined);
+                    updateAssistant(assistantMessageId, text, "running");
+                    streamRef.current = null;
                 },
                 onProjectHandoff: (handoff) => {
                     if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;

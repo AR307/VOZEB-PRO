@@ -84,6 +84,24 @@ export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id
     return (await readFileTasks()).find((task) => task.id === id && task.type === type && task.expiresAt > Date.now()) || null;
 }
 
+export async function listStoredGenerationTaskRecordsByRunIds(runIds: string[]) {
+    const ids = Array.from(new Set(runIds.map(cleanContextText).filter(Boolean)));
+    if (!ids.length) return [];
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(
+            `SELECT * FROM generation_tasks
+             WHERE expires_at > now() AND run_id = ANY($1::text[]) AND task_type <> 'agent'
+             ORDER BY run_id ASC, created_at ASC, id ASC`,
+            [ids],
+        );
+        return result.rows.map(mapStoredTaskRecord);
+    }
+    return (await readFileTasks())
+        .filter((task) => task.expiresAt > Date.now() && task.type !== "agent" && task.runId && ids.includes(task.runId))
+        .sort((left, right) => String(left.runId).localeCompare(String(right.runId)) || left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+}
+
 export async function getStoredGenerationTaskByRequest<T>(type: GenerationTaskType, userId: string, clientRequestId: string, attemptNo?: number): Promise<T | null> {
     const requestId = cleanContextText(clientRequestId);
     if (!requestId) return null;
@@ -120,16 +138,36 @@ export async function getStoredGenerationTaskByUpstream(type: GenerationTaskType
 }
 
 export async function listStoredGenerationTasks<T>(type: GenerationTaskType, userId: string, limit = 20): Promise<T[]> {
+    return queryStoredGenerationTasks<T>(type, { userId, limit });
+}
+
+export async function queryStoredGenerationTasks<T>(type: GenerationTaskType, options: { userId: string; conversationId?: string; projectId?: string; surface?: string; limit?: number }): Promise<T[]> {
+    const userId = options.userId.trim();
+    const conversationId = cleanContextText(options.conversationId);
+    const projectId = cleanContextText(options.projectId);
+    const surface = cleanContextText(options.surface);
+    const limit = Math.max(1, Math.min(100, Math.floor(Number(options.limit) || 20)));
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND expires_at > now() ORDER BY updated_at DESC LIMIT $3", [userId, type, Math.max(1, Math.min(100, limit))]);
+        const values: unknown[] = [userId, type];
+        const filters = ["user_id = $1", "task_type = $2", "expires_at > now()"];
+        const addFilter = (column: string, value?: string) => {
+            if (!value) return;
+            values.push(value);
+            filters.push(`${column} = $${values.length}`);
+        };
+        addFilter("conversation_id", conversationId);
+        addFilter("project_id", projectId);
+        addFilter("surface", surface);
+        values.push(limit);
+        const result = await postgresQuery<{ payload: T }>(`SELECT payload FROM generation_tasks WHERE ${filters.join(" AND ")} ORDER BY updated_at DESC, id DESC LIMIT $${values.length}`, values);
         return result.rows.map((row) => row.payload);
     }
     const tasks = await readFileTasks();
     return tasks
-        .filter((task) => task.userId === userId && task.type === type && task.expiresAt > Date.now())
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, Math.max(1, Math.min(100, limit)))
+        .filter((task) => task.userId === userId && task.type === type && task.expiresAt > Date.now() && (!conversationId || task.conversationId === conversationId) && (!projectId || task.projectId === projectId) && (!surface || task.surface === surface))
+        .sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))
+        .slice(0, limit)
         .map((task) => task.payload as T);
 }
 
@@ -204,10 +242,11 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
 export function generationTaskPointsCost(payload: Record<string, unknown>) {
     const config = recordObject(payload.config);
     const upstream = recordObject(payload.upstream);
+    const plannerAudit = recordObject(payload.plannerAudit);
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(recordObject) : [];
     const attempts = Array.isArray(payload.attempts) ? payload.attempts.map(recordObject) : [];
     return (
-        positiveNumber(payload.pointsCost, recordObject(payload.billing).pointsCost, upstream.pointsCost) ||
+        positiveNumber(payload.pointsCost, recordObject(payload.billing).pointsCost, upstream.pointsCost, plannerAudit.pointsCost) ||
         tasks.reduce((total, task) => total + positiveNumber(task.pointsCost, recordObject(task.billing).pointsCost), 0) ||
         attempts.filter((attempt) => attempt.status === "succeeded" || attempt.status === "success").reduce((total, attempt) => total + positiveNumber(attempt.pointsCost, recordObject(attempt.billing).pointsCost), 0)
     );

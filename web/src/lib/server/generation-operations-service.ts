@@ -2,7 +2,7 @@ import type { AdminGenerationChannel, AdminGenerationOperationsPayload, AdminGen
 import { findPublicUserIdsByKeyword, getAuthSettings, getPublicUsersByIds } from "@/lib/auth/store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { getChannelRuntimeHealth, isChannelRuntimeCooling } from "@/lib/server/channel-runtime-health";
-import { generationTaskPointsCost, listStoredGenerationTaskRecords, type GenerationTaskRecordListOptions, type StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import { generationTaskPointsCost, listStoredGenerationTaskRecords, listStoredGenerationTaskRecordsByRunIds, type GenerationTaskRecordListOptions, type StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 import { getTextPlanningRuntime } from "@/lib/server/text-planning-runtime";
 import { resolveGenerationReviewReason } from "@/lib/server/generation-task-review-reason";
 
@@ -13,9 +13,15 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
         listStoredGenerationTaskRecords({ ...options, searchUserIds, includeAll: false }),
         listStoredGenerationTaskRecords({ ...options, type: "agent", searchUserIds, includeAll: true, page: 1, pageSize: 100 }),
     ]);
-    const [settings, users] = await Promise.all([settingsPromise, getPublicUsersByIds(result.items.map((record) => record.userId))]);
+    const agentRunIds = result.items.filter((record) => record.type === "agent").map((record) => record.id);
+    const [settings, users, childRecords] = await Promise.all([settingsPromise, getPublicUsersByIds(result.items.map((record) => record.userId)), listStoredGenerationTaskRecordsByRunIds(agentRunIds)]);
     const usersById = new Map(users.map((user) => [user.id, user]));
-    const items = result.items.map((record) => taskSummary(record, usersById.get(record.userId)));
+    const childrenByRunId = new Map<string, StoredGenerationTaskRecord[]>();
+    for (const child of childRecords) {
+        if (!child.runId) continue;
+        childrenByRunId.set(child.runId, [...(childrenByRunId.get(child.runId) || []), child]);
+    }
+    const items = result.items.map((record) => taskSummary(record, usersById.get(record.userId), childrenByRunId.get(record.id) || []));
     return {
         items,
         total: result.total,
@@ -27,14 +33,25 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
     };
 }
 
-function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: string; username: string; displayName: string }): AdminGenerationTask {
+function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: string; username: string; displayName: string }, childRecords: StoredGenerationTaskRecord[] = []): AdminGenerationTask {
     const payload = record.payload;
     const config = object(payload.config);
     const upstream = object(payload.upstream);
+    const plannerAudit = agentPlannerAudit(payload.plannerAudit);
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(object) : [];
     const failedTask = tasks.find((task) => task.status === "failed" && text(task.id));
-    const model = firstText(payload.logicalModelId, payload.model, config.model, config.imageModel, config.videoModel, config.audioModel, upstream.model, tasks.find((task) => text(task.model))?.model);
-    const pointsCost = generationTaskPointsCost(payload);
+    const model = firstText(plannerAudit?.logicalModelId, payload.logicalModelId, payload.model, config.model, config.imageModel, config.videoModel, config.audioModel, upstream.model, tasks.find((task) => text(task.model))?.model);
+    const ownPointsCost = generationTaskPointsCost(payload);
+    const childPointsCost = childRecords.reduce((total, child) => total + generationTaskPointsCost(child.payload), 0);
+    const pointsBreakdown =
+        record.type === "agent"
+            ? {
+                  planner: roundedPoints(plannerAudit?.pointsCost ?? ownPointsCost),
+                  childTasks: roundedPoints(childPointsCost),
+                  total: roundedPoints((plannerAudit?.pointsCost ?? ownPointsCost) + childPointsCost),
+              }
+            : undefined;
+    const pointsCost = pointsBreakdown?.total ?? roundedPoints(ownPointsCost);
     return {
         id: record.id,
         userId: record.userId,
@@ -50,21 +67,35 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         parentTaskId: record.parentTaskId,
         attemptNo: record.attemptNo,
         model,
-        channelId: firstText(payload.channelId, config.channelId, upstream.channelId),
+        channelId: firstText(plannerAudit?.channelId, payload.channelId, config.channelId, upstream.channelId),
+        provider: record.provider,
+        queryPath: record.queryPath,
         executionPhase: record.executionPhase,
+        workerId: record.workerId,
+        leaseUntil: record.leaseUntil,
+        lastHeartbeatAt: record.lastHeartbeatAt,
+        nextPollAt: record.nextPollAt,
+        lastPollAt: record.lastPollAt,
+        leaseExpired: isGenerationLeaseExpired(record),
         upstreamTaskId: record.upstreamTaskId || firstText(upstream.id) || undefined,
         lastUpstreamStatus: record.lastUpstreamStatus,
         attempts: generationAttempts(payload.attempts),
         prompt: firstText(payload.prompt, config.prompt, tasks.find((task) => text(task.prompt))?.prompt).slice(0, 500),
         error: firstText(payload.error, tasks.find((task) => text(task.error))?.error, resolveGenerationReviewReason(record)).slice(0, 1000) || undefined,
         durationMs: Math.max(0, record.updatedAt - record.createdAt),
-        pointsCost: Number(pointsCost.toFixed(2)),
+        pointsCost,
+        pointsBreakdown,
+        plannerAudit,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         canCancel: record.status === "pending" || record.status === "running" || record.status === "paused",
         retryTaskId: record.type === "agent" ? text(failedTask?.id) || undefined : undefined,
         canReview: record.executionPhase === "needs_review" && (record.type === "text" || record.type === "image" || record.type === "video" || record.type === "audio"),
     };
+}
+
+export function isGenerationLeaseExpired(record: Pick<StoredGenerationTaskRecord, "status" | "leaseUntil">, now = Date.now()) {
+    return (record.status === "pending" || record.status === "running") && typeof record.leaseUntil === "number" && Number.isFinite(record.leaseUntil) && record.leaseUntil <= now;
 }
 
 function channelSummaries(settings: Awaited<ReturnType<typeof getAuthSettings>>): AdminGenerationChannel[] {
@@ -170,6 +201,47 @@ function generationAttempts(value: unknown): GenerationAttempt[] | undefined {
             pointsCost: Number(item.pointsCost) > 0 ? Number(item.pointsCost) : undefined,
             error: text(item.error) || undefined,
         }));
+}
+
+function agentPlannerAudit(value: unknown): AdminGenerationTask["plannerAudit"] {
+    const source = object(value);
+    const mode = source.mode === "direct" || source.mode === "model" ? source.mode : undefined;
+    const schemaVersion = Number(source.schemaVersion);
+    if (!mode || !Number.isSafeInteger(schemaVersion) || schemaVersion <= 0) return undefined;
+    const protocol = source.protocol === "responses" || source.protocol === "chat" || source.protocol === "gemini" || source.protocol === "custom" ? source.protocol : undefined;
+    const skills = Array.isArray(source.skills)
+        ? source.skills.flatMap((value) => {
+              const skill = object(value);
+              const id = text(skill.id);
+              const name = text(skill.name);
+              return id && name
+                  ? [
+                        {
+                            id,
+                            name,
+                            ...(text(skill.sourceVersion) ? { sourceVersion: text(skill.sourceVersion) } : {}),
+                            ...(text(skill.sourceCommit) ? { sourceCommit: text(skill.sourceCommit) } : {}),
+                            ...(text(skill.sourceContentHash) ? { sourceContentHash: text(skill.sourceContentHash) } : {}),
+                        },
+                    ]
+                  : [];
+          })
+        : [];
+    return {
+        schemaVersion,
+        mode,
+        ...(text(source.logicalModelId) ? { logicalModelId: text(source.logicalModelId) } : {}),
+        ...(text(source.channelId) ? { channelId: text(source.channelId) } : {}),
+        ...(text(source.upstreamModel) ? { upstreamModel: text(source.upstreamModel) } : {}),
+        ...(protocol ? { protocol } : {}),
+        ...(Number.isFinite(Number(source.elapsedMs)) && Number(source.elapsedMs) >= 0 ? { elapsedMs: Number(source.elapsedMs) } : {}),
+        ...(Number.isFinite(Number(source.pointsCost)) && Number(source.pointsCost) >= 0 ? { pointsCost: Number(source.pointsCost) } : {}),
+        skills,
+    };
+}
+
+function roundedPoints(value: number) {
+    return Number(value.toFixed(2));
 }
 
 function object(value: unknown) {

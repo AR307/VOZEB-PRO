@@ -1,22 +1,37 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { watchCanvasAgentRun } from "./canvas-agent-run-client";
 import type { CanvasAgentRunStage } from "./canvas-agent-progress";
+
+const mocks = vi.hoisted(() => ({ getCreativeAgentRun: vi.fn(), stopIfClientSessionExpired: vi.fn(async () => false) }));
+
+vi.mock("@/services/api/creative", () => ({ getCreativeAgentRun: mocks.getCreativeAgentRun }));
+vi.mock("@/services/api/session-expiration", () => {
+    class ClientSessionExpiredError extends Error {}
+    return { ClientSessionExpiredError, stopIfClientSessionExpired: mocks.stopIfClientSessionExpired };
+});
 
 class FakeEventSource extends EventTarget {
     static instance: FakeEventSource;
     onopen: (() => void) | null = null;
     onerror: (() => void) | null = null;
+    closed = false;
     constructor() {
         super();
         FakeEventSource.instance = this;
     }
-    close() {}
+    close() {
+        this.closed = true;
+    }
     emit(type: string, data: unknown) {
         this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
     }
 }
 
 describe("Canvas Agent 事件流", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.stopIfClientSessionExpired.mockResolvedValue(false);
+    });
     afterEach(() => vi.unstubAllGlobals());
 
     it("reports thinking stages and the final returned message", async () => {
@@ -172,5 +187,52 @@ describe("Canvas Agent 事件流", () => {
         await promise;
 
         expect(messages).toEqual([{ text: "生成渠道暂时无法连接，请稍后重试或联系管理员。", detail: { runId: "run", title: "Agent 执行失败" } }]);
+    });
+
+    it("keeps a non-terminal Run alive after an event connection interruption", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        mocks.getCreativeAgentRun.mockResolvedValue({ id: "run", conversationId: "conversation", inputMessageId: "input", assistantMessageId: "assistant", status: "running", assetIds: [], tasks: [] });
+        const stages: CanvasAgentRunStage[] = [];
+        const promise = watchCanvasAgentRun("run", {
+            onPlan: () => undefined,
+            onAssistant: () => undefined,
+            onStage: (stage) => stages.push(stage),
+            onPaused: () => undefined,
+            onOps: () => undefined,
+        });
+
+        FakeEventSource.instance.onerror?.();
+        await vi.waitFor(() => expect(stages.some((stage) => stage.text === "任务仍在后台运行，正在恢复连接")).toBe(true));
+        expect(FakeEventSource.instance.closed).toBe(false);
+
+        FakeEventSource.instance.emit("run.completed", { data: { reply: "完成" } });
+        await promise;
+    });
+
+    it("uses the persisted terminal state after an event connection interruption", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        mocks.getCreativeAgentRun.mockResolvedValue({
+            id: "run",
+            conversationId: "conversation",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            status: "failed",
+            assetIds: [],
+            tasks: [{ id: "video", title: "视频", status: "failed", error: "上游明确失败" }],
+        });
+        const messages: string[] = [];
+        const promise = watchCanvasAgentRun("run", {
+            onPlan: () => undefined,
+            onAssistant: (text) => messages.push(text),
+            onStage: () => undefined,
+            onPaused: () => undefined,
+            onOps: () => undefined,
+        });
+
+        FakeEventSource.instance.onerror?.();
+        await promise;
+
+        expect(messages).toEqual(["「视频」执行失败：上游明确失败"]);
+        expect(FakeEventSource.instance.closed).toBe(true);
     });
 });

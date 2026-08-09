@@ -32,7 +32,7 @@ export function resolveVideoDuration(value: unknown, fallback: number) {
     const number = Number(value);
     if (number === -1) return -1;
     const seconds = Number.isFinite(number) && number > 0 ? number : fallback;
-    return Math.max(1, Math.min(20, Math.floor(seconds)));
+    return Math.max(1, Math.floor(seconds));
 }
 
 export function withVideoReferenceFidelity(prompt: string, references: readonly VideoGenerationReference[]) {

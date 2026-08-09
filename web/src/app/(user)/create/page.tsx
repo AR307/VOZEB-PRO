@@ -305,7 +305,7 @@ export default function CreatePage() {
         });
     };
 
-    const changeGenerationPreference = (capability: "image" | "video" | "audio", patch: Record<string, string | number>) => {
+    const changeGenerationPreference = (capability: "image" | "video" | "audio", patch: Record<string, string | number | boolean>) => {
         setGenerationPreferences((current) => {
             const activePreferences = applyAgentGenerationCapability(creationMode, capability, current);
             if (capability !== "video") return { ...activePreferences, [capability]: { ...activePreferences[capability], ...patch } };
