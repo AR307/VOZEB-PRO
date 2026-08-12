@@ -26,9 +26,24 @@ import { POST } from "./route";
 describe("Agent child task retry concurrency", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "failed", tasks: [{ id: "task", status: "failed" }] });
+        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", conversationId: "conversation-one", status: "failed", tasks: [{ id: "task", status: "failed" }] });
         mocks.countActive.mockResolvedValue(1);
         mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 1 }, generationDefaults: { imageSize: "1:1" } });
+    });
+
+    it("rejects a retry issued from a different conversation", async () => {
+        const response = await POST(
+            new Request("http://localhost/api/agent/runs/run/tasks/task/retry", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversationId: "conversation-two" }),
+            }),
+            { params: Promise.resolve({ id: "run", taskId: "task" }) },
+        );
+
+        expect(response.status).toBe(409);
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+        expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
     });
 
     it("uses the current backend limit before changing the failed task", async () => {

@@ -1,16 +1,14 @@
 "use client";
 
 import { Film, LoaderCircle, Maximize2, Pause, Play, RotateCw, Volume2, VolumeX } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 
 import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
 import { creativeAssetLayout } from "./creative-asset-layout";
-import { CreativeResultSwitcher, useSelectedCreativeResult, type CreativeResultActionContext } from "./creative-result-switcher";
+import { CreativeResultSwitcher, useSelectedCreativeResult } from "./creative-result-switcher";
 import { creativeVideoPresentation, formatVideoTime } from "./creative-video-presentation";
-
-const ACTIONS_MIN_WIDTH = 352;
 
 export function CreativeVideoResult({
     assets,
@@ -23,7 +21,7 @@ export function CreativeVideoResult({
     message: CreativeMessage;
     fallbackResolution?: string;
     fallbackRatio?: string;
-    renderActions?: (activeAsset: CreativeAsset, context: CreativeResultActionContext) => ReactNode;
+    renderActions?: (activeAsset: CreativeAsset) => ReactNode;
 }) {
     const videos = useMemo(() => assets.filter((asset) => asset.status === "ready" && asset.type === "video" && assetUrl(asset)), [assets]);
     const { selectedResult: activeAsset, selectedIndex, selectResult } = useSelectedCreativeResult(videos);
@@ -33,17 +31,17 @@ export function CreativeVideoResult({
 
     const sourceDimensions = validDimensions(activeAsset) || loadedDimensions[activeAsset.id] || {};
     const layout = creativeAssetLayout(sourceDimensions, { variant: "video-result", ratio: presentation.ratio || fallbackRatio });
-    const mediaWidth = layout?.width || 520;
-    const shellWidth = Math.max(mediaWidth, ACTIONS_MIN_WIDTH);
+    const mediaWidth = String(layout?.container.width || "520px");
+    const resultStyle = { "--creative-result-media-width": mediaWidth } as CSSProperties;
 
     return (
-        <div data-testid="creative-video-result" data-results-count={videos.length} className="inline-flex w-fit max-w-full flex-col items-start">
+        <div data-testid="creative-video-result" data-results-count={videos.length} className="grid w-fit max-w-full grid-cols-[minmax(0,1fr)] items-start sm:grid-cols-[var(--creative-result-media-width)_auto] sm:gap-x-3" style={resultStyle}>
             <div
                 data-testid="creative-primary-result"
                 data-rendered-width={layout?.width}
                 data-rendered-height={layout?.height}
                 style={layout?.container}
-                className="max-w-full flex-none overflow-hidden rounded-xl border border-[#30343b] bg-black shadow-[0_4px_18px_rgba(15,23,42,0.08)] dark:border-[#3a4049] dark:shadow-black/25"
+                className="col-start-1 row-start-1 max-w-full flex-none overflow-hidden rounded-xl border border-[#30343b] bg-black shadow-[0_4px_18px_rgba(15,23,42,0.08)] dark:border-[#3a4049] dark:shadow-black/25"
             >
                 <CreativeVideoPlayer
                     key={activeAsset.id}
@@ -57,13 +55,16 @@ export function CreativeVideoResult({
                 />
             </div>
 
-            {renderActions?.(activeAsset, { mediaWidth, shellWidth })}
+            {renderActions ? <div className="col-start-1 row-start-2">{renderActions(activeAsset)}</div> : null}
 
             <CreativeResultSwitcher
                 results={videos}
                 selectedIndex={selectedIndex}
-                width={shellWidth}
+                width={mediaWidth}
+                height={layout?.height || 293}
                 thumbnailWidth={112}
+                sideThumbnailWidth={88}
+                className="col-start-1 row-start-3 sm:col-start-2 sm:row-span-2 sm:row-start-1"
                 renderThumbnail={(video, index) => {
                     const item = creativeVideoPresentation(message, video, fallbackResolution, fallbackRatio);
                     const posterUrl = item.coverUrl ? imagePreviewUrl(item.coverUrl, 360) : undefined;
@@ -72,7 +73,9 @@ export function CreativeVideoResult({
                             {posterUrl ? (
                                 <img src={posterUrl} alt="" loading="lazy" className="size-full object-cover" />
                             ) : (
-                                <video src={assetUrl(video)} muted playsInline preload="metadata" className="size-full object-cover" aria-label={video.title || `生成视频 ${index + 1}`} />
+                                <span className="grid size-full place-items-center text-white/70" aria-label={video.title || `生成视频 ${index + 1}`}>
+                                    <Film className="size-5" />
+                                </span>
                             )}
                             <span className="absolute inset-0 grid place-items-center bg-black/10" aria-hidden>
                                 <span className="grid size-7 place-items-center rounded-full bg-black/55">

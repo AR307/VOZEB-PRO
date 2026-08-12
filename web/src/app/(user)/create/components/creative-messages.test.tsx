@@ -4,7 +4,42 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";
 
-import { CreativeMessages } from "./creative-messages";
+import { CreativeMessages, creativeReferenceAction, creativeResultPrompt } from "./creative-messages";
+
+describe("creative result references", () => {
+    const first = mediaAsset("first");
+    const second = mediaAsset("second");
+
+    it("targets only the currently selected result", () => {
+        expect(creativeReferenceAction(second, [first.id])).toEqual({ assetId: second.id, referenced: false });
+        expect(creativeReferenceAction(first, [first.id])).toEqual({ assetId: first.id, referenced: true });
+    });
+
+    it("does not expose a reference action without a ready media result", () => {
+        expect(creativeReferenceAction(undefined, [])).toBeUndefined();
+        expect(creativeReferenceAction({ ...first, status: "failed" }, [])).toBeUndefined();
+        expect(creativeReferenceAction({ ...first, type: "text" }, [])).toBeUndefined();
+    });
+
+    it("resolves the public optimized prompt for the selected result without exposing the execution prompt", () => {
+        const selected = { ...second, metadata: { agentTaskId: "task-two" } };
+        const run = {
+            id: "run",
+            conversationId: "conversation-one",
+            inputMessageId: "user",
+            assistantMessageId: "assistant",
+            status: "completed" as const,
+            assetIds: [first.id, second.id],
+            tasks: [
+                { id: "task-one", title: "结果一", status: "completed" as const, optimizedPrompt: "优化提示词一" },
+                { id: "task-two", title: "结果二", status: "completed" as const, optimizedPrompt: "优化提示词二" },
+            ],
+        };
+
+        expect(creativeResultPrompt(selected, [first, selected], run)).toBe("优化提示词二");
+        expect(creativeResultPrompt({ ...selected, metadata: { agentTaskId: "missing" } }, [first, selected], run)).toBe("");
+    });
+});
 
 describe("CreativeMessages", () => {
     it("renders completed assistant markdown instead of showing syntax markers", () => {
@@ -161,10 +196,12 @@ describe("CreativeMessages", () => {
 
         expect(markup).toContain("max-w-[1040px]");
         expect(markup).toContain("flex-wrap");
-        expect(markup).toContain("width:420px");
+        expect(markup).toContain("width:min(420px, 33.333333dvh)");
         expect(markup).toContain("object-contain");
         expect(markup).toContain("!size-full object-contain");
-        expect(markup).toContain("h-36 sm:h-40");
+        expect(markup).toContain('data-testid="creative-message-end"');
+        expect(markup).toContain("!mt-0 h-px");
+        expect(markup).not.toContain("h-36 sm:h-40");
         expect(markup).toContain('aria-label="引用素材"');
         expect(markup).toContain('aria-label="下载图片"');
         expect(markup).toContain('aria-label="复制消息"');
@@ -273,12 +310,14 @@ describe("CreativeMessages", () => {
             id: "video-one",
             messageId: assistantMessage.id,
             sourceRunId: "run-video",
+            sourceTaskId: "task-video",
             type: "video",
             title: "生成视频",
             serverUrl: "/video.mp4",
             width: 1920,
             height: 1080,
             durationMs: 10_000,
+            metadata: { agentTaskId: "task-video" },
         } satisfies CreativeAsset;
         const markup = renderToStaticMarkup(
             <App>
@@ -295,10 +334,12 @@ describe("CreativeMessages", () => {
                             inputMessageId: userMessage.id,
                             assistantMessageId: assistantMessage.id,
                             status: "completed",
+                            createdAt: 1_000,
+                            updatedAt: 7_000,
                             requestedModelIds: ["seedance"],
                             generationPreferences: { mode: "video", video: { size: "16:9", quality: "720P", seconds: 10 } },
                             assetIds: [output.id],
-                            tasks: [{ id: "task-video", title: "生成视频", type: "video", model: "seedance", ratio: "16:9", quality: "720P", seconds: 10, status: "completed" }],
+                            tasks: [{ id: "task-video", title: "生成视频", type: "video", model: "seedance", optimizedPrompt: "人物自然转身，镜头平稳推进", ratio: "16:9", quality: "720P", seconds: 10, status: "completed" }],
                         },
                     }}
                     onMaterializeProject={async () => {
@@ -325,12 +366,15 @@ describe("CreativeMessages", () => {
         expect(markup).toContain('aria-label="创作助手"');
         expect(markup).toContain("text-right");
         expect(markup).toContain("让参考图自然动起来");
+        expect(markup).toContain('aria-label="复制输入内容"');
         expect(markup).toContain("已为你生成视频");
         expect(markup).toContain('aria-label="本轮创作参数"');
-        expect(markup).toContain("视频生成");
         expect(markup).toContain("16:9");
         expect(markup).toContain("720P");
         expect(markup).toContain("10秒");
+        expect(markup).toContain('aria-label="生成耗时：6秒"');
+        expect(markup).toContain("完成时间：");
+        expect(markup).toContain('data-testid="creative-run-timing"');
         expect(markup).toContain('aria-label="查看本轮创作详细信息"');
         expect(markup).toContain("复制提示词");
         expect(markup).not.toContain("重新编辑");
@@ -347,7 +391,74 @@ describe("CreativeMessages", () => {
         expect(markup).not.toContain("镜头分镜");
         expect(markup).not.toContain("lg:grid-cols-[minmax(0,420px)_minmax(0,480px)]");
         expect(markup).not.toContain("!bg-[#f0f2f4]");
+        expect(markup).not.toContain("!bg-[#f7f6ff]");
+        expect(markup).not.toContain("!text-[#5c5fff]");
         expect(markup).not.toContain("shadow-[0_4px_16px_rgba(32,36,42,0.04)]");
+    });
+
+    it("uses a warm elapsed-time status while a media result is still running", () => {
+        const now = Date.now();
+        const userMessage: CreativeMessage = {
+            id: "waiting-user",
+            conversationId: "conversation-one",
+            runId: "waiting-run",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "生成一张海边照片",
+            metadata: {},
+            createdAt: now,
+            updatedAt: now,
+        };
+        const assistantMessage: CreativeMessage = {
+            id: "waiting-assistant",
+            conversationId: "conversation-one",
+            runId: "waiting-run",
+            sequence: 2,
+            role: "assistant",
+            status: "running",
+            content: "正在处理「图片生成」",
+            metadata: {},
+            createdAt: now,
+            updatedAt: now,
+        };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[userMessage, assistantMessage]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "waiting-run": {
+                            id: "waiting-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: userMessage.id,
+                            assistantMessageId: assistantMessage.id,
+                            status: "running",
+                            generationPreferences: { mode: "image", image: { size: "1:1", quality: "high" } },
+                            assetIds: [],
+                            tasks: [{ id: "image-task", title: "图片生成", type: "image", status: "running" }],
+                            createdAt: now,
+                            updatedAt: now,
+                        },
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onEditMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+
+        expect(markup).toContain('data-testid="creative-generation-waiting"');
+        expect(markup).toContain("主人，画面正在一点点显现");
+        expect(markup).toContain("已等待");
+        expect(markup).not.toContain("已为你生成图片");
+        expect(markup).not.toContain("正在处理「图片生成」");
     });
 
     it("restores the original text before retrying an initial submission failure", () => {
@@ -553,6 +664,7 @@ describe("CreativeMessages", () => {
         expect(markup).toContain("rounded-[14px]");
         expect(markup).toContain("bg-[linear-gradient(135deg,#f3f1ff_0%,#ebeaff_100%)]");
         expect(markup).toContain("1970");
+        expect(markup).toContain('aria-label="复制输入内容"');
         expect(markup).toContain('aria-label="复制消息"');
         expect(markup).not.toContain('aria-label="编辑消息"');
         expect(markup).not.toContain("编辑重试");
@@ -578,4 +690,20 @@ function renderMessages(message: CreativeMessage, assets: CreativeAsset[] = [], 
             />
         </App>,
     );
+}
+
+function mediaAsset(id: string): CreativeAsset {
+    return {
+        id,
+        userId: "user",
+        conversationId: "conversation-one",
+        ordinal: 0,
+        type: "image",
+        status: "ready",
+        title: id,
+        serverUrl: `/${id}.png`,
+        metadata: {},
+        createdAt: 1,
+        updatedAt: 1,
+    };
 }

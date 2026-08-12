@@ -1,5 +1,5 @@
-export const YUMENG_MODEL_CENTER_CREATE_PATH = "/v2/model-center/tasks";
-export const YUMENG_MODEL_CENTER_QUERY_PATH = "/v2/model-center/tasks/:task_id";
+export const YUMENG_MODEL_CENTER_CREATE_PATH = "/kyyReactApiServer/v2/model-center/tasks";
+export const YUMENG_MODEL_CENTER_QUERY_PATH = "/kyyReactApiServer/v2/model-center/tasks/:task_id";
 
 // These IDs are the models published in the current 昱梦 V2 documentation.
 // They are a documented preset, not a fallback request to an undocumented catalog endpoint.

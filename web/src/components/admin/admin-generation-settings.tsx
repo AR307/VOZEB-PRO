@@ -1,6 +1,6 @@
 "use client";
 
-import { Input, InputNumber, Select } from "antd";
+import { AutoComplete, Input, InputNumber, Select } from "antd";
 import { CircleGauge, SlidersHorizontal, Sparkles } from "lucide-react";
 
 import type { AuthSettings } from "@/lib/auth/store";
@@ -21,22 +21,22 @@ export function GenerationConcurrencyPanel({ settings, onChange }: { settings: A
             <SectionTitle icon={<Sparkles className="size-4" />} title="每用户并发上限" />
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <LabeledControl label="Agent 同时运行">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationConcurrency.agent} onChange={(value) => onChange("agent", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.agent} onChange={(value) => onChange("agent", value)} />
                 </LabeledControl>
                 <LabeledControl label="生图同时生成">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationConcurrency.image} onChange={(value) => onChange("image", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.image} onChange={(value) => onChange("image", value)} />
                 </LabeledControl>
                 <LabeledControl label="视频同时生成">
-                    <InputNumber className="w-full" min={1} max={5} precision={0} value={settings.generationConcurrency.video} onChange={(value) => onChange("video", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.video} onChange={(value) => onChange("video", value)} />
                 </LabeledControl>
                 <LabeledControl label="音频同时生成">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationConcurrency.audio} onChange={(value) => onChange("audio", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.audio} onChange={(value) => onChange("audio", value)} />
                 </LabeledControl>
                 <LabeledControl label="文本同时生成">
-                    <InputNumber className="w-full" min={1} max={20} precision={0} value={settings.generationConcurrency.text} onChange={(value) => onChange("text", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.text} onChange={(value) => onChange("text", value)} />
                 </LabeledControl>
                 <LabeledControl label="整集合成同时运行">
-                    <InputNumber className="w-full" min={1} max={5} precision={0} value={settings.generationConcurrency.render} onChange={(value) => onChange("render", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.render} onChange={(value) => onChange("render", value)} />
                 </LabeledControl>
             </div>
             <div className="mt-2 text-xs leading-5 text-stone-500 dark:text-stone-400">限制的是单个用户自己的并发任务，不是全站共享上限。</div>
@@ -81,10 +81,10 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
             <SectionTitle icon={<SlidersHorizontal className="size-4" />} title="生成默认值" />
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <LabeledControl label="画布默认生图张数">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationDefaults.canvasImageCount} onChange={(value) => onChange("canvasImageCount", value || 1)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationDefaults.canvasImageCount} onChange={(value) => onChange("canvasImageCount", value || 1)} />
                 </LabeledControl>
                 <LabeledControl label="Agent 默认生图张数">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationDefaults.imageCount} onChange={(value) => onChange("imageCount", value || 1)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationDefaults.imageCount} onChange={(value) => onChange("imageCount", value || 1)} />
                 </LabeledControl>
                 <LabeledControl label="默认图片/视频比例">
                     <Select
@@ -108,10 +108,16 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
                     />
                 </LabeledControl>
                 <LabeledControl label="默认视频清晰度">
-                    <Select className="w-full" value={settings.generationDefaults.videoQuality} options={["480", "720", "1080"].map((value) => ({ value, label: value + "p" }))} onChange={(value) => onChange("videoQuality", value)} />
+                    <AutoComplete
+                        className="w-full"
+                        value={settings.generationDefaults.videoQuality}
+                        options={["480", "720", "1080"].map((value) => ({ value, label: value + "p" }))}
+                        placeholder="例如 720、1440 或 2K"
+                        onChange={(value) => onChange("videoQuality", value)}
+                    />
                 </LabeledControl>
                 <LabeledControl label="默认视频秒数">
-                    <InputNumber className="w-full" min={1} max={20} precision={0} value={settings.generationDefaults.videoSeconds} onChange={(value) => onChange("videoSeconds", value || 5)} />
+                    <InputNumber className="w-full" min={-1} precision={0} placeholder="-1 表示智能" value={settings.generationDefaults.videoSeconds} onChange={(value) => onChange("videoSeconds", value ?? 5)} />
                 </LabeledControl>
                 <LabeledControl label="默认音频音色">
                     <Input value={settings.generationDefaults.audioVoice} onChange={(event) => onChange("audioVoice", event.target.value)} />

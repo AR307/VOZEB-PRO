@@ -1,6 +1,7 @@
 import { getAuthSettings, refundUserPoints, type LogicalModelCapability } from "@/lib/auth/store";
 import { withCreativeFoundation, type CreativeReview } from "@/lib/creative-agent-contract";
 import type { CreativeAsset, CreativeGenerationPreferences, CreativeSurface } from "@/lib/creative-runtime-contract";
+import { creativeAssetReferenceAliases } from "@/lib/creative-asset-references";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveLogicalModel } from "@/lib/server/logical-model-router";
 import { reviewCreativeOutputs } from "@/lib/server/creative-review-service";
@@ -18,16 +19,15 @@ import { linkStoredGenerationTask } from "@/lib/server/generation-task-store";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-reference-contract";
 import type { AgentFunctionCallResult } from "./agent-function-call";
-import { agentSurfaceImageSize, canvasSnapshotNodes, isMediaReferenceType, resolveAgentTaskRatio, resolveCanvasTaskTargetNodeId } from "./agent-run-task-input";
+import { agentSurfaceImageSize, canvasReferenceContext, canvasReferenceSupportsTask, canvasSnapshotNodes, isMediaReferenceType, resolveAgentTaskRatio, resolveCanvasTaskTargetNodeId, selectedCanvasReferenceNodes } from "./agent-run-task-input";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "./system-ai-billing";
-import { acceptsMediaReference, mergeTaskReferences, normalizeConstrainedTextResult, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
+import { acceptsMediaReference, mergeTaskReferences, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
 
 export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
-export { acceptsMediaReference, mergeTaskReferences, normalizeConstrainedTextResult, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
+export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
 
 class AgentChildTaskTerminalError extends Error {}
 class AgentChildTaskDeferredError extends Error {}
-type AgentCopyOutcome = { index: number; result: unknown; taskId: string; assetIds: string[] };
 
 export async function canContinue(id: string, executionId: string) {
     const run = await getAgentRun(id);
@@ -42,17 +42,15 @@ export const agentPlanTool = {
         type: "object",
         properties: {
             intent: { type: "string", enum: ["conversation", "generation"] },
-            objective: { type: "string", maxLength: 1000 },
-            audience: { type: "string", maxLength: 500 },
-            reply: { type: "string", maxLength: 1200 },
-            skillIds: { type: "array", maxItems: 6, items: { type: "string", maxLength: 160 } },
+            objective: { type: "string" },
+            audience: { type: "string" },
+            reply: { type: "string" },
+            skillIds: { type: "array", items: { type: "string" } },
             decisions: {
                 type: "array",
-                minItems: 2,
-                maxItems: 6,
                 items: {
                     type: "object",
-                    properties: { label: { type: "string", maxLength: 80 }, value: { type: "string", maxLength: 200 }, reason: { type: "string", maxLength: 500 } },
+                    properties: { label: { type: "string" }, value: { type: "string" }, reason: { type: "string" } },
                     required: ["label", "value", "reason"],
                     additionalProperties: false,
                 },
@@ -64,12 +62,12 @@ export const agentPlanTool = {
                     brief: {
                         type: "object",
                         properties: {
-                            objective: { type: "string", maxLength: 1000 },
-                            audience: { type: "string", maxLength: 500 },
-                            usage: { type: "string", maxLength: 500 },
-                            coreMessage: { type: "string", maxLength: 800 },
-                            constraints: { type: "array", maxItems: 12, items: { type: "string", maxLength: 300 } },
-                            referenceStrategy: { type: "string", maxLength: 800 },
+                            objective: { type: "string" },
+                            audience: { type: "string" },
+                            usage: { type: "string" },
+                            coreMessage: { type: "string" },
+                            constraints: { type: "array", items: { type: "string" } },
+                            referenceStrategy: { type: "string" },
                         },
                         required: ["objective"],
                         additionalProperties: false,
@@ -77,13 +75,13 @@ export const agentPlanTool = {
                     direction: {
                         type: "object",
                         properties: {
-                            summary: { type: "string", maxLength: 1000 },
-                            style: { type: "string", maxLength: 500 },
-                            composition: { type: "string", maxLength: 800 },
-                            colors: { type: "array", maxItems: 12, items: { type: "string", maxLength: 80 } },
-                            lighting: { type: "string", maxLength: 500 },
-                            keywords: { type: "array", maxItems: 16, items: { type: "string", maxLength: 100 } },
-                            avoid: { type: "array", maxItems: 12, items: { type: "string", maxLength: 200 } },
+                            summary: { type: "string" },
+                            style: { type: "string" },
+                            composition: { type: "string" },
+                            colors: { type: "array", items: { type: "string" } },
+                            lighting: { type: "string" },
+                            keywords: { type: "array", items: { type: "string" } },
+                            avoid: { type: "array", items: { type: "string" } },
                         },
                         required: ["summary"],
                         additionalProperties: false,
@@ -94,18 +92,18 @@ export const agentPlanTool = {
             },
             brand: {
                 type: "object",
-                properties: { summary: { type: "string", maxLength: 1000 }, colors: { type: "array", maxItems: 20, items: { type: "string" } }, visualKeywords: { type: "array", maxItems: 30, items: { type: "string" } } },
+                properties: { summary: { type: "string" }, colors: { type: "array", items: { type: "string" } }, visualKeywords: { type: "array", items: { type: "string" } } },
                 additionalProperties: false,
             },
             projectHandoff: {
                 type: "object",
                 properties: {
                     surface: { type: "string", enum: ["canvas", "drama"] },
-                    title: { type: "string", maxLength: 120 },
-                    summary: { type: "string", maxLength: 1200 },
-                    style: { type: "string", maxLength: 200 },
+                    title: { type: "string" },
+                    summary: { type: "string" },
+                    style: { type: "string" },
                     ratio: { type: "string", enum: ["9:16", "16:9"] },
-                    assetIds: { type: "array", maxItems: 20, items: { type: "string", maxLength: 160 } },
+                    assetIds: { type: "array", items: { type: "string" } },
                 },
                 required: ["surface", "title"],
                 additionalProperties: false,
@@ -113,27 +111,26 @@ export const agentPlanTool = {
             deliverables: {
                 type: "array",
                 minItems: 0,
-                maxItems: 50,
                 items: {
                     type: "object",
                     properties: {
-                        title: { type: "string", maxLength: 200 },
-                        id: { type: "string", maxLength: 120 },
-                        targetNodeId: { type: "string", maxLength: 160 },
+                        title: { type: "string" },
+                        id: { type: "string" },
+                        targetNodeId: { type: "string" },
                         type: { type: "string", enum: ["text", "image", "video", "audio"] },
-                        model: { type: "string", maxLength: 160 },
-                        prompt: { type: "string", maxLength: 4000 },
-                        count: { type: "number", minimum: 1, maximum: 10 },
-                        ratio: { type: "string", maxLength: 20 },
-                        quality: { type: "string", maxLength: 20 },
+                        model: { type: "string" },
+                        prompt: { type: "string" },
+                        count: { type: "integer", minimum: 1 },
+                        ratio: { type: "string" },
+                        quality: { type: "string" },
                         seconds: { type: "number", minimum: 1 },
-                        voice: { type: "string", maxLength: 80 },
-                        format: { type: "string", maxLength: 20 },
+                        voice: { type: "string" },
+                        format: { type: "string" },
                         generateAudio: { type: "boolean" },
                         watermark: { type: "boolean" },
                         speed: { type: "number", exclusiveMinimum: 0 },
-                        dependencies: { type: "array", maxItems: 20, items: { type: "string", maxLength: 120 } },
-                        assetIds: { type: "array", maxItems: 20, items: { type: "string", maxLength: 160 } },
+                        dependencies: { type: "array", items: { type: "string" } },
+                        assetIds: { type: "array", items: { type: "string" } },
                     },
                     required: ["title", "type", "model", "prompt"],
                     additionalProperties: false,
@@ -164,13 +161,20 @@ export function normalizeTasks(
     const globalDefaults = settings.generationDefaults;
     const nodes = canvasSnapshotNodes(snapshot);
     const selectedNodeIds = new Set(selectedCanvasNodeIds(snapshot).filter((id) => nodes.has(id)));
+    const selectedCanvasReferences = surface === "canvas" ? selectedCanvasReferenceNodes(snapshot) : [];
     const assets = new Map(referencedAssets.map((asset) => [asset.id, asset]));
+    const referenceAliases = creativeAssetReferenceAliases(
+        referencedAssets,
+        referencedAssets.map((asset) => asset.id),
+    );
     const configuredImageSize = agentSurfaceImageSize(surface, snapshot);
     return plan.deliverables.map((item, index) => {
+        const optimizedPrompt = item.prompt.trim();
         const preferredSize = item.type === "image" ? generationPreferences?.image?.size : item.type === "video" ? generationPreferences?.video?.size : undefined;
         const preferredQuality = item.type === "image" ? generationPreferences?.image?.quality : item.type === "video" ? generationPreferences?.video?.quality : undefined;
         const targetNodeId = surface === "canvas" ? resolveCanvasTaskTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
         const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
+        const canvasReferences = selectedCanvasReferences.filter((reference) => canvasReferenceSupportsTask(reference.type, item.type));
         const frameIds = item.type === "video" ? videoFrameAssetIds(generationPreferences?.video) : [];
         const frameIdSet = new Set(frameIds);
         const explicitFrameAssets = resolveTaskReferences(frameIds, assets, item.type);
@@ -181,7 +185,11 @@ export function normalizeTasks(
             ...(generationPreferences?.video?.lastFrameAssetId ? ([[generationPreferences.video.lastFrameAssetId, "last_frame"]] as const) : []),
         ]);
         const references = [
-            ...(target?.url && isMediaReferenceType(target.type) ? [{ url: target.url, type: target.type }] : []),
+            ...(canvasReferences.length
+                ? canvasReferences.map((reference) => ({ nodeId: reference.nodeId, url: reference.url, type: reference.type }))
+                : target?.url && isMediaReferenceType(target.type)
+                  ? [{ nodeId: targetNodeId, url: target.url, type: target.type }]
+                  : []),
             ...selectedAssets.flatMap((asset) => {
                 const url = assetAccessUrl(asset);
                 const role = frameRoles.get(asset.id);
@@ -189,7 +197,8 @@ export function normalizeTasks(
             }),
         ] satisfies AgentRunReference[];
         const primaryReference = references[0];
-        const referenceContext = selectedAssets.map(creativeAssetContext).join("\n");
+        const referenceContext = selectedAssets.map((asset) => creativeAssetContext(asset, referenceAliases.get(asset.id))).join("\n");
+        const selectedCanvasContext = canvasReferenceContext(canvasReferences);
         return {
             id: item.id?.trim() || `task-${index}`,
             targetNodeId: target ? targetNodeId : undefined,
@@ -200,7 +209,8 @@ export function normalizeTasks(
             title: item.title.trim(),
             type: item.type,
             model: resolvePlannedModel(settings, item.type, item.model),
-            prompt: `${withCreativeFoundation(item.prompt.trim(), plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
+            optimizedPrompt,
+            prompt: `${withCreativeFoundation(optimizedPrompt, plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${selectedCanvasContext ? `\n\n使用本轮画布引用：\n${selectedCanvasContext}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
             count: resolveAgentTaskCount(
                 item.type,
                 item.type === "image" ? generationPreferences?.image?.count || item.count : item.type === "video" ? generationPreferences?.video?.count || item.count : item.count,
@@ -214,7 +224,7 @@ export function normalizeTasks(
                 plannedRatio: item.ratio,
                 defaultSize: textDefault(defaults.size),
                 globalSize: ["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined,
-                reference: target || (selectedAssets[0]?.type === "image" ? selectedAssets[0] : undefined),
+                reference: target || canvasReferences.find((reference) => reference.type === "image") || (selectedAssets[0]?.type === "image" ? selectedAssets[0] : undefined),
             }),
             quality:
                 preferredQuality ||
@@ -340,7 +350,7 @@ export async function executeTasks(runId: string, origin: string, cookie: string
         const run = await getAgentRun(runId);
         if (!run) return;
         const completed = new Set(run.tasks.filter((task) => task.status === "completed").map((task) => task.id));
-        const ready = run.tasks.filter((task) => (task.status === "ready" || task.status === "running") && task.dependencies.every((id) => completed.has(id))).slice(0, 2);
+        const ready = run.tasks.filter((task) => (task.status === "ready" || task.status === "running") && task.dependencies.every((id) => completed.has(id))).slice(0, settings.generationConcurrency.agent);
         if (!ready.length) {
             if (run.tasks.every((task) => task.status === "completed")) {
                 if (!run.reviewed && shouldBlockOnReview(run)) {
@@ -423,19 +433,14 @@ export async function processAgentRunReview(run: AgentRun, origin: string, cooki
         return { status: review.status === "unavailable" ? ("unavailable" as const) : ("completed" as const), attempts };
     } catch (error) {
         const message = toSafeGenerationErrorMessage(error, "复盘服务暂时不可用");
-        if (attempts >= 3) {
-            const review: CreativeReview = { mode: "unavailable", status: "unavailable", summary: message, issues: [], retryTaskIds: [] };
-            await updateAgentRunById(
-                started.id,
-                { reviewed: true, review, reviewStatus: "review_unavailable", timings: { ...(started.timings || { requestAcceptedAt: started.createdAt }), reviewCompletedAt: Date.now() } },
-                { type: "run.review.background", data: { status: "unavailable", issueCount: 0 } },
-                ["completed"],
-            );
-            return { status: "unavailable" as const, attempts };
-        }
-        await updateAgentRunById(started.id, { reviewStatus: "review_pending" }, { type: "run.review.deferred", data: { attempt: attempts } }, ["completed"]);
-        console.warn("Agent background review deferred", { runId: started.id, attempt: attempts, error: message });
-        return { status: "retry" as const, attempts };
+        const review: CreativeReview = { mode: "unavailable", status: "unavailable", summary: message, issues: [], retryTaskIds: [] };
+        await updateAgentRunById(
+            started.id,
+            { reviewed: true, review, reviewStatus: "review_unavailable", timings: { ...(started.timings || { requestAcceptedAt: started.createdAt }), reviewCompletedAt: Date.now() } },
+            { type: "run.review.background", data: { status: "unavailable", issueCount: 0 } },
+            ["completed"],
+        );
+        return { status: "unavailable" as const, attempts };
     }
 }
 
@@ -529,7 +534,7 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         const currentTask = activeRun.tasks.find((item) => item.id === task.id) || task;
         const executableTask = await withDependencyContext(runId, currentTask);
         const dispatched = await dispatchTask(executableTask, origin, cookie, settings || (await getAuthSettings()), activeRun, executionId, attempt);
-        const result = normalizeConstrainedTextResult(task, dispatched.result, attempt);
+        const result = dispatched.result;
         validateAgentTaskResult(task.type, result);
         await patchTask(runId, task.id, {}, "task.validated", executionId);
         const registeredAssetIds = dispatched.assetIds ?? (await registerAgentTaskAssets(activeRun, { ...executableTask, attempts: attempt, result }, result, dispatched.sourceTaskIds)).map((asset) => asset.id);
@@ -591,7 +596,7 @@ export async function withDependencyContext(runId: string, task: AgentRunTask): 
         .map((item) => `【${item.title}】${resultSummary(item.result)}`)
         .filter((item) => item.length > 4)
         .join("\n");
-    const assetContext = dependencyAssets.map(creativeAssetContext).join("\n");
+    const assetContext = dependencyAssets.map((asset) => creativeAssetContext(asset)).join("\n");
     const context = [taskContext, assetContext].filter(Boolean).join("\n");
     const primaryReference = references[0];
     return {
@@ -655,55 +660,48 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                 : { config, messages: [{ role: "user", content: task.prompt }] };
     const copies = agentTaskCopies(task.type, task.count);
     const initialChildren = normalizeChildTasks(task);
-    const outcomes = await mapWithConcurrency(
-        Array.from({ length: copies }, (_, index) => index),
-        2,
-        async (index) => {
-            if (!(await canContinue(run.id, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
-            let child = initialChildren[index];
-            let taskId = child?.id;
-            if (!taskId) {
-                const bodyForCopy = {
-                    ...body,
-                    context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
-                };
-                const response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify(bodyForCopy), cache: "no-store" });
-                if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
-                const payload = (await response.json()) as { task?: { id?: string } };
-                const createdTaskId = payload.task?.id;
-                if (!createdTaskId) throw new Error("生成任务未返回任务 ID");
-                taskId = createdTaskId;
-                await linkAgentChildTask(run, task, taskId, attempt);
-                child = { id: taskId, status: "pending", attempt };
-                if (!(await patchTask(run.id, task.id, { taskId, taskIds: [taskId], childTasks: [child] }, "task.created", executionId))) throw new Error("Agent Run 已由新执行器接管");
-            }
-            try {
-                if (child?.status === "completed") {
-                    const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result: child.result }, child.result, [taskId]);
-                    const assetIds = registered.map((asset) => asset.id);
-                    await patchTask(run.id, task.id, { assetIds }, "task.child.restored", executionId);
-                    return { index, result: child.result, taskId, assetIds };
-                }
-                const result = await pollTask(origin, task.type === "video" ? "/api/video-tasks" : path, taskId, cookie, run.id, task.type, executionId);
-                const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result }, result, [taskId]);
+    const outcomes = await mapWithConcurrency(copies, settings.generationConcurrency[task.type === "image" ? "image" : task.type === "video" ? "video" : task.type === "audio" ? "audio" : "text"], async (index) => {
+        if (!(await canContinue(run.id, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
+        let child = initialChildren[index];
+        let taskId = child?.id;
+        if (!taskId) {
+            const bodyForCopy = {
+                ...body,
+                context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
+            };
+            const response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify(bodyForCopy), cache: "no-store" });
+            if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
+            const payload = (await response.json()) as { task?: { id?: string } };
+            const createdTaskId = payload.task?.id;
+            if (!createdTaskId) throw new Error("生成任务未返回任务 ID");
+            taskId = createdTaskId;
+            await linkAgentChildTask(run, task, taskId, attempt);
+            child = { id: taskId, status: "pending", attempt };
+            if (!(await patchTask(run.id, task.id, { taskId, taskIds: [taskId], childTasks: [child] }, "task.created", executionId))) throw new Error("Agent Run 已由新执行器接管");
+        }
+        try {
+            if (child?.status === "completed") {
+                const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result: child.result }, child.result, [taskId]);
                 const assetIds = registered.map((asset) => asset.id);
-                const completedChild = { id: taskId, status: "completed" as const, attempt: child?.attempt || attempt, result };
-                if (!(await patchTask(run.id, task.id, { taskId, taskIds: [taskId], childTasks: [completedChild], assetIds }, "task.child.completed", executionId))) throw new Error("Agent Run 已由新执行器接管");
-                return { index, result, taskId, assetIds };
-            } catch (error) {
-                if (error instanceof AgentChildTaskDeferredError) throw error;
-                const message = toSafeGenerationErrorMessage(error, "生成任务失败");
-                if (taskId) await patchTask(run.id, task.id, { taskIds: [taskId], childTasks: [{ id: taskId, status: "failed", attempt: child?.attempt || attempt, error: message }] }, "task.child.failed", executionId);
-                throw error;
+                await patchTask(run.id, task.id, { assetIds }, "task.child.restored", executionId);
+                return { index, result: child.result, taskId, assetIds };
             }
-        },
-    );
+            const result = await pollTask(origin, task.type === "video" ? "/api/video-tasks" : path, taskId, cookie, run.id, task.type, executionId);
+            const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result }, result, [taskId]);
+            const assetIds = registered.map((asset) => asset.id);
+            const completedChild = { id: taskId, status: "completed" as const, attempt: child?.attempt || attempt, result };
+            if (!(await patchTask(run.id, task.id, { taskId, taskIds: [taskId], childTasks: [completedChild], assetIds }, "task.child.completed", executionId))) throw new Error("Agent Run 已由新执行器接管");
+            return { index, result, taskId, assetIds };
+        } catch (error) {
+            if (error instanceof AgentChildTaskDeferredError) throw error;
+            const message = toSafeGenerationErrorMessage(error, "生成任务失败");
+            if (taskId) await patchTask(run.id, task.id, { taskIds: [taskId], childTasks: [{ id: taskId, status: "failed", attempt: child?.attempt || attempt, error: message }] }, "task.child.failed", executionId);
+            throw error;
+        }
+    });
     const failed = outcomes.find((outcome) => outcome.status === "rejected");
-    const completed = outcomes
-        .filter((outcome): outcome is PromiseFulfilledResult<AgentCopyOutcome> => outcome.status === "fulfilled")
-        .map((outcome) => outcome.value)
-        .sort((left, right) => left.index - right.index);
     if (failed?.status === "rejected") throw failed.reason;
+    const completed = outcomes.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : [])).sort((left, right) => left.index - right.index);
     const results = completed.map((outcome) => outcome.result);
     return {
         result: results.length === 1 ? results[0] : { results },
@@ -712,17 +710,17 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
     };
 }
 
-async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<Array<PromiseSettledResult<R>>> {
-    const results: Array<PromiseSettledResult<R>> = new Array(items.length);
+async function mapWithConcurrency<R>(count: number, concurrency: number, worker: (index: number) => Promise<R>): Promise<Array<PromiseSettledResult<R> & { index: number }>> {
+    const results: Array<PromiseSettledResult<R> & { index: number }> = [];
     let cursor = 0;
     await Promise.all(
-        Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-            while (cursor < items.length) {
+        Array.from({ length: Math.min(concurrency, count) }, async () => {
+            while (cursor < count) {
                 const index = cursor++;
                 try {
-                    results[index] = { status: "fulfilled", value: await worker(items[index]) };
+                    results.push({ index, status: "fulfilled", value: await worker(index) });
                 } catch (reason) {
-                    results[index] = { status: "rejected", reason };
+                    results.push({ index, status: "rejected", reason });
                 }
             }
         }),
@@ -731,9 +729,9 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker:
 }
 
 function normalizeChildTasks(task: AgentRunTask): AgentRunChildTask[] {
-    if (task.childTasks?.length) return task.childTasks.slice(0, 10);
+    if (task.childTasks?.length) return task.childTasks;
     const ids = task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : [];
-    return ids.slice(0, 10).map((id) => ({ id, status: "pending", attempt: Math.max(1, task.attempts) }));
+    return ids.map((id) => ({ id, status: "pending", attempt: Math.max(1, task.attempts) }));
 }
 
 export function linkAgentChildTask(run: AgentRun, task: AgentRunTask, taskId: string, attempt: number) {

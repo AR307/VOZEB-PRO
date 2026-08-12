@@ -28,6 +28,7 @@ import {
     listStoredGenerationTaskRecords,
     queryStoredGenerationTasks,
     mutateStoredGenerationTask,
+    summarizeStoredAgentPerformance,
     summarizeStoredGenerationTaskCosts,
     withGenerationConcurrencyLimit,
 } from "./generation-task-store";
@@ -203,6 +204,19 @@ describe("mutateStoredGenerationTask", () => {
         vi.mocked(getDatabaseProvider).mockReturnValue("file");
     });
 
+    it("pushes normalized Agent status filters into PostgreSQL before limiting", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [], command: "SELECT", rowCount: 0, oid: 0, fields: [] });
+
+        await queryStoredGenerationTasks("agent", { userId: "user", statuses: ["planning", "running", "paused", "running"], limit: 4 });
+
+        const [statement, params] = vi.mocked(postgresQuery).mock.calls[0] || [];
+        expect(String(statement)).toContain("status = ANY($3::text[])");
+        expect(String(statement)).toContain("ORDER BY updated_at DESC, id DESC LIMIT $4");
+        expect(params).toEqual(["user", "agent", ["pending", "running", "paused"], 4]);
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+    });
+
     it("applies the same scoped filters before limiting with the file provider", async () => {
         const now = Date.now();
         mocks.records = [
@@ -211,6 +225,16 @@ describe("mutateStoredGenerationTask", () => {
         ];
 
         await expect(queryStoredGenerationTasks<{ id: string }>("agent", { userId: "user", conversationId: "conversation-one", projectId: "project-one", surface: "canvas", limit: 1 })).resolves.toEqual([{ id: "run-match" }]);
+    });
+
+    it("filters file-provider Agent statuses before limiting", async () => {
+        const now = Date.now();
+        mocks.records = [
+            { id: "run-completed", userId: "user", type: "agent", status: "success", surface: "chat", payload: { id: "run-completed" }, createdAt: now, updatedAt: now + 2, expiresAt: now + 60_000 },
+            { id: "run-active", userId: "user", type: "agent", status: "running", surface: "chat", payload: { id: "run-active" }, createdAt: now, updatedAt: now + 1, expiresAt: now + 60_000 },
+        ];
+
+        await expect(queryStoredGenerationTasks<{ id: string }>("agent", { userId: "user", surface: "chat", statuses: ["planning", "running", "paused"], limit: 1 })).resolves.toEqual([{ id: "run-active" }]);
     });
 });
 
@@ -268,12 +292,64 @@ describe("listStoredGenerationTaskRecords", () => {
         const [summaryQuery, summaryParams] = vi.mocked(postgresQuery).mock.calls[1] || [];
 
         expect(String(pageQuery)).toContain("payload::text ILIKE");
-        expect(String(pageQuery)).toContain("user_id = ANY($7::text[])");
-        expect(String(pageQuery)).toContain("LIMIT $8 OFFSET $9");
-        expect(pageParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"], 20, 0]);
+        expect(String(pageQuery)).toContain("FROM users AS search_users");
+        expect(String(pageQuery)).toContain("lpad(search_users.account_id::text, 4, '0') ILIKE");
+        expect(String(pageQuery)).toContain("search_users.username ILIKE");
+        expect(String(pageQuery)).toContain("coalesce(search_users.email, '') ILIKE");
+        expect(String(pageQuery)).toContain("search_users.display_name ILIKE");
+        expect(String(pageQuery)).toContain("LIMIT $7 OFFSET $8");
+        expect(pageParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", 20, 0]);
         expect(String(summaryQuery)).toContain("GROUP BY task_type, status");
-        expect(summaryParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"]]);
+        expect(summaryParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle"]);
         expect(result).toMatchObject({ total: 1, items: [{ id: "task-one", type: "video" }], all: [], summary: { total: 1, totalPointsCost: 3 } });
+    });
+
+    it("keeps PostgreSQL list reads paginated even when all records are requested", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockReset();
+        vi.mocked(postgresQuery)
+            .mockResolvedValueOnce({ rows: [] } as never)
+            .mockResolvedValueOnce({ rows: [] } as never);
+
+        const result = await listStoredGenerationTaskRecords({ type: "agent", includeAll: true, page: 2, pageSize: 20 });
+        const [pageQuery, pageParams] = vi.mocked(postgresQuery).mock.calls[0] || [];
+
+        expect(String(pageQuery)).toContain("LIMIT $7 OFFSET $8");
+        expect(String(pageQuery)).not.toContain("LIMIT 5000");
+        expect(pageParams).toEqual(["agent", null, null, null, null, "", 20, 20]);
+        expect(result.all).toEqual([]);
+    });
+});
+
+describe("summarizeStoredAgentPerformance", () => {
+    it("computes filtered Agent timing metrics in PostgreSQL", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockReset();
+        vi.mocked(postgresQuery).mockResolvedValueOnce({
+            rows: [
+                {
+                    sample_size: "12",
+                    planning_p50_ms: "400",
+                    planning_p95_ms: "900",
+                    first_result_p50_ms: "1500",
+                    first_result_p95_ms: "4200",
+                    queue_average_ms: "120",
+                    upstream_average_ms: "1100",
+                    review_average_ms: "300",
+                },
+            ],
+        } as never);
+
+        const result = await summarizeStoredAgentPerformance({ status: "success", surface: "chat", projectId: "project-one", userId: "user-one", search: "needle", searchUserIds: ["user-one"] });
+        const [statement, params] = vi.mocked(postgresQuery).mock.calls[0] || [];
+
+        expect(String(statement)).toContain("task_type = 'agent'");
+        expect(String(statement)).toContain("percentile_disc(0.95)");
+        expect(String(statement)).toContain("payload#>>'{timings,firstResultReadyAt}'");
+        expect(String(statement)).toContain("FROM users AS search_users");
+        expect(String(statement)).not.toContain("LIMIT 5000");
+        expect(params).toEqual(["success", "chat", "project-one", "user-one", "needle"]);
+        expect(result).toEqual({ sampleSize: 12, planningP50Ms: 400, planningP95Ms: 900, firstResultP50Ms: 1500, firstResultP95Ms: 4200, queueAverageMs: 120, upstreamAverageMs: 1100, reviewAverageMs: 300 });
     });
 });
 

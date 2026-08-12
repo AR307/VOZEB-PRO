@@ -18,6 +18,7 @@ type CreativeAssetLayoutOptions = {
 };
 
 const COMPACT_BOUNDS = { maxWidth: 200, maxHeight: 240 };
+export const CREATIVE_RESULT_VIEWPORT_MAX_HEIGHT = 100 / 3;
 
 export function creativeAssetLayout(asset: Pick<CreativeAsset, "width" | "height">, options: CreativeAssetLayoutOptions = {}): CreativeAssetLayout | null {
     const variant = options.variant || "compact";
@@ -29,11 +30,12 @@ export function creativeAssetLayout(asset: Pick<CreativeAsset, "width" | "height
 
     const bounds = resultBounds(variant, aspectRatio);
     const size = sourceWidth && sourceHeight ? fitSourceSize(sourceWidth, sourceHeight, bounds) : fitRatio(aspectRatio, bounds);
+    const width = variant === "compact" ? `${size.width}px` : `min(${size.width}px, ${formatCssNumber(aspectRatio * CREATIVE_RESULT_VIEWPORT_MAX_HEIGHT)}dvh)`;
     return {
         ...size,
         aspectRatio,
         container: {
-            width: `${size.width}px`,
+            width,
             maxWidth: "100%",
             aspectRatio: `${size.width} / ${size.height}`,
         },
@@ -87,6 +89,10 @@ function roundedSize(width: number, height: number) {
 function positiveNumber(value: unknown) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function formatCssNumber(value: number) {
+    return Number(value.toFixed(6));
 }
 
 function fallbackRatio(variant: CreativeAssetLayoutVariant) {

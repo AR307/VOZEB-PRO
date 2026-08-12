@@ -1,15 +1,16 @@
 "use client";
 
-import { Button, Empty, Input, InputNumber } from "antd";
-import { Check, ChevronDown, FileText } from "lucide-react";
+import { Button, Input, InputNumber } from "antd";
+import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { DramaEpisode, DramaProject } from "@/lib/drama-project-contract";
 import { useDramaStore } from "../stores/use-drama-store";
-import { SectionTitle } from "./drama-editor-elements";
+import { DramaStageHeader } from "./drama-editor-elements";
+import type { DramaProjectStage } from "./drama-project-sections";
 import { DramaShotDialogueEditor } from "./drama-shot-dialogue-editor";
 
-export function DramaReviewPanel({ project, episode, onDesignVisuals, designing }: { project: DramaProject; episode: DramaEpisode; onDesignVisuals: () => void; designing: boolean }) {
+export function DramaReviewPanel({ project, episode, onDesignVisuals, designing, onStageChange }: { project: DramaProject; episode: DramaEpisode; onDesignVisuals: () => void; designing: boolean; onStageChange: (stage: DramaProjectStage) => void }) {
     const updateEpisode = useDramaStore((state) => state.updateEpisode);
     const updateShot = useDramaStore((state) => state.updateShot);
     const [expandedShotIds, setExpandedShotIds] = useState<Set<string>>(() => new Set(episode.shots.slice(0, 1).map((shot) => shot.id)));
@@ -28,15 +29,36 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing 
             return next;
         });
     };
+    const totalDuration = episode.shots.reduce((total, shot) => total + shot.duration, 0);
+    const dialogueCount = episode.shots.reduce((total, shot) => total + (shot.utterances.filter((item) => item.type === "dialogue").length || shot.dialogue.split(/\n+/).filter((line) => line.trim()).length), 0);
     return (
         <div>
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between lg:gap-5">
-                <SectionTitle className="!mb-0" title="内容审核" description="先确认剧本事实、镜头边界和叙事信息；视觉模型不会在这个阶段改写你的内容。" />
-                <Button type="primary" className="!h-11 !w-full sm:!h-9 sm:!w-auto" icon={<Check className="size-4" />} loading={designing} disabled={!episode.shots.length} onClick={onDesignVisuals}>
-                    确认内容并生成视觉方案
-                </Button>
-            </div>
-            <div className="mt-4 grid gap-3 sm:mt-6 sm:gap-4 md:grid-cols-2">
+            <DramaStageHeader
+                step="02 · 内容审核"
+                title="内容审核"
+                description="确认剧本事实、镜头边界、对白与叙事信息；视觉模型不会在这个阶段改写内容。"
+                status={!episode.shots.length ? "等待内容结构" : episode.reviewStatus === "visual_ready" ? "视觉方案已生成" : "待确认"}
+                tone={!episode.shots.length ? "attention" : episode.reviewStatus === "visual_ready" ? "ready" : "neutral"}
+                metrics={[
+                    { label: "镜头", value: episode.shots.length },
+                    { label: "总时长", value: `${totalDuration} 秒` },
+                    { label: "对白", value: `${dialogueCount} 句` },
+                ]}
+                action={
+                    <Button
+                        type="primary"
+                        className="!h-11 !w-full sm:!h-9 sm:!w-auto"
+                        icon={<Check className="size-4" />}
+                        loading={designing}
+                        disabled={!episode.shots.length}
+                        title={episode.shots.length ? undefined : "请先从剧本提取内容结构"}
+                        onClick={onDesignVisuals}
+                    >
+                        {episode.reviewStatus === "visual_ready" ? "更新视觉方案" : "确认内容并生成视觉方案"}
+                    </Button>
+                }
+            />
+            <div className="mt-5 grid gap-3 sm:gap-4 md:grid-cols-2">
                 {[
                     ["本集大纲", "outline", "用一句话概括本集推进"],
                     ["来源范围", "sourceRange", "例如：原文第 1-3 节"],
@@ -55,7 +77,7 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing 
                 ))}
             </div>
             {episode.shots.length ? (
-                <div className="mt-4 space-y-3 sm:mt-6 sm:space-y-4">
+                <div className="mt-5 space-y-3 sm:space-y-4">
                     {episode.shots.map((shot) => {
                         const expanded = expandedShotIds.has(shot.id);
                         const dialogueCount = shot.utterances.filter((item) => item.type === "dialogue").length || shot.dialogue.split(/\n+/).filter((line) => line.trim()).length;
@@ -142,7 +164,13 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing 
                     })}
                 </div>
             ) : (
-                <Empty className="!my-7 sm:!my-16" image={<FileText className="mx-auto size-8 text-muted-foreground sm:size-10" />} description="还没有待审核的内容结构" />
+                <div className="mt-5 rounded-xl border border-dashed border-border bg-card/55 px-4 py-7 text-center">
+                    <h3 className="font-semibold">还没有待审核的内容结构</h3>
+                    <p className="mx-auto mt-1 max-w-lg text-sm leading-6 text-muted-foreground">先填写或导入本集剧本，再由 AI 提取可编辑的镜头事实、对白和原文依据。</p>
+                    <Button type="primary" className="!mt-4" onClick={() => onStageChange("script")}>
+                        返回剧本
+                    </Button>
+                </div>
             )}
         </div>
     );

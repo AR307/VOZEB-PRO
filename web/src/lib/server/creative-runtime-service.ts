@@ -1,6 +1,16 @@
 import { creativeConversationSourceForSurface, isCreativeConversationSourceCompatible, normalizeCreativeConversationSource, normalizeCreativeSurface, type CreativeAssetType, type CreativeConversationStatus } from "@/lib/creative-runtime-contract";
 import { CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
-import { createCreativeConversation, getCreativeAsset, getCreativeConversation, listCreativeAssets, listCreativeConversations, listCreativeMessages, registerCreativeAssets, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
+import {
+    createCreativeConversation,
+    getCreativeAsset,
+    getCreativeConversation,
+    getCreativeConversationsByIds,
+    listCreativeAssets,
+    listCreativeConversations,
+    listCreativeMessages,
+    registerCreativeAssets,
+    updateCreativeConversation,
+} from "@/lib/server/creative-runtime-store";
 import { writePersistentMediaDataUrl } from "@/lib/server/reference-asset-store";
 import { deleteCreativeConversationAggregates } from "@/lib/server/creative-entity-deletion-store";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
@@ -54,6 +64,9 @@ export async function updateConversationForUser(userId: string, id: string, valu
 export async function deleteConversationsForUser(userId: string, value: unknown) {
     const ids = normalizeIds(value, 100);
     if (!ids.length) return 0;
+    const conversations = await getCreativeConversationsByIds(userId, ids);
+    if (conversations.length !== ids.length) throw new CreativeRuntimeServiceError("创作会话不存在", 404);
+    if (conversations.some((conversation) => conversation.surface !== "chat")) throw new CreativeRuntimeServiceError("项目会话需从对应项目中删除", 409);
     const result = await deleteCreativeConversationAggregates(userId, ids);
     await deleteUserLocalMediaAssets(userId, result.mediaStorageKeys);
     return result.deletedConversations;

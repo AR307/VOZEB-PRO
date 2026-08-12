@@ -13,6 +13,7 @@ const models = [
 ];
 
 const GLOBAL_AIOPC_IMAGE_PATHS = new Set(["/image2/images", "/banana/images"]);
+const YUMENG_MODEL_CENTER_TASK_PATH = "/kyyReactApiServer/v2/model-center/tasks";
 const GLOBAL_AIOPC_VIDEO_PATHS = new Set([
     "/sora/videos",
     "/veo/videos",
@@ -76,8 +77,13 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         tasks.clear();
         return sendJson(response, 200, { ok: true });
     }
-    if (request.method === "GET" && ["/models", "/api/v3/models"].includes(path)) return sendJson(response, 200, { object: "list", data: models });
-    if (request.method === "GET" && path === "/sdapi/v1/sd-models") return sendJson(response, 200, [{ title: "mock-image", model_name: "mock-image", id: "mock-image" }]);
+    if (request.method === "GET" && ["/models", "/api/v3/models"].includes(path)) {
+        const catalog = url.searchParams.has("protocol") ? [...models, { id: "opaque-catalog-model" }] : models;
+        return sendJson(response, 200, { object: "list", data: catalog });
+    }
+    if (request.method === "GET" && path === "/sdapi/v1/sd-models") {
+        return sendJson(response, 200, [{ title: "mock-image", model_name: "mock-image", id: "mock-image" }, ...(url.searchParams.has("protocol") ? [{ id: "opaque-catalog-model" }] : [])]);
+    }
 
     if (request.method === "POST" && ["/responses", "/chat/completions", "/messages"].includes(path)) {
         const payload = jsonBody(body);
@@ -168,7 +174,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         tasks.set(id, { kind: "vozeb-video", status: "completed" });
         return sendJson(response, 200, { id, task_id: id, object: "video", model: payload.model, status: "queued", progress: 0, created_at: 0 });
     }
-    if (request.method === "POST" && path === "/v2/model-center/tasks") {
+    if (request.method === "POST" && path === YUMENG_MODEL_CENTER_TASK_PATH) {
         const payload = jsonBody(body);
         const model = String(payload.model || "");
         const kind = /image|seedream/i.test(model) ? "yumeng-image" : "yumeng-video";
@@ -176,7 +182,8 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         tasks.set(id, { kind, status: "completed", model });
         return sendJson(response, 200, { task_id: id, status: "queued" });
     }
-    const yumengTaskId = path.match(/^\/v2\/model-center\/tasks\/([^/]+)$/)?.[1];
+    const yumengTaskPrefix = `${YUMENG_MODEL_CENTER_TASK_PATH}/`;
+    const yumengTaskId = path.startsWith(yumengTaskPrefix) ? path.slice(yumengTaskPrefix.length) : "";
     if (request.method === "GET" && yumengTaskId) {
         const id = decodeURIComponent(yumengTaskId);
         const task = tasks.get(id);

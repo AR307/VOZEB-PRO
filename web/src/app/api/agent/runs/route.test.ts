@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
     countActiveStoredGenerationTasks: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(),
     runGenerationTaskRecoveryBatch: vi.fn(),
-    scheduleGenerationTask: vi.fn(),
     createAgentRun: vi.fn(),
     getAgentRunByClientRequestId: vi.fn(),
     listAgentRuns: vi.fn(),
@@ -20,7 +19,6 @@ vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/security", () => ({ checkRateLimit: mocks.checkRateLimit }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
-vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/agent-run-store", () => ({ createAgentRun: mocks.createAgentRun, getAgentRunByClientRequestId: mocks.getAgentRunByClientRequestId, listAgentRuns: mocks.listAgentRuns }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
@@ -63,7 +61,7 @@ describe("POST /api/agent/runs", () => {
         expect(mocks.createAgentRun).not.toHaveBeenCalled();
     });
 
-    it("creates and schedules a validated run once", async () => {
+    it("creates a pre-scheduled run and queues recovery without a second task update", async () => {
         const run = { id: "new-run", userId: "user", clientRequestId: "request-one" };
         mocks.createAgentRun.mockResolvedValue({ run, conversation: { id: "conversation" }, created: true });
         const response = await POST(request(validInput()));
@@ -76,7 +74,6 @@ describe("POST /api/agent/runs", () => {
             modelIds: [],
             snapshot: undefined,
         });
-        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "new-run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "created" }));
         expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
     });
 });
@@ -92,7 +89,14 @@ describe("GET /api/agent/runs", () => {
         const response = await GET(new Request("http://localhost/api/agent/runs?conversationId=conversation-one&projectId=project-one&surface=canvas"));
 
         expect(response.status).toBe(200);
-        expect(mocks.listAgentRuns).toHaveBeenCalledWith({ userId: "user", conversationId: "conversation-one", projectId: "project-one", surface: "canvas", limit: 50 });
+        expect(mocks.listAgentRuns).toHaveBeenCalledWith({ userId: "user", conversationId: "conversation-one", projectId: "project-one", surface: "canvas", statuses: undefined, limit: 50 });
+    });
+
+    it("queries the latest active run directly for workspace recovery", async () => {
+        const response = await GET(new Request("http://localhost/api/agent/runs?surface=chat&status=active&limit=1"));
+
+        expect(response.status).toBe(200);
+        expect(mocks.listAgentRuns).toHaveBeenCalledWith({ userId: "user", conversationId: "", projectId: "", surface: "chat", statuses: ["planning", "running", "paused"], limit: 1 });
     });
 });
 

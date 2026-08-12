@@ -27,6 +27,11 @@ describe("creative asset layout", () => {
         expect(creativeAssetLayout({ width: 320, height: 180 }, { variant: "video-result" })).toMatchObject({ width: 320, height: 180 });
     });
 
+    it("caps message-flow previews to one third of the viewport while keeping the source ratio", () => {
+        expect(creativeAssetLayout({ width: 1024, height: 1024 }, { variant: "image-result" })?.container.width).toBe("min(420px, 33.333333dvh)");
+        expect(creativeAssetLayout({ width: 1920, height: 1080 }, { variant: "video-result" })?.container.width).toBe("min(520px, 59.259259dvh)");
+    });
+
     it("uses ratio metadata only when dimensions are unavailable", () => {
         expect(creativeAssetLayout({}, { variant: "video-result", ratio: "9:16" })).toMatchObject({ width: 300, height: 533 });
         expect(creativeAssetLayout({}, { variant: "image-result", ratio: "1920x1080" })).toMatchObject({ width: 560, height: 315 });

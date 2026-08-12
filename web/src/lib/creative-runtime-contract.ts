@@ -143,6 +143,7 @@ export type CreativeRunRequest = {
     conversationId?: string;
     projectId?: string;
     prompt: string;
+    publicPrompt?: string;
     snapshot?: unknown;
     assetIds: string[];
     skillIds: string[];
@@ -162,9 +163,8 @@ export class CreativeRuntimeInputError extends Error {
 const MAX_CLIENT_REQUEST_ID = 120;
 const MAX_ID = 160;
 const MAX_PROMPT = 4000;
-const MAX_ASSETS = 20;
-const MAX_SKILLS = 6;
-const MAX_MODELS = 6;
+export const CREATIVE_RUN_SKILL_LIMIT = 6;
+export const CREATIVE_RUN_MODEL_LIMIT = 6;
 const MAX_SNAPSHOT_BYTES = 512 * 1024;
 
 export function normalizeCreativeRunRequest(value: unknown): CreativeRunRequest {
@@ -174,6 +174,7 @@ export function normalizeCreativeRunRequest(value: unknown): CreativeRunRequest 
     const conversationId = optionalText(input.conversationId, MAX_ID);
     const projectId = optionalText(input.projectId, MAX_ID);
     const prompt = text(input.prompt, MAX_PROMPT);
+    const publicPrompt = optionalText(input.publicPrompt, MAX_PROMPT);
     const snapshot = input.snapshot;
     const assetIds = Array.from(new Set((Array.isArray(input.assetIds) ? input.assetIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
     const skillIds = Array.from(new Set((Array.isArray(input.skillIds) ? input.skillIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
@@ -182,15 +183,14 @@ export function normalizeCreativeRunRequest(value: unknown): CreativeRunRequest 
     if (!clientRequestId) throw new CreativeRuntimeInputError("请求标识不能为空");
     if (!surface) throw new CreativeRuntimeInputError("创作入口不正确");
     if (!prompt) throw new CreativeRuntimeInputError("创作需求不能为空");
-    if (assetIds.length > MAX_ASSETS) throw new CreativeRuntimeInputError(`一次最多引用 ${MAX_ASSETS} 个资产`);
-    if (skillIds.length > MAX_SKILLS) throw new CreativeRuntimeInputError(`一次最多启用 ${MAX_SKILLS} 个 Skill`);
-    if (modelIds.length > MAX_MODELS) throw new CreativeRuntimeInputError(`一次最多选择 ${MAX_MODELS} 个模型`);
+    if (skillIds.length > CREATIVE_RUN_SKILL_LIMIT) throw new CreativeRuntimeInputError(`一次最多启用 ${CREATIVE_RUN_SKILL_LIMIT} 个 Skill`);
+    if (modelIds.length > CREATIVE_RUN_MODEL_LIMIT) throw new CreativeRuntimeInputError(`一次最多选择 ${CREATIVE_RUN_MODEL_LIMIT} 个模型`);
     if (videoFrameAssetIds(preferences?.video).some((id) => !assetIds.includes(id))) throw new CreativeRuntimeInputError("视频首尾帧必须来自本轮已选择的图片素材");
     if (surface === "chat" && (projectId || snapshot !== undefined)) throw new CreativeRuntimeInputError("普通对话不接受项目或快照");
     if (surface !== "chat" && !projectId) throw new CreativeRuntimeInputError(surface === "canvas" ? "画布标识不能为空" : "短剧项目标识不能为空");
     if (snapshot !== undefined && new TextEncoder().encode(JSON.stringify(snapshot)).length > MAX_SNAPSHOT_BYTES) throw new CreativeRuntimeInputError("当前项目快照过大", 413);
 
-    return { clientRequestId, surface, conversationId, projectId, prompt, snapshot, assetIds, skillIds, modelIds, ...(preferences ? { preferences } : {}) };
+    return { clientRequestId, surface, conversationId, projectId, prompt, ...(publicPrompt && publicPrompt !== prompt ? { publicPrompt } : {}), snapshot, assetIds, skillIds, modelIds, ...(preferences ? { preferences } : {}) };
 }
 
 function normalizeCreativeGenerationPreferences(value: unknown): CreativeGenerationPreferences | undefined {
@@ -210,7 +210,7 @@ function normalizeImagePreferences(value: unknown) {
     const size = normalizePreferenceSize(input.size);
     const quality: NonNullable<CreativeGenerationPreferences["image"]>["quality"] = input.quality === "auto" || input.quality === "high" || input.quality === "medium" || input.quality === "low" ? input.quality : undefined;
     const count = Number(input.count);
-    const normalizedCount = Number.isInteger(count) && count > 0 ? Math.min(10, count) : undefined;
+    const normalizedCount = Number.isSafeInteger(count) && count > 0 ? count : undefined;
     return size || quality || normalizedCount ? { ...(size ? { size } : {}), ...(quality ? { quality } : {}), ...(normalizedCount ? { count: normalizedCount } : {}) } : undefined;
 }
 
@@ -222,7 +222,7 @@ function normalizeVideoPreferences(value: unknown) {
     const quality = rawQuality?.match(/^(\d+)p$/i)?.[1] || rawQuality;
     const seconds = Number(input.seconds);
     const count = Number(input.count);
-    const normalizedCount = Number.isInteger(count) && count > 0 ? Math.min(10, count) : undefined;
+    const normalizedCount = Number.isSafeInteger(count) && count > 0 ? count : undefined;
     const generateAudio = typeof input.generateAudio === "boolean" ? input.generateAudio : undefined;
     const watermark = typeof input.watermark === "boolean" ? input.watermark : undefined;
     const referenceMode: CreativeVideoReferenceMode | undefined = input.referenceMode === "reference" || input.referenceMode === "first_frame" || input.referenceMode === "first_last" ? input.referenceMode : undefined;

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getCreativeConversation: vi.fn(),
+    getCreativeConversationsByIds: vi.fn(),
     registerCreativeAssets: vi.fn(),
     writePersistentMediaDataUrl: vi.fn(),
     deleteCreativeConversationAggregates: vi.fn(),
@@ -12,6 +13,7 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
     createCreativeConversation: vi.fn(),
     getCreativeAsset: vi.fn(),
     getCreativeConversation: mocks.getCreativeConversation,
+    getCreativeConversationsByIds: mocks.getCreativeConversationsByIds,
     listCreativeAssets: vi.fn(),
     listCreativeConversations: vi.fn(),
     listCreativeMessages: vi.fn(),
@@ -30,7 +32,8 @@ function file(name: string, type: string, size = 4): File {
 
 describe("创作会话素材上传", () => {
     beforeEach(() => {
-        mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", status: "active" });
+        mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", surface: "chat", status: "active" });
+        mocks.getCreativeConversationsByIds.mockReset().mockResolvedValue([{ id: "conversation-one", userId: "user-one", surface: "chat", status: "active" }]);
         mocks.writePersistentMediaDataUrl.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
         mocks.deleteCreativeConversationAggregates.mockReset().mockResolvedValue({ deletedConversations: 1, deletedProjects: 0, mediaStorageKeys: ["permanent/one.png"] });
         mocks.deleteUserLocalMediaAssets.mockReset().mockResolvedValue({ deletedFiles: 1, deletedBytes: 4, blocked: [] });
@@ -42,6 +45,13 @@ describe("创作会话素材上传", () => {
 
         expect(mocks.deleteCreativeConversationAggregates).toHaveBeenCalledWith("user-one", ["conversation-one"]);
         expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["permanent/one.png"]);
+    });
+
+    it("rejects deleting project conversations through the ordinary chat endpoint", async () => {
+        mocks.getCreativeConversationsByIds.mockResolvedValue([{ id: "conversation-one", userId: "user-one", surface: "canvas", projectId: "canvas-one", status: "active" }]);
+
+        await expect(deleteConversationsForUser("user-one", ["conversation-one"])).rejects.toMatchObject({ status: 409 });
+        expect(mocks.deleteCreativeConversationAggregates).not.toHaveBeenCalled();
     });
 
     it("stores image, video and audio as stable assets without persisting base64", async () => {

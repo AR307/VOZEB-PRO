@@ -1,16 +1,12 @@
 "use client";
 
 import { Globe2, ImageIcon, List, Music2, Settings2, Video } from "lucide-react";
-import dynamic from "next/dynamic";
+import { nanoid } from "nanoid";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { getNodeSpec } from "../constants";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type Position } from "../types";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 export type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -62,7 +58,7 @@ export const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适
 
 export function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
     const spec = getNodeSpec(type);
-    const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const id = `${type}-${nanoid()}`;
 
     return {
         id,

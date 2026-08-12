@@ -3,17 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     updateUserByAdmin: vi.fn(),
-    deleteUserByAdmin: vi.fn(),
-    deleteGenerationLogsByUserId: vi.fn(),
+    deleteAdminUserWithMediaCleanup: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", () => ({
     updateUserByAdmin: mocks.updateUserByAdmin,
-    deleteUserByAdmin: mocks.deleteUserByAdmin,
     isAuthInputError: vi.fn(() => false),
 }));
-vi.mock("@/lib/server/generation-log-store", () => ({ deleteGenerationLogsByUserId: mocks.deleteGenerationLogsByUserId }));
+vi.mock("@/lib/server/admin-user-deletion-service", () => ({ deleteAdminUserWithMediaCleanup: mocks.deleteAdminUserWithMediaCleanup }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({})), safeRecordAuditLog: vi.fn() }));
 
 import { DELETE, PATCH } from "./route";
@@ -23,7 +21,7 @@ describe("admin user detail route", () => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["users.manage", "administrators.manage", "billing.manage"] });
         mocks.updateUserByAdmin.mockResolvedValue({ id: "user-one", username: "creator", role: "user", status: "active" });
-        mocks.deleteUserByAdmin.mockResolvedValue({ ok: true });
+        mocks.deleteAdminUserWithMediaCleanup.mockResolvedValue({ ok: true });
     });
 
     it("updates user fields with the current administrator permission", async () => {
@@ -37,7 +35,7 @@ describe("admin user detail route", () => {
         const response = await DELETE(request("DELETE"), context());
 
         expect(response.status).toBe(200);
-        expect(mocks.deleteGenerationLogsByUserId).toHaveBeenCalledWith("user-one");
+        expect(mocks.deleteAdminUserWithMediaCleanup).toHaveBeenCalledWith("admin-one", "user-one");
     });
 });
 

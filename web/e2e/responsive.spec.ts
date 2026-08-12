@@ -422,7 +422,7 @@ test("creative composer controls return to a neutral palette after selection", a
         await expect.poll(() => readPalette(preferenceTrigger)).not.toEqual(neutralPalette);
         await preferencePopover.getByRole("tab", { name: "输出" }).click();
         const configuredPreferenceTrigger = page.getByRole("button", { name: "生成参数：智能参数 · 10秒" });
-        await selectComposerPopoverOption(preferenceTrigger, preferencePopover, preferencePopover.getByRole("button", { name: "选择视频时长 10 秒" }), () => expect(configuredPreferenceTrigger).toBeVisible());
+        await selectComposerPopoverOption(preferenceTrigger, preferencePopover, preferencePopover.getByRole("button", { name: "输入视频时长 10 秒" }), () => expect(configuredPreferenceTrigger).toBeVisible());
         await page.keyboard.press("Escape");
         await expect(preferencePopover).toBeHidden();
 
@@ -531,6 +531,13 @@ test("Agent generation inputs apply immediately and reveal video frame slots", a
     }
 
     await preferencePopover.getByRole("button", { name: "视频", exact: true }).click();
+    await preferencePopover.getByRole("tab", { name: "输出" }).click();
+    const durationInput = preferencePopover.getByRole("spinbutton", { name: "输入视频时长" });
+    await expect(durationInput).not.toHaveAttribute("max");
+    await durationInput.fill("60");
+    await durationInput.press("Tab");
+    await expect(durationInput).toHaveValue("60");
+    await preferencePopover.getByRole("tab", { name: "画面" }).click();
     const firstLastOption = preferencePopover.getByRole("button", { name: "选择视频参考方式 首尾帧" });
     await expect(firstLastOption).toBeVisible();
     await firstLastOption.click();
@@ -645,7 +652,7 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
     await expect(round.getByText("让参考图变成清透自然的电影感画面", { exact: true })).toBeVisible();
     await expect(round.getByRole("img", { name: "人物参考图" })).toBeVisible();
     await expect(round.getByTestId("creative-user-avatar")).toBeVisible();
-    await expect(round.getByLabel("本轮创作参数")).toContainText("图片生成");
+    await expect(round.getByLabel("本轮创作参数")).toContainText("e2e-image-model");
     await expect(round.getByLabel("本轮创作参数")).toContainText("1:1");
     await expect(round.getByLabel("本轮创作参数")).toContainText("高画质");
 
@@ -708,7 +715,28 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
     await scrollArea.evaluate((element) => element.scrollTo({ top: 0 }));
     await expect(composer).toHaveAttribute("data-compact", "true");
     await expect(page.getByRole("button", { name: "回到底部" })).toBeVisible();
-    expect(await composer.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(expandedComposerHeight);
+    const compactAppearance = await composer.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const shell = element.parentElement;
+        const dock = shell?.parentElement;
+        return {
+            backgroundColor: style.backgroundColor,
+            borderWidth: `${style.borderTopWidth} ${style.borderRightWidth} ${style.borderBottomWidth} ${style.borderLeftWidth}`,
+            boxShadow: style.boxShadow,
+            composerHeight: element.getBoundingClientRect().height,
+            shellHeight: shell?.getBoundingClientRect().height || 0,
+            shellBackgroundColor: shell ? getComputedStyle(shell).backgroundColor : null,
+            dockBackgroundColor: dock ? getComputedStyle(dock).backgroundColor : null,
+            dockPosition: dock ? getComputedStyle(dock).position : null,
+            dockPointerEvents: dock ? getComputedStyle(dock).pointerEvents : null,
+        };
+    });
+    expect(compactAppearance.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(compactAppearance.borderWidth).not.toBe("0px 0px 0px 0px");
+    expect(compactAppearance.boxShadow).not.toBe("none");
+    expect(compactAppearance).toMatchObject({ shellBackgroundColor: "rgba(0, 0, 0, 0)", dockBackgroundColor: "rgba(0, 0, 0, 0)", dockPosition: "absolute", dockPointerEvents: "none" });
+    expect(compactAppearance.composerHeight).toBeLessThan(expandedComposerHeight);
+    expect(compactAppearance.shellHeight).toBeLessThan(expandedComposerHeight);
     await page.getByRole("button", { name: "回到底部" }).click();
     await expect(composer).toHaveAttribute("data-compact", "false");
     await expect.poll(() => scrollArea.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(4);
@@ -722,7 +750,7 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.locator("html")).toHaveClass(/dark/);
     await expect(round).toBeVisible();
-    await expect(round.getByLabel("本轮创作参数")).toContainText("图片生成");
+    await expect(round.getByLabel("本轮创作参数")).toContainText("e2e-image-model");
     await expectNoHorizontalOverflow(page, `${testInfo.project.name} creative media round dark`);
     if (process.env.VOZEB_PRO_VISUAL_CAPTURE === "1") {
         const screenshotPath = testInfo.outputPath(`creative-media-single-dark-${testInfo.project.name}.png`);
@@ -989,15 +1017,142 @@ test("creative workspaces remain usable without horizontal overflow in light and
     expect(canvasCreated.ok(), await canvasCreated.text()).toBe(true);
     const canvasProject = ((await canvasCreated.json()) as { data: { project: { id: string } } }).data.project;
     const canvasRoute = `/canvas/${canvasProject.id}`;
-    const routes = ["/create", "/canvas", canvasRoute, `/drama/${project.id}`];
+    const dramaRoute = `/drama/${project.id}`;
+
+    await page.goto("/drama", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "新建短剧" }).click();
+    const createDialog = page.getByRole("dialog", { name: "新建短剧项目" });
+    await expect(createDialog).toBeVisible();
+    const dialogBox = await createDialog.boundingBox();
+    const ratioLabelBox = await createDialog.getByText("生成尺寸", { exact: true }).boundingBox();
+    const ratioControlBox = await createDialog.locator(".ant-segmented").boundingBox();
+    expect(dialogBox?.width || 0).toBeLessThanOrEqual(Math.min(522, (page.viewportSize()?.width || 0) - 22));
+    expect((ratioLabelBox?.y || 0) + (ratioLabelBox?.height || 0)).toBeLessThanOrEqual((ratioControlBox?.y || 0) + 1);
+    await createDialog.getByRole("button", { name: /取\s*消/ }).click();
+    const projectEntry = page.locator(`a[href="${dramaRoute}"]`);
+    await expect(projectEntry).toHaveAttribute("aria-label", "进入短剧项目：E2E 短剧项目");
+    await projectEntry.click();
+    await expect(page).toHaveURL(new RegExp(`/drama/${project.id}$`));
+
+    const routes = ["/create", "/canvas", canvasRoute, dramaRoute];
 
     for (const route of routes) {
         await page.goto(route, { waitUntil: "domcontentloaded" });
         await expect(page.locator("body")).toBeVisible();
         if (route.startsWith("/drama/")) {
-            await expect(page.locator("main header input").first()).toHaveValue("E2E 短剧项目");
-            await page.getByRole("button", { name: "02 内容审核" }).click();
+            const dramaWorkspace = page.locator("[data-drama-workspace]");
+            await expect(dramaWorkspace).toBeVisible();
+            await expect(page.locator(".workspace-shell")).toHaveCount(0);
+            await expect(page.getByLabel("短剧项目名称").first()).toHaveValue("E2E 短剧项目");
+            await expect(page.locator("[data-drama-workspace-header]")).toHaveCount(1);
+            await expect(page.locator("[data-drama-stage-navigation]")).toHaveCount(1);
+            const workspaceBody = page.locator("[data-drama-workspace-body]");
+            const productionSurface = page.locator("[data-drama-production-surface]");
+            const closedLayout = await Promise.all([workspaceBody.boundingBox(), productionSurface.boundingBox()]);
+            const desktopWide = (page.viewportSize()?.width || 0) >= 1366;
+            if (desktopWide) {
+                const sidebar = page.locator("[data-drama-episode-sidebar]");
+                await expect(sidebar).toBeVisible();
+                const sidebarBox = await sidebar.boundingBox();
+                expect(Math.round(sidebarBox?.width || 0)).toBe(226);
+                expect((sidebarBox?.x || 0) + (sidebarBox?.width || 0)).toBeLessThanOrEqual((closedLayout[1]?.x || 0) + 1);
+                await expect(page.getByPlaceholder("搜索集数")).toBeVisible();
+                await expect(page.getByText("新建集数", { exact: true })).toBeVisible();
+                if ((page.viewportSize()?.width || 0) >= 1600) {
+                    await expect(page.locator("[data-drama-script-workspace]")).toBeVisible();
+                    const columns = await page.locator("[data-drama-script-workspace]").evaluate((element) => {
+                        const targets = ["[data-drama-scene-structure]", "[data-drama-script-editor]", "[data-drama-episode-settings]"];
+                        return targets.map((selector) => {
+                            const rect = element.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+                            return rect ? { left: Math.round(rect.left), width: Math.round(rect.width) } : null;
+                        });
+                    });
+                    expect(columns.every(Boolean)).toBe(true);
+                    expect(columns[0]?.width).toBeGreaterThanOrEqual(200);
+                    expect(columns[2]?.width).toBeGreaterThanOrEqual(280);
+                    expect(columns[1]?.width).toBeGreaterThan(320);
+                }
+            } else {
+                expect(Math.abs((closedLayout[0]?.x || 0) - (closedLayout[1]?.x || 0))).toBeLessThanOrEqual(1);
+                expect(Math.abs((closedLayout[0]?.width || 0) - (closedLayout[1]?.width || 0))).toBeLessThanOrEqual(1);
+            }
+
+            await page.getByRole("button", { name: "切换到视觉资产" }).click();
+            await expect(page.getByRole("heading", { name: "视觉资产" })).toBeVisible();
+            await expect(page.getByRole("button", { name: "新建角色" })).toBeVisible();
+            await page.getByRole("button", { name: "新建角色" }).click();
+            const assetDrawer = page.getByRole("dialog", { name: "新建角色" });
+            await expect(assetDrawer).toBeVisible();
+            await expectDialogWithinViewport(assetDrawer);
+            await assetDrawer.getByRole("button", { name: /取\s*消/ }).click();
+
+            await page.getByRole("button", { name: "切换到内容审核" }).click();
             await expect(page.getByRole("heading", { name: "内容审核" })).toBeVisible();
+
+            await page.getByRole("button", { name: "切换到镜头生成" }).click();
+            await expect(page.getByRole("heading", { name: "本集生产控制台" })).toBeVisible();
+            await expect(page.locator("[data-drama-generation-readiness]")).toBeVisible();
+            await expect(page.locator("[data-drama-generation-empty]")).toBeVisible();
+            const generationLayout = await page.locator("[data-drama-generation-panel]").evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+            expect(generationLayout.scrollWidth).toBeLessThanOrEqual(generationLayout.clientWidth + 1);
+
+            if ((page.viewportSize()?.width || 0) < 1366) {
+                await page.getByRole("button", { name: "打开剧集导航" }).click();
+                const episodeNavigation = page.getByRole("dialog", { name: "集数管理" });
+                await expect(episodeNavigation).toBeVisible();
+                await expectDialogWithinViewport(episodeNavigation);
+                await episodeNavigation.getByRole("button", { name: "收起集数管理" }).click();
+                await expect(episodeNavigation).toBeHidden();
+            } else {
+                const episodeSidebar = page.locator("[data-drama-episode-sidebar]");
+                await expect(episodeSidebar).toBeVisible();
+                const beforeCollapse = await Promise.all([workspaceBody.boundingBox(), productionSurface.boundingBox()]);
+                await page.getByRole("button", { name: "收起剧集导航" }).click();
+                await expect(episodeSidebar).toBeHidden();
+                const afterCollapse = await Promise.all([workspaceBody.boundingBox(), productionSurface.boundingBox()]);
+                expect(afterCollapse[1]?.x || 0).toBeLessThanOrEqual(beforeCollapse[1]?.x || 0);
+                expect(afterCollapse[1]?.width || 0).toBeGreaterThan(beforeCollapse[1]?.width || 0);
+                await page.getByRole("button", { name: "打开剧集导航" }).click();
+                await expect(page.locator("[data-drama-episode-sidebar]")).toBeVisible();
+            }
+
+            await page.getByRole("button", { name: "打开项目 Agent" }).click();
+            let agentSurface: Locator;
+            if ((page.viewportSize()?.width || 0) >= 1280) {
+                const agentPanel = page.getByLabel("项目 Agent 面板");
+                await expect(agentPanel).toBeVisible();
+                const contentBox = await productionSurface.boundingBox();
+                const agentBox = await agentPanel.boundingBox();
+                expect((contentBox?.x || 0) + (contentBox?.width || 0)).toBeLessThanOrEqual((agentBox?.x || 0) + 1);
+                agentSurface = agentPanel;
+            } else {
+                const agentDrawer = page.getByRole("dialog", { name: "项目 Agent" });
+                await expect(agentDrawer).toBeVisible();
+                await expectDialogWithinViewport(agentDrawer);
+                agentSurface = agentDrawer;
+            }
+            const quickActions = agentSurface.locator("[data-drama-agent-quick-actions]");
+            await expect(quickActions).toBeVisible();
+            const quickLayout = await quickActions.evaluate((element) => {
+                const buttons = [...element.querySelectorAll<HTMLElement>("button")];
+                const bounds = element.getBoundingClientRect();
+                return {
+                    display: getComputedStyle(element).display,
+                    columns: [...new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().left)))],
+                    inside: buttons.every((button) => {
+                        const rect = button.getBoundingClientRect();
+                        return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
+                    }),
+                    clientWidth: element.clientWidth,
+                    scrollWidth: element.scrollWidth,
+                };
+            });
+            expect(quickLayout.display).toBe("grid");
+            expect(quickLayout.columns).toHaveLength(2);
+            expect(quickLayout.inside).toBe(true);
+            expect(quickLayout.scrollWidth).toBeLessThanOrEqual(quickLayout.clientWidth + 1);
+            await agentSurface.getByRole("button", { name: "收起项目 Agent" }).click();
+            await expect(page.getByRole("button", { name: "打开项目 Agent" })).toBeVisible();
         }
         if (route === canvasRoute) {
             await expect(page.locator("[data-canvas-surface]")).toHaveCSS("background-color", "rgb(255, 255, 255)");
@@ -1037,6 +1192,79 @@ test("creative workspaces remain usable without horizontal overflow in light and
     await page.goto(canvasRoute, { waitUntil: "domcontentloaded" });
     await expect(page.locator("[data-canvas-surface]")).toHaveCSS("background-color", "rgb(9, 11, 16)");
     await expectNoHorizontalOverflow(page, `${canvasRoute} dark`);
+    await page.goto(dramaRoute, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await expect(page.locator("[data-drama-workspace]")).toBeVisible();
+    await expect(page.locator(".workspace-shell")).toHaveCount(0);
+    await expectNoHorizontalOverflow(page, `${dramaRoute} dark`);
+});
+
+test("admin user editor groups permission controls and keeps the footer visible", async ({ page }, testInfo) => {
+    await page.goto("/admin?section=users", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "用户管理" })).toBeVisible();
+
+    const adminRow = page.getByRole("row").filter({ hasText: "@e2e_admin" });
+    await expect(adminRow).toBeVisible();
+    await adminRow.getByRole("button", { name: "管理", exact: true }).click();
+
+    const dialog = page.getByRole("dialog", { name: /用户管理/ });
+    await expect(dialog).toBeVisible();
+    await expectDialogWithinViewport(dialog);
+
+    const layout = await dialog.evaluate((element) => {
+        const bounds = (target: Element | null) => {
+            const rect = target?.getBoundingClientRect();
+            return rect ? { left: Math.round(rect.left), right: Math.round(rect.right), top: Math.round(rect.top), bottom: Math.round(rect.bottom) } : null;
+        };
+        const body = element.querySelector<HTMLElement>(".ant-modal-body");
+        const footer = element.querySelector<HTMLElement>(".ant-modal-footer");
+        const grid = element.querySelector<HTMLElement>("[data-admin-permission-grid]");
+        const groups = [...element.querySelectorAll<HTMLElement>("[data-admin-permission-group]")];
+        return {
+            columns: [...new Set(groups.map((group) => Math.round(group.getBoundingClientRect().left)))],
+            gridDisplay: grid ? getComputedStyle(grid).display : null,
+            groups: groups.map((group) => {
+                const rect = group.getBoundingClientRect();
+                const items = [...group.querySelectorAll<HTMLElement>("[data-admin-permission-item]")].map((item) => bounds(item));
+                return { left: Math.round(rect.left), right: Math.round(rect.right), top: Math.round(rect.top), width: Math.round(rect.width), items };
+            }),
+            bodyScrollable: Boolean(body && body.scrollHeight > body.clientHeight),
+            dialog: bounds(element),
+            footer: bounds(footer),
+            documentClientWidth: document.documentElement.clientWidth,
+            documentScrollWidth: document.documentElement.scrollWidth,
+        };
+    });
+
+    const mobile = testInfo.project.name.startsWith("mobile-");
+    expect(layout.columns).toHaveLength(mobile ? 1 : 2);
+    expect(layout.gridDisplay).toBe("grid");
+    if (mobile) {
+        expect(layout.groups.every((group) => group.left === layout.groups[0]?.left)).toBe(true);
+    } else {
+        for (const row of [layout.groups.slice(0, 2), layout.groups.slice(2, 4)]) {
+            expect(new Set(row.map((group) => group.top)).size).toBe(1);
+            expect(row.map((group) => group.left)).toEqual(layout.columns);
+            expect(Math.max(...row.map((group) => group.width)) - Math.min(...row.map((group) => group.width))).toBeLessThanOrEqual(1);
+        }
+    }
+    for (const group of layout.groups) {
+        expect(group.items.length).toBeGreaterThan(0);
+        expect(group.items.every((item) => item && item.left >= group.left && item.right <= group.right)).toBe(true);
+    }
+    expect(layout.bodyScrollable).toBe(true);
+    expect(layout.dialog?.left).toBeGreaterThanOrEqual(0);
+    expect(layout.dialog?.right).toBeLessThanOrEqual(page.viewportSize()!.width);
+    expect(layout.footer?.top).toBeGreaterThanOrEqual(0);
+    expect(layout.footer?.bottom).toBeLessThanOrEqual(page.viewportSize()!.height);
+    expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.documentClientWidth + 1);
+
+    const analyticsPermission = dialog.getByRole("checkbox", { name: /经营分析/ });
+    const initiallyChecked = await analyticsPermission.isChecked();
+    await analyticsPermission.click();
+    expect(await analyticsPermission.isChecked()).toBe(!initiallyChecked);
+    await analyticsPermission.click();
+    expect(await analyticsPermission.isChecked()).toBe(initiallyChecked);
 });
 
 test("conversation and Canvas deletion stay deleted after refresh", async ({ page, request }) => {

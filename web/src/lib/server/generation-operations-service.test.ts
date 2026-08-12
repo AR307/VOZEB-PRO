@@ -3,18 +3,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     listStoredGenerationTaskRecords: vi.fn(),
     listStoredGenerationTaskRecordsByRunIds: vi.fn(),
+    summarizeStoredAgentPerformance: vi.fn(),
     generationTaskPointsCost: vi.fn((_payload: Record<string, unknown>) => 3),
     findPublicUserIdsByKeyword: vi.fn(),
     getPublicUsersByIds: vi.fn(),
     getAuthSettings: vi.fn(),
+    getDatabaseProvider: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-store", () => ({
     listStoredGenerationTaskRecords: mocks.listStoredGenerationTaskRecords,
     listStoredGenerationTaskRecordsByRunIds: mocks.listStoredGenerationTaskRecordsByRunIds,
+    summarizeStoredAgentPerformance: mocks.summarizeStoredAgentPerformance,
     generationTaskPointsCost: mocks.generationTaskPointsCost,
 }));
 vi.mock("@/lib/auth/store", () => ({ findPublicUserIdsByKeyword: mocks.findPublicUserIdsByKeyword, getPublicUsersByIds: mocks.getPublicUsersByIds, getAuthSettings: mocks.getAuthSettings }));
+vi.mock("@/lib/server/database", () => ({ getDatabaseProvider: mocks.getDatabaseProvider }));
 vi.mock("@/lib/server/channel-runtime-health", () => ({
     getChannelRuntimeHealth: vi.fn(() => ({ channelId: "channel-one", capability: "image", consecutiveFailures: 0 })),
     isChannelRuntimeCooling: vi.fn(() => false),
@@ -26,9 +30,11 @@ describe("generation operations aggregation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.generationTaskPointsCost.mockReturnValue(3);
+        mocks.getDatabaseProvider.mockReturnValue("file");
         mocks.findPublicUserIdsByKeyword.mockResolvedValue(["user-one"]);
         mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", accountId: "0001", username: "creator", displayName: "创作者" }]);
         mocks.listStoredGenerationTaskRecordsByRunIds.mockResolvedValue([]);
+        mocks.summarizeStoredAgentPerformance.mockResolvedValue({ sampleSize: 0, planningP50Ms: 0, planningP95Ms: 0, firstResultP50Ms: 0, firstResultP95Ms: 0, queueAverageMs: 0, upstreamAverageMs: 0, reviewAverageMs: 0 });
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
             items: [task()],
             all: [task()],
@@ -64,9 +70,19 @@ describe("generation operations aggregation", () => {
         expect(mocks.getPublicUsersByIds).toHaveBeenCalledWith(["user-one"]);
         expect(mocks.findPublicUserIdsByKeyword).toHaveBeenCalledWith("0001");
         expect(mocks.listStoredGenerationTaskRecords).toHaveBeenNthCalledWith(1, { page: 1, search: "0001", searchUserIds: ["user-one"], includeAll: false });
-        expect(mocks.listStoredGenerationTaskRecords).toHaveBeenNthCalledWith(2, { page: 1, pageSize: 100, type: "agent", search: "0001", searchUserIds: ["user-one"], includeAll: true });
+        expect(mocks.summarizeStoredAgentPerformance).toHaveBeenCalledWith({ page: 1, search: "0001", searchUserIds: ["user-one"] });
         expect(mocks.listStoredGenerationTaskRecordsByRunIds).toHaveBeenCalledWith(["task-one"]);
         expect(JSON.stringify(result)).not.toContain("amountCents");
+    });
+
+    it("lets PostgreSQL search users inside the task query instead of preloading user ids", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+
+        await listAdminGenerationOperations({ page: 1, search: "创作者" });
+
+        expect(mocks.findPublicUserIdsByKeyword).not.toHaveBeenCalled();
+        expect(mocks.listStoredGenerationTaskRecords).toHaveBeenCalledWith({ page: 1, search: "创作者", searchUserIds: [], includeAll: false });
+        expect(mocks.summarizeStoredAgentPerformance).toHaveBeenCalledWith({ page: 1, search: "创作者", searchUserIds: [] });
     });
 
     it("shows planner audit, child-task points and only marks an actually expired lease", async () => {

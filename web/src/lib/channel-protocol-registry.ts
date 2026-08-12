@@ -17,7 +17,7 @@ export type ChannelProtocolDefinition = {
     modelCatalogPaths: string[];
     capabilities: LogicalModelCapability[];
     operations: Partial<Record<LogicalModelCapability, ProtocolOperation>>;
-    builtInModels?: ReadonlyArray<{ id: string; label: string; capability: LogicalModelCapability }>;
+    builtInModels?: ReadonlyArray<{ id: string; label: string; capability: LogicalModelCapability; operation?: ProtocolOperation }>;
     strict?: boolean;
     advanced?: boolean;
 };
@@ -146,6 +146,17 @@ const yumengVideoOperation: ProtocolOperation = {
     supportsReferenceAudio: true,
 };
 
+const yumengStableVideoOperation: ProtocolOperation = {
+    ...yumengVideoOperation,
+    requestTemplate:
+        '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_videos":"{{videos}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","first_image":"{{first_frame}}","last_image":"{{last_frame}}"}',
+    durationRange: "4-15 秒",
+    referenceRule: "videos_stable 系列使用 reference_images、reference_videos、reference_audios、first_image 与 last_image；参考素材必须是上游可访问的 URL。",
+    supportsReferenceVideo: true,
+};
+
+const yumengBuiltInModels = YUMENG_MODEL_CENTER_MODELS.map((model) => (model.id === "videos_stable" || model.id === "videos_stable_fast" ? { ...model, operation: yumengStableVideoOperation } : model));
+
 export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] = [
     {
         id: "openai",
@@ -165,7 +176,7 @@ export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] =
         apiFormat: "openai",
         authMode: "bearer",
         modelCatalogPaths: [],
-        builtInModels: YUMENG_MODEL_CENTER_MODELS,
+        builtInModels: yumengBuiltInModels,
         capabilities: ["image", "video"],
         operations: { image: yumengImageOperation, video: yumengVideoOperation },
         strict: true,
@@ -340,21 +351,22 @@ export function protocolCatalogCapability(protocol: SystemChannelProtocol): Logi
     return definition.strict && definition.capabilities.length === 1 ? definition.capabilities[0] : undefined;
 }
 
-export function protocolModelConfig(protocol: SystemChannelProtocol, capability: LogicalModelCapability): SystemChannelModelConfig | undefined {
+export function protocolModelConfig(protocol: SystemChannelProtocol, capability: LogicalModelCapability, model?: string): SystemChannelModelConfig | undefined {
     const definition = channelProtocolDefinition(protocol);
-    const operation = definition.operations[capability];
+    const builtIn = model ? definition.builtInModels?.find((item) => normalizeModelId(item.id) === normalizeModelId(model)) : undefined;
+    const operation = builtIn?.capability === capability && builtIn.operation ? builtIn.operation : definition.operations[capability];
     if (!operation) return undefined;
     return { ...operation, capability, source: "manual", protocol, apiFormat: definition.apiFormat };
 }
 
-export function applyModelProtocol(config: SystemChannelModelConfig, protocol: SystemChannelProtocol): SystemChannelModelConfig {
-    return protocolModelConfig(protocol, config.capability) || { ...config, source: "manual", protocol };
+export function applyModelProtocol(config: SystemChannelModelConfig, protocol: SystemChannelProtocol, model?: string): SystemChannelModelConfig {
+    return protocolModelConfig(protocol, config.capability, model) || { ...config, source: "manual", protocol };
 }
 
-export function normalizeStrictProtocolModelConfig(config: SystemChannelModelConfig, fallbackProtocol: SystemChannelProtocol): SystemChannelModelConfig {
+export function normalizeStrictProtocolModelConfig(config: SystemChannelModelConfig, fallbackProtocol: SystemChannelProtocol, model?: string): SystemChannelModelConfig {
     const protocol = config.protocol || fallbackProtocol;
     if (!channelProtocolDefinition(protocol).strict) return config;
-    return protocolModelConfig(protocol, config.capability) || config;
+    return protocolModelConfig(protocol, config.capability, model) || config;
 }
 
 export function resolveChannelModelConfig(config: SystemChannelAdvancedConfig | undefined, model: string) {
@@ -390,7 +402,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
         const key = normalizeModelId(model);
         const builtIn = definition.builtInModels?.find((item) => normalizeModelId(item.id) === key);
         const capability = builtIn?.capability || protocolCatalogCapability(protocol) || modelConfigs[key]?.capability || modelCapabilities[key] || inferModelCapability(model);
-        const strict = protocolModelConfig(protocol, capability);
+        const strict = protocolModelConfig(protocol, capability, model);
         if (strict) modelConfigs[key] = strict;
         modelCapabilities[key] = capability;
     }
@@ -398,7 +410,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
     const primaryAdvanced = primary ? Object.fromEntries(Object.entries(primary).filter(([key]) => key !== "capability")) : {};
     return {
         ...channel,
-        baseUrl: definition.defaultBaseUrl || channel.baseUrl,
+        baseUrl: channel.baseUrl.trim() || definition.defaultBaseUrl || "",
         apiFormat: definition.apiFormat,
         models,
         advancedConfig: {
@@ -465,7 +477,7 @@ export function channelProtocolValidationErrors(channel: SystemModelChannel) {
         }
         if (!definition.strict) continue;
         const capability = config?.capability || advanced.modelCapabilities?.[key] || inferModelCapability(model);
-        const expected = protocolModelConfig(protocol, capability);
+        const expected = protocolModelConfig(protocol, capability, model);
         if (!expected) {
             errors.push(`${definition.label} 不支持 ${capability} 模型 ${model}`);
             continue;

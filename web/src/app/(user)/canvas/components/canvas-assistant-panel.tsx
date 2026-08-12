@@ -1,19 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowRight, Bot, Files, History, ImagePlus, Layers3, LayoutPanelTop, PanelRightClose, Pause, PenLine, Play, Plus, Sparkles, Square, WandSparkles } from "lucide-react";
-import { Button, Modal, Tooltip } from "antd";
+import { App, Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { nanoid } from "nanoid";
+import { controlCreativeAgentRun, createCreativeAgentRun, listCreativeAgentRuns, retryCreativeAgentTask } from "@/services/api/creative";
+import { updateCreativeConversation } from "@/services/api/creative";
+import { deleteCanvasAssistantConversations } from "@/services/api/canvas-projects";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
+import { CREATIVE_RUN_MODEL_LIMIT, type CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
-import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { watchCanvasAgentRun } from "./canvas-agent-run-client";
 import { withCanvasAgentRunWatch } from "./canvas-agent-run-watch-guard";
 import type { CanvasAgentRunStage } from "./canvas-agent-progress";
@@ -22,8 +24,11 @@ import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessag
 import { useCanvasAgentAttachments } from "./use-canvas-agent-attachments";
 import { useCanvasAgentMessageScroll } from "./use-canvas-agent-message-scroll";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "./canvas-agent-panel-motion";
-import type { CanvasAssistantMessage, CanvasAssistantReference, CanvasAssistantSession, CanvasNodeData } from "../types";
+import { clearCanvasAssistantRun, findCanvasAssistantRunSession, patchCanvasAssistantRun, setCanvasAssistantRun, type CanvasAssistantRunState, type CanvasAssistantRunStates } from "./canvas-assistant-run-state";
+import { CanvasNodeType, isCanvasImageNodeType, type CanvasAssistantMessage, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "../types";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
+import { canvasAgentReferenceAliases, collectCanvasAgentMentionAssets, remapCanvasAgentReferences } from "./canvas-agent-mention";
+import { CanvasAgentGenerationSettings } from "./canvas-agent-generation-settings";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 const DEFAULT_PANEL_WIDTH = 404;
@@ -32,7 +37,6 @@ const MAX_PANEL_WIDTH = 640;
 type OnlineAgentTab = "chat" | "history";
 
 type CanvasAssistantPanelProps = {
-    conversationId?: string;
     nodes: CanvasNodeData[];
     selectedNodeIds: Set<string>;
     snapshot: CanvasAgentSnapshot;
@@ -40,7 +44,6 @@ type CanvasAssistantPanelProps = {
     activeSessionId: string | null;
     onSelectNodeIds: (ids: Set<string>) => void;
     onSessionsChange: (sessions: CanvasAssistantSession[], activeSessionId: string | null) => void;
-    onConversationChange: (conversationId: string) => void;
     onApplyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot;
     onLocateNode: (nodeId: string) => void;
     onPasteImage: (file: File) => Promise<string>;
@@ -50,22 +53,8 @@ type CanvasAssistantPanelProps = {
 
 import { AssistantHistory, AssistantReferenceChip, assistantMessageToChatMessage, buildAssistantReferences, compactSnapshot, canvasRunSelectedNodeIds, createSession, removeCanvasAssistantSessions } from "./canvas-assistant-elements";
 
-export function CanvasAssistantPanel({
-    conversationId,
-    nodes,
-    selectedNodeIds,
-    snapshot,
-    sessions,
-    activeSessionId,
-    onSelectNodeIds,
-    onSessionsChange,
-    onConversationChange,
-    onApplyOps,
-    onLocateNode,
-    onPasteImage,
-    closing,
-    onCollapse,
-}: CanvasAssistantPanelProps) {
+export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onApplyOps, onLocateNode, onPasteImage, closing, onCollapse }: CanvasAssistantPanelProps) {
+    const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const user = useUserStore((state) => state.user);
     const { skills, skillsLoading, models } = useCreativeAgentOptions("canvas");
@@ -75,22 +64,37 @@ export function CanvasAssistantPanel({
     const [selectedSkillId, setSelectedSkillId] = useState<string>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
     const [smartPlanning, setSmartPlanning] = useState(true);
-    const [isRunning, setIsRunning] = useState(false);
-    const [activeRunId, setActiveRunId] = useState("");
-    const [runPaused, setRunPaused] = useState(false);
-    const [runStage, setRunStage] = useState<CanvasAgentRunStage>({ key: "planning", text: "正在理解你的需求" });
+    const [generationPreferences, setGenerationPreferences] = useState<CreativeGenerationPreferences>({});
+    const [runStatesBySession, setRunStatesBySession] = useState<CanvasAssistantRunStates>({});
     const [deleteChatIds, setDeleteChatIds] = useState<string[]>([]);
+    const [deletingChats, setDeletingChats] = useState(false);
     const [resizing, setResizing] = useState(false);
     const [removedReferenceIds, setRemovedReferenceIds] = useState<Set<string>>(new Set());
     const [localSessions, setLocalSessions] = useState<CanvasAssistantSession[]>(sessions);
     const [localActiveSessionId, setLocalActiveSessionId] = useState<string | null>(activeSessionId);
     const snapshotRef = useRef(snapshot);
-    const restoredRunRef = useRef("");
+    const localSessionsRef = useRef(localSessions);
+    const localActiveSessionIdRef = useRef(localActiveSessionId);
+    const restoredProjectRef = useRef("");
+    const restoredRunIdsRef = useRef(new Set<string>());
     const watchingRunIdsRef = useRef(new Set<string>());
-    const sessionsKey = useMemo(() => JSON.stringify(sessions), [sessions]);
-    const localSessionsKey = useMemo(() => JSON.stringify(localSessions), [localSessions]);
+    const runWatchControllersRef = useRef(new Map<string, AbortController>());
+    const previousMediaReferenceIdsRef = useRef<string[]>([]);
+
+    const commitSessionState = useCallback(
+        (nextSessions: CanvasAssistantSession[], nextActiveSessionId: string | null) => {
+            localSessionsRef.current = nextSessions;
+            localActiveSessionIdRef.current = nextActiveSessionId;
+            setLocalSessions(nextSessions);
+            setLocalActiveSessionId(nextActiveSessionId);
+            onSessionsChange(nextSessions, nextActiveSessionId);
+        },
+        [onSessionsChange],
+    );
 
     useEffect(() => {
+        localSessionsRef.current = sessions;
+        localActiveSessionIdRef.current = activeSessionId;
         setLocalSessions(sessions);
         setLocalActiveSessionId(activeSessionId);
     }, [activeSessionId, sessions]);
@@ -99,23 +103,25 @@ export function CanvasAssistantPanel({
         snapshotRef.current = snapshot;
     }, [snapshot]);
 
-    useEffect(() => {
-        if (localActiveSessionId === activeSessionId && localSessionsKey === sessionsKey) return;
-        onSessionsChange(localSessions, localActiveSessionId);
-    }, [activeSessionId, localActiveSessionId, localSessions, localSessionsKey, onSessionsChange, sessionsKey]);
-
     const activeSession = useMemo(() => localSessions.find((session) => session.id === localActiveSessionId) || localSessions[0] || null, [localActiveSessionId, localSessions]);
+    const activeRunState = activeSession ? runStatesBySession[activeSession.id] : undefined;
+    const isRunning = Boolean(activeRunState);
+    const runPaused = Boolean(activeRunState?.paused);
+    const runStage = activeRunState?.stage || ({ key: "planning", text: "正在理解你的需求" } satisfies CanvasAgentRunStage);
     const historySessions = localSessions.filter((session) => session.messages.length > 0);
     const messages = activeSession?.messages || [];
     const selectedNodeKey = useMemo(() => Array.from(selectedNodeIds).sort().join(","), [selectedNodeIds]);
     const allSelectedReferences = useMemo(() => buildAssistantReferences(nodes, selectedNodeIds), [nodes, selectedNodeIds]);
     const selectedReferences = useMemo(() => allSelectedReferences.filter((item) => !removedReferenceIds.has(item.id)), [allSelectedReferences, removedReferenceIds]);
-    const selectedImageReferences = selectedReferences.filter((item) => item.dataUrl);
+    const mentionAssets = useMemo(() => collectCanvasAgentMentionAssets(nodes), [nodes]);
+    const selectedMediaReferences = useMemo(() => selectedReferences.filter((item) => item.dataUrl && (isCanvasImageNodeType(item.type) || item.type === CanvasNodeType.Video)), [selectedReferences]);
+    const selectedMediaReferenceIds = useMemo(() => selectedMediaReferences.map((item) => item.id), [selectedMediaReferences]);
+    const referenceAliases = useMemo(() => canvasAgentReferenceAliases(mentionAssets, selectedMediaReferenceIds), [mentionAssets, selectedMediaReferenceIds]);
     const selectedTextReferences = selectedReferences.filter((item) => !item.dataUrl);
     const readyReferenceIds = useMemo(() => allSelectedReferences.map((item) => item.id), [allSelectedReferences]);
     const { uploads, addFiles, retryUpload, removeUpload } = useCanvasAgentAttachments(onPasteImage, readyReferenceIds);
     const composerAttachments = [
-        ...selectedImageReferences.map((item, index) => ({ id: item.id, name: item.title, url: item.dataUrl!, label: imageReferenceLabel(index), status: "ready" as const })),
+        ...selectedMediaReferences.map((item) => ({ id: item.id, name: item.title, url: item.dataUrl!, type: item.type === CanvasNodeType.Video ? ("video" as const) : ("image" as const), label: referenceAliases.get(item.id), status: "ready" as const })),
         ...uploads.filter((item) => !item.nodeId || !readyReferenceIds.includes(item.nodeId)),
     ];
     const messageScrollKey = messages.map((item) => `${item.id}:${item.text.length}`).join("|") + `:${isRunning}:${runStage.key}`;
@@ -129,8 +135,18 @@ export function CanvasAssistantPanel({
         setRemovedReferenceIds(new Set());
     }, [selectedNodeKey]);
 
+    useEffect(() => {
+        const previousIds = previousMediaReferenceIdsRef.current;
+        const nextIds = selectedMediaReferenceIds;
+        if (previousIds.join("|") !== nextIds.join("|")) {
+            setPrompt((current) => remapCanvasAgentReferences(current, mentionAssets, previousIds, nextIds));
+            previousMediaReferenceIdsRef.current = nextIds;
+        }
+    }, [mentionAssets, selectedMediaReferenceIds]);
+
     const updateSession = (sessionId: string, updater: (session: CanvasAssistantSession) => CanvasAssistantSession) => {
-        setLocalSessions((prev) => prev.map((session) => (session.id === sessionId ? updater(session) : session)));
+        const nextSessions = localSessionsRef.current.map((session) => (session.id === sessionId ? updater(session) : session));
+        commitSessionState(nextSessions, localActiveSessionIdRef.current);
     };
 
     const appendMessage = (sessionId: string, message: CanvasAssistantMessage) => {
@@ -154,40 +170,80 @@ export function CanvasAssistantPanel({
         });
     };
 
+    const bindSessionRun = useCallback((sessionId: string, run: CanvasAssistantRunState) => {
+        setRunStatesBySession((current) => setCanvasAssistantRun(current, sessionId, run));
+    }, []);
+
+    const updateSessionRun = useCallback((sessionId: string, runId: string, patch: Partial<CanvasAssistantRunState>) => {
+        setRunStatesBySession((current) => patchCanvasAssistantRun(current, sessionId, runId, patch));
+    }, []);
+
+    const releaseSessionRun = useCallback((sessionId: string, identity: string) => {
+        setRunStatesBySession((current) => clearCanvasAssistantRun(current, sessionId, identity));
+    }, []);
+
     const startChatSession = () => {
         requestLatest();
         setSelectedSkillId(undefined);
         setSelectedModelIds([]);
         setSmartPlanning(true);
         if (activeSession && activeSession.messages.length === 0) {
-            setLocalActiveSessionId(activeSession.id);
+            commitSessionState(localSessionsRef.current, activeSession.id);
             return;
         }
         const session = createSession();
-        setLocalSessions((prev) => [session, ...prev]);
-        setLocalActiveSessionId(session.id);
+        commitSessionState([session, ...localSessionsRef.current], session.id);
     };
 
-    const removeSessions = (ids: string[]) => {
-        const removedActiveSession = Boolean(activeSession && ids.includes(activeSession.id));
-        const next = removeCanvasAssistantSessions(localSessions, localActiveSessionId, ids);
-        setLocalSessions(next.sessions);
-        setLocalActiveSessionId(next.activeSessionId);
-        if (removedActiveSession || ids.length >= localSessions.length) {
+    const removeSessions = async (ids: string[]) => {
+        const runningIds = ids.filter((id) => runStatesBySession[id]);
+        if (runningIds.length) message.warning("运行中的对话需先取消任务再删除");
+        const removableIds = ids.filter((id) => !runStatesBySession[id]);
+        if (!removableIds.length) return false;
+        const currentSessions = localSessionsRef.current;
+        const removableSessions = currentSessions.filter((session) => removableIds.includes(session.id));
+        const conversationIds = removableSessions.filter((session) => session.conversationId).map((session) => session.conversationId!);
+        let persistedState: Awaited<ReturnType<typeof deleteCanvasAssistantConversations>> | undefined;
+        try {
+            if (conversationIds.length) persistedState = await deleteCanvasAssistantConversations(snapshotRef.current.projectId, conversationIds);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "Agent 对话删除失败");
+            return false;
+        }
+        const removedActiveSession = Boolean(activeSession && removableIds.includes(activeSession.id));
+        let next = removeCanvasAssistantSessions(currentSessions, localActiveSessionIdRef.current, removableIds);
+        const removedLocalOnlySession = removableSessions.some((session) => !session.conversationId);
+        const createdLocalReplacement = next.sessions.length === 1 && !currentSessions.some((session) => session.id === next.sessions[0].id);
+        if (persistedState && createdLocalReplacement && !removedLocalOnlySession && persistedState.chatSessions.length) {
+            next = { sessions: persistedState.chatSessions, activeSessionId: persistedState.activeChatId || persistedState.chatSessions[0].id };
+        }
+        commitSessionState(next.sessions, next.activeSessionId);
+        if (removedActiveSession || removableIds.length >= currentSessions.length) {
             setView("chat");
             requestLatest();
         }
+        return true;
     };
 
     const clearSessions = () => {
-        removeSessions(localSessions.map((session) => session.id));
+        return removeSessions(localSessionsRef.current.map((session) => session.id));
+    };
+
+    const renameSession = async (id: string, title: string) => {
+        const session = localSessionsRef.current.find((item) => item.id === id);
+        if (!session) return;
+        try {
+            if (session.conversationId) await updateCreativeConversation(session.conversationId, { title });
+            updateSession(id, (current) => ({ ...current, title, updatedAt: new Date().toISOString() }));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "对话标题修改失败");
+        }
     };
 
     const sendMessage = async (text: string, savedReferences?: CanvasAssistantReference[]) => {
         const session = activeSession || createSession();
         if (!activeSession) {
-            setLocalSessions([session]);
-            setLocalActiveSessionId(session.id);
+            commitSessionState([session], session.id);
         }
 
         const refs = savedReferences || selectedReferences;
@@ -195,6 +251,7 @@ export function CanvasAssistantPanel({
         const runSnapshot = compactSnapshot(snapshotRef.current);
         const userMessage: CanvasAssistantMessage = { id: nanoid(), role: "user", text, references: refs };
         const assistantId = nanoid();
+        const planningStage = { key: "planning" as const, text: "正在理解你的需求" };
         requestLatest();
         appendMessage(session.id, userMessage);
         if (submittedReferenceIds.size) {
@@ -202,96 +259,148 @@ export function CanvasAssistantPanel({
             onSelectNodeIds(new Set(Array.from(selectedNodeIds).filter((id) => !submittedReferenceIds.has(id))));
         }
         upsertMessage(session.id, { id: assistantId, role: "assistant", text: submittedReferenceIds.size ? "收到，我会基于当前选中素材处理这次创作需求。" : "收到，我会结合当前画布处理这次创作需求。" });
-        setRunStage({ key: "planning", text: "正在理解你的需求" });
-        setIsRunning(true);
+        bindSessionRun(session.id, { assistantMessageId: assistantId, paused: false, stage: planningStage });
+        let createdRunId = "";
         try {
-            const response = await fetch("/api/agent/runs", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    clientRequestId: nanoid(),
-                    surface: "canvas",
-                    conversationId,
-                    projectId: snapshotRef.current.projectId,
-                    prompt: text,
-                    snapshot: { ...runSnapshot, selectedNodeIds: canvasRunSelectedNodeIds(snapshotRef.current, submittedReferenceIds) },
-                    assetIds: [],
-                    skillIds: selectedSkillId ? [selectedSkillId] : [],
-                    modelIds: smartPlanning ? [] : selectedModelIds,
-                }),
+            const payload = await createCreativeAgentRun({
+                clientRequestId: nanoid(),
+                surface: "canvas",
+                conversationId: session.conversationId,
+                projectId: snapshotRef.current.projectId,
+                prompt: text,
+                snapshot: { ...runSnapshot, selectedNodeIds: canvasRunSelectedNodeIds(snapshotRef.current, submittedReferenceIds) },
+                assetIds: [],
+                skillIds: selectedSkillId ? [selectedSkillId] : [],
+                modelIds: smartPlanning ? [] : selectedModelIds,
+                preferences: generationPreferences.mode ? generationPreferences : undefined,
             });
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.msg || "创建 Agent 任务失败");
-            if (payload.data.run.conversationId && payload.data.run.conversationId !== conversationId) onConversationChange(payload.data.run.conversationId);
-            restoredRunRef.current = payload.data.run.id;
-            setActiveRunId(payload.data.run.id);
+            const run = payload.run;
+            createdRunId = run.id;
+            restoredRunIdsRef.current.add(run.id);
+            updateSession(session.id, (current) => ({ ...current, conversationId: run.conversationId }));
+            upsertMessage(session.id, { id: assistantId, runId: run.id, role: "assistant", text: submittedReferenceIds.size ? "收到，我会基于当前选中素材处理这次创作需求。" : "收到，我会结合当前画布处理这次创作需求。" });
+            bindSessionRun(session.id, { runId: run.id, assistantMessageId: assistantId, paused: false, stage: planningStage });
             setSelectedSkillId(undefined);
-            setRunPaused(false);
-            await waitForBackendAgent(payload.data.run.id, session.id, assistantId);
+            await waitForBackendAgent(run.id, session.id, assistantId);
         } catch (error) {
-            upsertMessage(session.id, { id: assistantId, role: "error", title: "Agent 执行失败", text: friendlyAgentError(error) });
-            setIsRunning(false);
+            if (createdRunId) {
+                upsertMessage(session.id, { id: assistantId, runId: createdRunId, role: "assistant", text: "实时连接暂时不可用，任务仍会在后台继续运行。" });
+                updateSessionRun(session.id, createdRunId, { stage: { key: "reconnecting", resumeKey: "planning", text: "实时连接暂时不可用，任务仍在后台运行" } });
+            } else {
+                upsertMessage(session.id, { id: assistantId, role: "error", title: "Agent 执行失败", text: friendlyAgentError(error) });
+                releaseSessionRun(session.id, assistantId);
+            }
         }
     };
 
     const waitForBackendAgent = async (runId: string, sessionId: string, assistantId: string, retryTaskId?: string, replaceFirstFailure = false) => {
         await withCanvasAgentRunWatch(watchingRunIdsRef.current, runId, async () => {
+            const controller = new AbortController();
+            runWatchControllersRef.current.set(runId, controller);
             try {
-                await watchCanvasAgentRun(runId, {
-                    onPlan: (ops, reply) => {
-                        onApplyOps(ops);
-                        upsertMessage(sessionId, { id: assistantId, role: "assistant", text: reply });
+                await watchCanvasAgentRun(
+                    runId,
+                    {
+                        onPlan: (ops, reply) => {
+                            onApplyOps(ops);
+                            upsertMessage(sessionId, { id: assistantId, role: "assistant", text: reply });
+                        },
+                        onAssistant: (text, detail) => {
+                            if (detail?.runId && detail.taskId) {
+                                const replace = detail.taskId === retryTaskId || (replaceFirstFailure && !retryTaskId);
+                                const failure = { id: replace ? assistantId : nanoid(), role: "error" as const, title: detail.title || "创作任务失败", text, detail };
+                                if (replace) upsertMessage(sessionId, failure);
+                                else appendMessage(sessionId, failure);
+                                return;
+                            }
+                            upsertMessage(sessionId, { id: assistantId, role: detail?.runId ? "error" : "assistant", title: detail?.title, text, ...(detail?.nodeIds?.length || detail?.runId ? { detail } : {}) });
+                        },
+                        onStage: (stage) => updateSessionRun(sessionId, runId, { stage }),
+                        onPaused: (paused) => updateSessionRun(sessionId, runId, { paused }),
+                        onOps: onApplyOps,
                     },
-                    onAssistant: (text, detail) => {
-                        if (detail?.runId && detail.taskId) {
-                            const replace = detail.taskId === retryTaskId || (replaceFirstFailure && !retryTaskId);
-                            const failure = { id: replace ? assistantId : nanoid(), role: "error" as const, title: detail.title || "创作任务失败", text, detail };
-                            if (replace) upsertMessage(sessionId, failure);
-                            else appendMessage(sessionId, failure);
-                            return;
-                        }
-                        upsertMessage(sessionId, { id: assistantId, role: detail?.runId ? "error" : "assistant", title: detail?.title, text, ...(detail?.nodeIds?.length || detail?.runId ? { detail } : {}) });
-                    },
-                    onStage: setRunStage,
-                    onPaused: setRunPaused,
-                    onOps: onApplyOps,
-                });
+                    { signal: controller.signal },
+                );
             } finally {
-                await refreshUserPointsIfSystem("system");
-                setIsRunning(false);
-                setActiveRunId("");
-                setRunPaused(false);
+                if (runWatchControllersRef.current.get(runId) === controller) runWatchControllersRef.current.delete(runId);
+                if (!controller.signal.aborted) {
+                    await refreshUserPointsIfSystem("system");
+                    releaseSessionRun(sessionId, runId);
+                }
             }
         });
     };
 
     useEffect(() => {
         const projectId = snapshot.projectId;
-        if (!projectId || activeRunId || restoredRunRef.current) return;
+        if (!projectId || restoredProjectRef.current === projectId) return;
+        runWatchControllersRef.current.forEach((controller) => controller.abort());
+        runWatchControllersRef.current.clear();
+        watchingRunIdsRef.current.clear();
+        restoredRunIdsRef.current.clear();
+        setRunStatesBySession({});
+        restoredProjectRef.current = projectId;
         let cancelled = false;
-        void fetch(`/api/agent/runs?projectId=${encodeURIComponent(projectId)}`, { cache: "no-store" })
-            .then((response) => (response.ok ? response.json() : null))
-            .then((payload) => {
+        void listCreativeAgentRuns("canvas", { activeOnly: true, projectId })
+            .then((runs) => {
                 if (cancelled) return;
-                const run = (payload?.data?.runs || []).find((item: { status?: string }) => ["planning", "running", "paused"].includes(item.status || ""));
-                if (!run?.id || restoredRunRef.current === run.id) return;
-                restoredRunRef.current = run.id;
-                const session = activeSession || createSession();
-                if (!activeSession) {
-                    setLocalSessions([session]);
-                    setLocalActiveSessionId(session.id);
-                }
-                const assistantId = nanoid();
-                appendMessage(session.id, { id: assistantId, role: "assistant", text: "已恢复刷新前仍在执行的 Agent 任务。" });
-                setActiveRunId(run.id);
-                setRunPaused(run.status === "paused");
-                setIsRunning(true);
-                void waitForBackendAgent(run.id, session.id, assistantId).catch((error) => appendMessage(session.id, { id: nanoid(), role: "error", title: "恢复失败", text: friendlyAgentError(error, "Agent 任务恢复失败，请稍后重试。") }));
+                let nextSessions = localSessionsRef.current;
+                const watches: Array<{ runId: string; sessionId: string; assistantId: string }> = [];
+                const nextRunStates: CanvasAssistantRunStates = {};
+                runs.forEach((run) => {
+                    if (restoredRunIdsRef.current.has(run.id)) return;
+                    restoredRunIdsRef.current.add(run.id);
+                    let session = findCanvasAssistantRunSession(nextSessions, run.id, run.conversationId);
+                    let assistantId = session?.messages.find((item) => item.runId === run.id)?.id || [...(session?.messages || [])].reverse().find((item) => item.role === "assistant")?.id;
+                    if (!session || !assistantId) {
+                        session = { ...createSession(), conversationId: run.conversationId };
+                        assistantId = nanoid();
+                        session = {
+                            ...session,
+                            title: "进行中的 Agent 任务",
+                            messages: [{ id: assistantId, runId: run.id, role: "assistant", text: "已恢复刷新前仍在执行的 Agent 任务。" }],
+                        };
+                        nextSessions = [session, ...nextSessions];
+                    } else {
+                        const restoredSession = {
+                            ...session,
+                            conversationId: run.conversationId,
+                            messages: session.messages.map((item) => (item.id === assistantId ? { ...item, runId: run.id } : item)),
+                        };
+                        session = restoredSession;
+                        nextSessions = nextSessions.map((item) => (item.id === restoredSession.id ? restoredSession : item));
+                    }
+                    nextRunStates[session.id] = {
+                        runId: run.id,
+                        assistantMessageId: assistantId,
+                        paused: run.status === "paused",
+                        stage: run.status === "paused" ? { key: "paused", text: "任务已暂停" } : run.status === "planning" ? { key: "planning", text: "正在理解你的需求" } : { key: "executing", text: "任务仍在后台运行，正在恢复连接" },
+                    };
+                    watches.push({ runId: run.id, sessionId: session.id, assistantId });
+                });
+                if (!watches.length) return;
+                commitSessionState(nextSessions, localActiveSessionIdRef.current || nextSessions[0]?.id || null);
+                setRunStatesBySession((current) => ({ ...current, ...nextRunStates }));
+                watches.forEach(({ runId, sessionId, assistantId }) => {
+                    void waitForBackendAgent(runId, sessionId, assistantId).catch((error) => appendMessage(sessionId, { id: nanoid(), role: "error", title: "恢复失败", text: friendlyAgentError(error, "Agent 任务恢复失败，请稍后重试。") }));
+                });
+            })
+            .catch((error) => {
+                if (!cancelled) message.error(friendlyAgentError(error, "Agent 任务恢复失败，请稍后重试。"));
             });
         return () => {
             cancelled = true;
         };
-    }, [activeRunId, activeSession, snapshot.projectId]);
+    }, [message, snapshot.projectId]);
+
+    useEffect(
+        () => () => {
+            runWatchControllersRef.current.forEach((controller) => controller.abort());
+            runWatchControllersRef.current.clear();
+            watchingRunIdsRef.current.clear();
+        },
+        [],
+    );
 
     const submit = async () => {
         const text = prompt.trim();
@@ -301,43 +410,41 @@ export function CanvasAssistantPanel({
     };
 
     const controlRun = async (action: "pause" | "resume" | "cancel") => {
-        if (!activeRunId) return;
+        const session = activeSession;
+        const run = activeRunState;
+        if (!session || !run?.runId) return;
         try {
-            const response = await fetch(`/api/agent/runs/${encodeURIComponent(activeRunId)}/${action}`, { method: "POST" });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.msg || "Agent 任务控制失败");
-            if (action === "pause") setRunPaused(true);
-            if (action === "resume") setRunPaused(false);
-            if (action === "cancel") setRunPaused(false);
+            await controlCreativeAgentRun(run.runId, action, session.conversationId);
+            if (action === "pause") updateSessionRun(session.id, run.runId, { paused: true, stage: { key: "paused", text: "任务已暂停" } });
+            if (action === "resume") updateSessionRun(session.id, run.runId, { paused: false, stage: { key: "executing", text: "任务已恢复，正在继续执行" } });
         } catch (error) {
-            const session = activeSession || localSessions[0];
-            if (session) appendMessage(session.id, { id: nanoid(), role: "error", title: "控制失败", text: friendlyAgentError(error, "Agent 任务控制失败，请稍后重试。") });
+            appendMessage(session.id, { id: nanoid(), role: "error", title: "控制失败", text: friendlyAgentError(error, "Agent 任务控制失败，请稍后重试。") });
         }
     };
 
     const retryFailedTask = async (runId: string, taskId: string | undefined, failedMessageId: string) => {
         const session = activeSession || localSessions[0];
-        if (!session || isRunning) return;
+        if (!session || runStatesBySession[session.id]) return;
         const assistantId = failedMessageId;
-        setIsRunning(true);
-        setActiveRunId(runId);
-        setRunStage({ key: "executing", text: "正在重新执行失败任务" });
-        upsertMessage(session.id, { id: assistantId, role: "assistant", title: undefined, text: "正在重新执行失败任务…", detail: undefined });
+        bindSessionRun(session.id, { runId, assistantMessageId: assistantId, paused: false, stage: { key: "executing", text: "正在重新执行失败任务" } });
+        upsertMessage(session.id, { id: assistantId, runId, role: "assistant", title: undefined, text: "正在重新执行失败任务…", detail: undefined });
         try {
-            const response = await fetch(taskId ? `/api/agent/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/retry` : `/api/agent/runs/${encodeURIComponent(runId)}/retry`, { method: "POST" });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.msg || "任务重试失败");
+            if (taskId) await retryCreativeAgentTask(runId, taskId, session.conversationId);
+            else await controlCreativeAgentRun(runId, "retry", session.conversationId);
             await waitForBackendAgent(runId, session.id, assistantId, taskId, !taskId);
         } catch (error) {
-            upsertMessage(session.id, { id: assistantId, role: "error", title: "重试失败", text: friendlyAgentError(error, "任务重试失败，请稍后再试。"), detail: { runId, taskId } });
-            setIsRunning(false);
-            setActiveRunId("");
+            upsertMessage(session.id, { id: assistantId, runId, role: "error", title: "重试失败", text: friendlyAgentError(error, "任务重试失败，请稍后再试。"), detail: { runId, taskId } });
+            releaseSessionRun(session.id, runId);
         }
     };
 
     const toggleModel = (model: CreativeAgentModelOption) => {
         setSelectedModelIds((current) => {
-            const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id].slice(-6);
+            if (!current.includes(model.id) && current.length >= CREATIVE_RUN_MODEL_LIMIT) {
+                message.warning(`一次最多选择 ${CREATIVE_RUN_MODEL_LIMIT} 个模型`);
+                return current;
+            }
+            const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id];
             setSmartPlanning(next.length === 0);
             return next;
         });
@@ -346,6 +453,26 @@ export function CanvasAssistantPanel({
     const enableSmartPlanning = () => {
         setSelectedModelIds([]);
         setSmartPlanning(true);
+    };
+
+    const selectMentionReference = (id: string) => {
+        const nextReferenceIds = selectedMediaReferenceIds.includes(id) ? selectedMediaReferenceIds : [...selectedMediaReferenceIds, id];
+        previousMediaReferenceIdsRef.current = nextReferenceIds;
+        setRemovedReferenceIds((current) => {
+            if (!current.has(id)) return current;
+            const next = new Set(current);
+            next.delete(id);
+            return next;
+        });
+        if (!selectedNodeIds.has(id)) onSelectNodeIds(new Set([...selectedNodeIds, id]));
+    };
+
+    const removeMediaReference = (id: string) => {
+        const nextReferenceIds = selectedMediaReferenceIds.filter((nodeId) => nodeId !== id);
+        setPrompt((current) => remapCanvasAgentReferences(current, mentionAssets, selectedMediaReferenceIds, nextReferenceIds));
+        previousMediaReferenceIdsRef.current = nextReferenceIds;
+        setRemovedReferenceIds((current) => new Set(current).add(id));
+        if (selectedNodeIds.has(id)) onSelectNodeIds(new Set(Array.from(selectedNodeIds).filter((nodeId) => nodeId !== id)));
     };
 
     const startResize = () => {
@@ -411,11 +538,11 @@ export function CanvasAssistantPanel({
                             activeSession={activeSession}
                             onOpen={(id) => {
                                 requestLatest();
-                                setLocalActiveSessionId(id);
+                                commitSessionState(localSessionsRef.current, id);
                                 setView("chat");
                             }}
                             onDelete={(ids) => setDeleteChatIds(ids)}
-                            onRename={(id, title) => updateSession(id, (session) => ({ ...session, title, updatedAt: new Date().toISOString() }))}
+                            onRename={(id, title) => void renameSession(id, title)}
                         />
                     ) : messages.length ? (
                         <>
@@ -540,6 +667,8 @@ export function CanvasAssistantPanel({
                     <AgentChatComposer
                         prompt={prompt}
                         attachments={composerAttachments}
+                        mentionAssets={mentionAssets}
+                        selectedReferenceIds={selectedMediaReferenceIds}
                         sending={isRunning}
                         placeholder="描述你想让 Agent 如何操作画布"
                         theme={theme}
@@ -548,30 +677,29 @@ export function CanvasAssistantPanel({
                         onAddFiles={addFiles}
                         onRetryAttachment={retryUpload}
                         onRemoveAttachment={(id) => {
-                            const reference = selectedImageReferences.find((item) => item.id === id);
+                            const reference = selectedMediaReferences.find((item) => item.id === id);
                             if (!reference) return removeUpload(id);
-                            setRemovedReferenceIds((prev) => new Set(prev).add(id));
-                            if (selectedNodeIds.has(id)) onSelectNodeIds(new Set(Array.from(selectedNodeIds).filter((nodeId) => nodeId !== id)));
+                            removeMediaReference(id);
                         }}
+                        onSelectReference={selectMentionReference}
+                        onRemoveReference={removeMediaReference}
                         beforeInput={selectedSkill ? <CreativeAgentSkillCard skill={selectedSkill} onRemove={() => setSelectedSkillId(undefined)} theme={controlTheme} className="pb-1" /> : null}
                         left={
-                            <>
-                                <CanvasPromptLibrary onSelect={setPrompt} />
-                                <CreativeAgentControls
-                                    compact
-                                    skills={skills}
-                                    skillsLoading={skillsLoading}
-                                    selectedSkill={selectedSkill}
-                                    models={models}
-                                    selectedModels={selectedModels}
-                                    smartPlanning={smartPlanning}
-                                    onSelectSkill={(skill) => setSelectedSkillId(skill.id)}
-                                    onToggleModel={toggleModel}
-                                    onClearModels={enableSmartPlanning}
-                                    onSmartPlanningChange={(enabled) => (enabled ? enableSmartPlanning() : setSmartPlanning(false))}
-                                    theme={controlTheme}
-                                />
-                            </>
+                            <CreativeAgentControls
+                                compact
+                                skills={skills}
+                                skillsLoading={skillsLoading}
+                                selectedSkill={selectedSkill}
+                                models={models}
+                                selectedModels={selectedModels}
+                                smartPlanning={smartPlanning}
+                                middle={<CanvasAgentGenerationSettings preferences={generationPreferences} onChange={setGenerationPreferences} />}
+                                onSelectSkill={(skill) => setSelectedSkillId(skill.id)}
+                                onToggleModel={toggleModel}
+                                onClearModels={enableSmartPlanning}
+                                onSmartPlanningChange={(enabled) => (enabled ? enableSmartPlanning() : setSmartPlanning(false))}
+                                theme={controlTheme}
+                            />
                         }
                     />
                 </>
@@ -588,10 +716,15 @@ export function CanvasAssistantPanel({
                         <Button
                             danger
                             type="primary"
-                            onClick={() => {
-                                if (deleteChatIds.length === historySessions.length) clearSessions();
-                                else removeSessions(deleteChatIds);
-                                setDeleteChatIds([]);
+                            loading={deletingChats}
+                            onClick={async () => {
+                                setDeletingChats(true);
+                                try {
+                                    const removed = deleteChatIds.length === historySessions.length ? await clearSessions() : await removeSessions(deleteChatIds);
+                                    if (removed) setDeleteChatIds([]);
+                                } finally {
+                                    setDeletingChats(false);
+                                }
                             }}
                         >
                             删除

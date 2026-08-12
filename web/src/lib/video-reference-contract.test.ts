@@ -20,6 +20,11 @@ describe("video reference contract", () => {
         ]);
     });
 
+    it("keeps all ordinary references when no upstream capability limit is declared", () => {
+        const references = Array.from({ length: 24 }, (_, index) => ({ type: "image" as const, url: `https://cdn.example.com/reference-${index}.png` }));
+        expect(normalizeVideoGenerationReferences(references)).toHaveLength(references.length);
+    });
+
     it.each([
         [[{ type: "image", url: "https://cdn.example.com/last.png", role: "last_frame" }], "指定尾帧时必须同时指定首帧"],
         [

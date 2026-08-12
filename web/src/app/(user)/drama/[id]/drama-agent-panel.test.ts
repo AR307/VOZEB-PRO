@@ -20,4 +20,26 @@ describe("Drama project Agent references", () => {
         expect(source).toContain("metadata: { assetIds }");
         expect(source).toMatch(/messageAssetIds\(message\)\s*\.filter/);
     });
+
+    it("offers stage-aware actions and keeps the project snapshot semantic without arbitrary array slicing", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/drama/[id]/drama-agent-panel.tsx"), "utf8");
+        const snapshotSource = source.slice(source.indexOf("function dramaSnapshot"), source.indexOf("function agentAssetDownloads"));
+
+        expect(source).toContain("DRAMA_AGENT_STAGE_GUIDES");
+        expect(source).toContain("检查阶段完成度");
+        expect(source).toContain("检查缺失资产");
+        expect(source).toContain("检查一致性");
+        expect(source).toContain("建议下一步");
+        expect(source).toContain("currentStage: stage");
+        expect(source).toContain("agentAssetSnapshot");
+        expect(source).toContain('styles={{ wrapper: { maxWidth: "100vw" }, body: { padding: 0 } }}');
+        expect(source).toContain("建议不会自动修改项目");
+        expect(source).toContain("data-drama-agent-quick-actions");
+        expect(source).toContain("grid-cols-2");
+        expect(source).toContain("data-drama-agent-loading");
+        expect(source).toContain("data-drama-agent-empty");
+        const quickActions = source.slice(source.indexOf("data-drama-agent-quick-actions"), source.indexOf("data-drama-agent-loading"));
+        expect(quickActions).not.toContain("overflow-x-auto");
+        expect(snapshotSource).not.toContain(".slice(");
+    });
 });

@@ -16,9 +16,10 @@ describe("validateAgentPlan", () => {
         expect(() => validateAgentPlan({ intent: "generation", objective: "建立项目", projectHandoff: { surface: "drama", title: "" }, deliverables: [] })).toThrow("项目交接参数无效");
     });
 
-    it("rejects empty and oversized plans", () => {
+    it("rejects empty plans without imposing a fixed deliverable count", () => {
         expect(() => validateAgentPlan({ objective: "", deliverables: [] })).toThrow();
-        expect(() => validateAgentPlan({ objective: "批量生成", deliverables: Array.from({ length: 51 }, (_, index) => ({ title: String(index), type: "image", prompt: "图" })) })).toThrow();
+        expect(() => validateAgentPlan({ objective: "批量生成", deliverables: Array.from({ length: 51 }, (_, index) => ({ title: String(index), type: "image", prompt: "图" })) })).not.toThrow();
+        expect(() => validateAgentPlan({ objective: "批量生成", deliverables: [{ title: "主图", type: "image", prompt: "图", count: Number.MAX_SAFE_INTEGER + 1 }] })).toThrow("任务参数无效");
     });
 
     it("accepts valid dependencies and rejects unknown ones", () => {
@@ -99,7 +100,7 @@ describe("validateAgentPlan", () => {
 
     it("runs the configured number of image and video copies", () => {
         expect(agentTaskCopies("image", 4)).toBe(4);
-        expect(agentTaskCopies("image", 99)).toBe(10);
+        expect(agentTaskCopies("image", 99)).toBe(99);
         expect(agentTaskCopies("video", 4)).toBe(4);
     });
 

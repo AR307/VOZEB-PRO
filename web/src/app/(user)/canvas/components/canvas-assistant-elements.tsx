@@ -17,7 +17,6 @@ import { serverMediaUrl } from "@/services/server-media-storage";
 import { DiaTextReveal } from "@/components/ui/dia-text-reveal";
 import { ModelIcon } from "@/components/model-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { watchCanvasAgentRun } from "./canvas-agent-run-client";
 import type { CanvasAgentRunStage } from "./canvas-agent-progress";
 import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
@@ -238,7 +237,7 @@ export function assistantImageReferenceLabel(references: CanvasAssistantReferenc
 }
 
 export function assistantMessageToChatMessage(message: CanvasAssistantMessage): CanvasAgentChatMessage {
-    const attachments = message.references?.flatMap((item) => (item.dataUrl ? [{ id: item.id, name: item.title, url: item.dataUrl }] : []));
+    const attachments = message.references?.flatMap((item) => (item.dataUrl ? [{ id: item.id, name: item.title, url: item.dataUrl, type: item.type === CanvasNodeType.Video ? ("video" as const) : ("image" as const) }] : []));
     return {
         id: message.id,
         role: message.role,
@@ -251,8 +250,9 @@ export function assistantMessageToChatMessage(message: CanvasAssistantMessage): 
 }
 
 export function nodeToReference(node: CanvasNodeData): CanvasAssistantReference | null {
-    if (isCanvasImageNodeType(node.type) && node.metadata?.content) {
-        return { id: node.id, type: node.type, title: node.title, dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
+    const mediaUrl = [node.metadata?.content, node.metadata?.serverUrl, node.metadata?.remoteUrl].find((value): value is string => typeof value === "string" && Boolean(value.trim()));
+    if ((isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video) && mediaUrl) {
+        return { id: node.id, type: node.type, title: node.title, dataUrl: mediaUrl, storageKey: node.metadata?.storageKey };
     }
     if (node.type === CanvasNodeType.Text && node.metadata?.content) {
         return { id: node.id, type: node.type, title: node.title, text: node.metadata.content };
@@ -270,21 +270,31 @@ export function buildAssistantReferences(nodes: CanvasNodeData[], selectedNodeId
 }
 
 export function compactSnapshot(snapshot: CanvasAgentSnapshot) {
+    const selected = new Set(snapshot.selectedNodeIds);
+    const connections = selected.size ? snapshot.connections.filter((connection) => selected.has(connection.fromNodeId) || selected.has(connection.toNodeId)) : snapshot.connections;
+    if (selected.size) {
+        connections.forEach((connection) => {
+            selected.add(connection.fromNodeId);
+            selected.add(connection.toNodeId);
+        });
+    }
     return {
         title: snapshot.title,
         imageSize: snapshot.imageSize,
         viewport: snapshot.viewport,
         selectedNodeIds: snapshot.selectedNodeIds,
-        nodes: snapshot.nodes.map((node) => ({
-            id: node.id,
-            type: node.type,
-            title: node.title,
-            position: node.position,
-            width: node.width,
-            height: node.height,
-            metadata: compactMetadata(node.metadata || {}),
-        })),
-        connections: snapshot.connections,
+        nodes: snapshot.nodes
+            .filter((node) => !selected.size || selected.has(node.id) || node.type === CanvasNodeType.Config)
+            .map((node) => ({
+                id: node.id,
+                type: node.type,
+                title: node.title,
+                position: node.position,
+                width: node.width,
+                height: node.height,
+                metadata: compactMetadata(node.metadata || {}),
+            })),
+        connections,
     };
 }
 
@@ -297,8 +307,8 @@ export function compactMetadata(metadata: CanvasNodeData["metadata"]) {
     const fallbackUrl = [metadata?.serverUrl, metadata?.content, metadata?.remoteUrl].find((value) => typeof value === "string" && value && !value.startsWith("data:") && !value.startsWith("blob:"));
     const mediaUrl = serverMediaUrl(metadata?.storageKey, fallbackUrl || "");
     return {
-        content: String(metadata?.content || "").slice(0, 500),
-        prompt: String(metadata?.prompt || metadata?.composerContent || "").slice(0, 500),
+        content: String(metadata?.content || ""),
+        prompt: String(metadata?.prompt || metadata?.composerContent || ""),
         status: metadata?.status,
         generationMode: metadata?.generationMode,
         model: metadata?.model,

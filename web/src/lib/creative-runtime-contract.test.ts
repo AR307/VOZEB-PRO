@@ -4,10 +4,21 @@ import { CreativeRuntimeInputError, isCreativeProjectHandoff, normalizeCreativeR
 
 describe("normalizeCreativeRunRequest", () => {
     it("normalizes a chat request and deduplicates assets", () => {
-        expect(normalizeCreativeRunRequest({ clientRequestId: " req-1 ", surface: "chat", prompt: " hello ", assetIds: ["a", "a", "b"], skillIds: ["character-design", "character-design"], modelIds: [" image-pro ", "image-pro", "video-pro"] })).toEqual({
+        expect(
+            normalizeCreativeRunRequest({
+                clientRequestId: " req-1 ",
+                surface: "chat",
+                prompt: " @图片1 hello ",
+                publicPrompt: " 图片1 hello ",
+                assetIds: ["a", "a", "b"],
+                skillIds: ["character-design", "character-design"],
+                modelIds: [" image-pro ", "image-pro", "video-pro"],
+            }),
+        ).toEqual({
             clientRequestId: "req-1",
             surface: "chat",
-            prompt: "hello",
+            prompt: "@图片1 hello",
+            publicPrompt: "图片1 hello",
             assetIds: ["a", "b"],
             skillIds: ["character-design"],
             modelIds: ["image-pro", "video-pro"],
@@ -33,11 +44,16 @@ describe("normalizeCreativeRunRequest", () => {
         ).toMatchObject({
             preferences: {
                 mode: "video",
-                image: { size: "1024x1536", quality: "high", count: 10 },
-                video: { size: "9:16", quality: "2160", seconds: 10, count: 10, generateAudio: false, watermark: true },
+                image: { size: "1024x1536", quality: "high", count: 12 },
+                video: { size: "9:16", quality: "2160", seconds: 10, count: 12, generateAudio: false, watermark: true },
                 audio: { voice: "nova", format: "wav", speed: 1.25 },
             },
         });
+    });
+
+    it("keeps all explicitly selected asset IDs instead of silently truncating them", () => {
+        const assetIds = Array.from({ length: 24 }, (_, index) => `asset-${index}`);
+        expect(normalizeCreativeRunRequest({ clientRequestId: "req-many-assets", surface: "chat", prompt: "继续使用这些素材", assetIds, skillIds: [], modelIds: [] }).assetIds).toEqual(assetIds);
     });
 
     it("normalizes explicit video first and last frame preferences", () => {

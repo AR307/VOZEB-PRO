@@ -17,6 +17,8 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     const [productsLoading, setProductsLoading] = useState(false);
     const [coupons, setCoupons] = useState<UserCoupon[]>([]);
     const [couponTemplates, setCouponTemplates] = useState<CouponTemplate[]>([]);
+    const [couponTemplatesTotal, setCouponTemplatesTotal] = useState(0);
+    const [couponTemplatesPage, setCouponTemplatesPage] = useState(1);
     const [couponsTotal, setCouponsTotal] = useState(0);
     const [couponsPage, setCouponsPage] = useState(1);
     const [couponsLoadedPage, setCouponsLoadedPage] = useState<number | null>(null);
@@ -39,7 +41,7 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     const [refreshing, setRefreshing] = useState(false);
     const productsRequest = useRef(false);
     const couponsRequestPage = useRef<number | null>(null);
-    const couponsQueuedRequest = useRef<{ page: number; refreshTemplates: boolean } | null>(null);
+    const couponsQueuedRequest = useRef<{ page: number; refreshTemplates: boolean; templatePage: number } | null>(null);
     const couponTemplatesLoaded = useRef(false);
     const ordersRequestPage = useRef<number | null>(null);
     const pointsRequestPage = useRef<number | null>(null);
@@ -82,9 +84,9 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     );
 
     const loadCoupons = useCallback(
-        async (page: number, options: { refreshTemplates?: boolean } = {}) => {
+        async (page: number, options: { refreshTemplates?: boolean; templatePage?: number } = {}) => {
             const normalizedPage = Math.max(1, Math.floor(page));
-            const request = { page: normalizedPage, refreshTemplates: options.refreshTemplates === true };
+            const request = { page: normalizedPage, refreshTemplates: options.refreshTemplates === true, templatePage: Math.max(1, Math.floor(options.templatePage || 1)) };
             if (couponsRequestPage.current !== null) {
                 couponsQueuedRequest.current = request;
                 return;
@@ -95,9 +97,17 @@ export function useProfileData(activeSection: ProfileSectionKey) {
                 let currentRequest = request;
                 while (true) {
                     try {
-                        const payload = await listBillingCoupons({ page: currentRequest.page, pageSize: COUPON_PAGE_SIZE, includeTemplates: currentRequest.refreshTemplates || !couponTemplatesLoaded.current });
+                        const payload = await listBillingCoupons({
+                            page: currentRequest.page,
+                            pageSize: COUPON_PAGE_SIZE,
+                            includeTemplates: currentRequest.refreshTemplates || !couponTemplatesLoaded.current,
+                            templatePage: currentRequest.templatePage,
+                            templatePageSize: COUPON_PAGE_SIZE,
+                        });
                         if (payload.templates !== undefined) {
                             setCouponTemplates(payload.templates);
+                            setCouponTemplatesTotal(payload.templatesTotal || 0);
+                            setCouponTemplatesPage(payload.templatePage || currentRequest.templatePage);
                             couponTemplatesLoaded.current = true;
                         }
                         const queuedRequest = couponsQueuedRequest.current;
@@ -220,10 +230,19 @@ export function useProfileData(activeSection: ProfileSectionKey) {
         }
     }, [activeSection, consumeRecordsPage, couponsPage, loadConsumeRecords, loadCoupons, loadOrders, loadPointRecords, loadProducts, ordersPage, pointRecordsPage, refreshUser]);
 
-    const refreshCoupons = useCallback(() => loadCoupons(couponsPage, { refreshTemplates: true }), [couponsPage, loadCoupons]);
+    const refreshCoupons = useCallback(() => loadCoupons(couponsPage, { refreshTemplates: true, templatePage: couponTemplatesPage }), [couponTemplatesPage, couponsPage, loadCoupons]);
+    const changeCouponTemplatePage = useCallback(
+        (page: number) => {
+            const normalizedPage = Math.max(1, Math.floor(page));
+            setCouponTemplatesPage(normalizedPage);
+            return loadCoupons(couponsPage, { refreshTemplates: true, templatePage: normalizedPage });
+        },
+        [couponsPage, loadCoupons],
+    );
     const refreshCouponsAfterClaim = useCallback(async () => {
         setCouponsPage(1);
-        await loadCoupons(1, { refreshTemplates: true });
+        setCouponTemplatesPage(1);
+        await loadCoupons(1, { refreshTemplates: true, templatePage: 1 });
     }, [loadCoupons]);
 
     return {
@@ -231,11 +250,14 @@ export function useProfileData(activeSection: ProfileSectionKey) {
         coupons: {
             items: coupons,
             templates: couponTemplates,
+            templatesTotal: couponTemplatesTotal,
+            templatePage: couponTemplatesPage,
             total: couponsTotal,
             page: couponsPage,
             setPage: setCouponsPage,
             loading: couponsLoading || (activeSection === "coupons" && couponsLoadedPage !== couponsPage),
             refresh: refreshCoupons,
+            setTemplatePage: changeCouponTemplatePage,
             refreshAfterClaim: refreshCouponsAfterClaim,
         },
         orders: { items: orders, total: ordersTotal, page: ordersPage, setPage: setOrdersPage, loading: ordersLoading || (needsOrders && ordersLoadedPage !== ordersTargetPage) },

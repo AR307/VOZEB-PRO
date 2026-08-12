@@ -2,17 +2,22 @@ import type { AdminGenerationChannel, AdminGenerationOperationsPayload, AdminGen
 import { findPublicUserIdsByKeyword, getAuthSettings, getPublicUsersByIds } from "@/lib/auth/store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { getChannelRuntimeHealth, isChannelRuntimeCooling } from "@/lib/server/channel-runtime-health";
-import { generationTaskPointsCost, listStoredGenerationTaskRecords, listStoredGenerationTaskRecordsByRunIds, type GenerationTaskRecordListOptions, type StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import {
+    generationTaskPointsCost,
+    listStoredGenerationTaskRecords,
+    listStoredGenerationTaskRecordsByRunIds,
+    summarizeStoredAgentPerformance,
+    type GenerationTaskRecordListOptions,
+    type StoredGenerationTaskRecord,
+} from "@/lib/server/generation-task-store";
 import { getTextPlanningRuntime } from "@/lib/server/text-planning-runtime";
 import { resolveGenerationReviewReason } from "@/lib/server/generation-task-review-reason";
+import { getDatabaseProvider } from "@/lib/server/database";
 
 export async function listAdminGenerationOperations(options: GenerationTaskRecordListOptions): Promise<AdminGenerationOperationsPayload> {
     const settingsPromise = getAuthSettings();
-    const searchUserIds = options.search?.trim() ? await findPublicUserIdsByKeyword(options.search) : [];
-    const [result, agentRecords] = await Promise.all([
-        listStoredGenerationTaskRecords({ ...options, searchUserIds, includeAll: false }),
-        listStoredGenerationTaskRecords({ ...options, type: "agent", searchUserIds, includeAll: true, page: 1, pageSize: 100 }),
-    ]);
+    const searchUserIds = options.search?.trim() && getDatabaseProvider() === "file" ? await findPublicUserIdsByKeyword(options.search) : [];
+    const [result, agentPerformance] = await Promise.all([listStoredGenerationTaskRecords({ ...options, searchUserIds, includeAll: false }), summarizeStoredAgentPerformance({ ...options, searchUserIds })]);
     const agentRunIds = result.items.filter((record) => record.type === "agent").map((record) => record.id);
     const [settings, users, childRecords] = await Promise.all([settingsPromise, getPublicUsersByIds(result.items.map((record) => record.userId)), listStoredGenerationTaskRecordsByRunIds(agentRunIds)]);
     const usersById = new Map(users.map((user) => [user.id, user]));
@@ -29,7 +34,7 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
         pageSize: result.pageSize,
         summary: result.summary,
         channels: channelSummaries(settings),
-        agentPerformance: summarizeAgentPerformance(agentRecords.all.length ? agentRecords.all : agentRecords.items),
+        agentPerformance,
     };
 }
 
@@ -134,49 +139,6 @@ function channelSummaries(settings: Awaited<ReturnType<typeof getAuthSettings>>)
             };
         }),
     );
-}
-
-function summarizeAgentPerformance(records: StoredGenerationTaskRecord[]) {
-    const timings = records.map((record) => object(record.payload.timings));
-    const planning = timings.map((item) => elapsed(item.planningStartedAt, item.planningCompletedAt)).filter(positive);
-    const firstResult = timings.map((item) => elapsed(item.requestAcceptedAt, item.firstResultReadyAt)).filter(positive);
-    const queue = timings.map((item) => elapsed(item.planningCompletedAt, item.firstTaskSubmittedAt)).filter(nonNegative);
-    const upstream = timings.map((item) => elapsed(item.firstTaskSubmittedAt, item.firstResultReadyAt)).filter(positive);
-    const review = timings.map((item) => elapsed(item.allResultsReadyAt, item.reviewCompletedAt)).filter(positive);
-    return {
-        sampleSize: Math.max(planning.length, firstResult.length),
-        planningP50Ms: percentile(planning, 0.5),
-        planningP95Ms: percentile(planning, 0.95),
-        firstResultP50Ms: percentile(firstResult, 0.5),
-        firstResultP95Ms: percentile(firstResult, 0.95),
-        queueAverageMs: average(queue),
-        upstreamAverageMs: average(upstream),
-        reviewAverageMs: average(review),
-    };
-}
-
-function elapsed(start: unknown, end: unknown) {
-    const from = Number(start);
-    const to = Number(end);
-    return Number.isFinite(from) && Number.isFinite(to) && to >= from ? to - from : -1;
-}
-
-function positive(value: number) {
-    return value > 0;
-}
-
-function nonNegative(value: number) {
-    return value >= 0;
-}
-
-function percentile(values: number[], ratio: number) {
-    if (!values.length) return 0;
-    const sorted = [...values].sort((left, right) => left - right);
-    return Math.round(sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)]);
-}
-
-function average(values: number[]) {
-    return values.length ? Math.round(values.reduce((total, value) => total + value, 0) / values.length) : 0;
 }
 
 function firstText(...values: unknown[]) {

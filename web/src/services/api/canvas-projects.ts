@@ -34,6 +34,14 @@ export function deleteCanvasProjects(ids: string[]) {
     return request<{ deleted: number }>("/api/canvas/projects", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
 }
 
+export function deleteCanvasAssistantConversations(projectId: string, conversationIds: string[]) {
+    return request<{ deleted: number; chatSessions: CanvasProject["chatSessions"]; activeChatId: string | null }>(`/api/canvas/projects/${encodeURIComponent(projectId)}/assistant-conversations`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationIds }),
+    });
+}
+
 async function request<T>(url: string, init?: RequestInit) {
     const response = await fetch(url, init);
     const payload = (await response.json().catch(() => ({}))) as { data?: T; msg?: string; error?: string };

@@ -20,6 +20,7 @@ import { refundImageTask } from "@/lib/server/image-task-refund";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
+import { getAuthSettings } from "@/lib/auth/store";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
@@ -244,15 +245,6 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
     const run = await getAgentRun(lease.id);
     if (run?.status === "completed" && !run.reviewed && (lease.executionPhase === "review_pending" || lease.executionPhase === "reviewing")) {
         const result = await processAgentRunReview(run, origin, cookie || maintenanceWorkerContext(run.userId));
-        if (result.status === "retry") {
-            await releaseGenerationTaskLease("agent", run.id, workerId, {
-                executionPhase: "review_pending",
-                nextPollAt: generationTaskNextPollAt({ consecutiveErrors: result.attempts }),
-                lastPollAt: Date.now(),
-                lastUpstreamStatus: `review_error:${result.attempts}`,
-            });
-            return "deferred";
-        }
         await releaseGenerationTaskLease("agent", run.id, workerId, {
             executionPhase: result.status === "unavailable" ? "review_unavailable" : "completed",
             nextPollAt: undefined,
@@ -267,13 +259,17 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
     try {
         const childTaskIds = pendingAgentChildTaskIds(run);
         if (childTaskIds.length) {
-            await runGenerationTaskRecoveryBatch({
-                origin,
-                cookie: cookie || maintenanceWorkerContext(run.userId),
-                limit: childTaskIds.length,
-                taskIds: childTaskIds,
-                workerId: `${workerId}:children`.slice(0, 160),
-            });
+            const batchSize = (await getAuthSettings()).dataLifecycle.maintenanceBatchSize;
+            for (let offset = 0; offset < childTaskIds.length; offset += batchSize) {
+                const taskIds = childTaskIds.slice(offset, offset + batchSize);
+                await runGenerationTaskRecoveryBatch({
+                    origin,
+                    cookie: cookie || maintenanceWorkerContext(run.userId),
+                    limit: taskIds.length,
+                    taskIds,
+                    workerId: `${workerId}:children`.slice(0, 160),
+                });
+            }
         }
         await executeAgentRun(run, origin, cookie || maintenanceWorkerContext(run.userId));
         const latest = await getAgentRun(run.id);
@@ -315,7 +311,7 @@ export function pendingAgentChildTaskIds(run: Pick<AgentRun, "tasks">) {
                 return task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : [];
             }),
         ),
-    ).slice(0, 50);
+    );
 }
 
 async function processTextLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {

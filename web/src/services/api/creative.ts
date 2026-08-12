@@ -32,6 +32,7 @@ export type CreativeAgentRun = {
         title: string;
         type?: "text" | "image" | "video" | "audio";
         model?: string;
+        optimizedPrompt?: string;
         ratio?: string;
         quality?: string;
         seconds?: number;
@@ -102,13 +103,20 @@ export function getCreativeAgentRun(runId: string) {
     return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}`).then((data) => data.run);
 }
 
-export function listCreativeAgentRuns(surface: CreativeRunRequest["surface"] = "chat") {
+export function listCreativeAgentRuns(surface: CreativeRunRequest["surface"] = "chat", input: { activeOnly?: boolean; limit?: number; projectId?: string; conversationId?: string } = {}) {
     const query = new URLSearchParams({ surface });
+    if (input.activeOnly) query.set("status", "active");
+    if (input.limit) query.set("limit", String(input.limit));
+    if (input.projectId) query.set("projectId", input.projectId);
+    if (input.conversationId) query.set("conversationId", input.conversationId);
     return request<{ runs: CreativeAgentRun[] }>(`/api/agent/runs?${query}`).then((data) => data.runs);
 }
 
-export function retryCreativeAgentTask(runId: string, taskId: string) {
-    return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST" }).then((data) => data.run);
+export function retryCreativeAgentTask(runId: string, taskId: string, expectedConversationId?: string) {
+    return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/retry`, {
+        method: "POST",
+        ...(expectedConversationId ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: expectedConversationId }) } : {}),
+    }).then((data) => data.run);
 }
 
 export function updateCreativeConversation(conversationId: string, patch: { title?: string; status?: CreativeConversation["status"] }) {

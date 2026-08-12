@@ -20,7 +20,7 @@ type EndpointMatch = EndpointSpec & {
 };
 
 const ENDPOINT_SPECS: EndpointSpec[] = [
-    { marker: "/v2/model-center/tasks", kind: "unknown" },
+    { marker: "/kyyReactApiServer/v2/model-center/tasks", kind: "unknown" },
     { marker: "/v1/seedance-special/videos", kind: "video" },
     { marker: "/sdapi/v1/txt2img", kind: "image" },
     { marker: "/sdapi/v1/img2img", kind: "image-edit" },
@@ -152,7 +152,7 @@ function matchEndpointUrl(value: string): EndpointMatch | null {
         const pathname = url.pathname.replace(/\/+$/g, "");
         const lowerPath = pathname.toLowerCase();
         for (const spec of ENDPOINT_SPECS) {
-            const index = lowerPath.lastIndexOf(spec.marker);
+            const index = lowerPath.lastIndexOf(spec.marker.toLowerCase());
             if (index < 0) continue;
             const end = index + spec.marker.length;
             if (lowerPath.length !== end && lowerPath[end] !== "/") continue;
@@ -185,7 +185,7 @@ function matchKnownEndpointUrl(value: string) {
 
 function matchEndpointText(text: string): EndpointMatch | null {
     const source = text.toLowerCase();
-    const spec = ENDPOINT_SPECS.find((item) => source.includes(item.marker));
+    const spec = ENDPOINT_SPECS.find((item) => source.includes(item.marker.toLowerCase()));
     return spec ? { ...spec, createPath: spec.marker } : null;
 }
 
@@ -277,7 +277,7 @@ function findModel(requestBody: unknown, blocks: unknown[], raw: string) {
 
 function inferProtocol(raw: string, endpoint: EndpointMatch | null, requestBody: unknown, current: SystemChannelProtocol): SystemChannelProtocol {
     const source = `${raw}\n${endpoint?.requestUrl || ""}`.toLowerCase();
-    if (source.includes("/v2/model-center/tasks")) return "yumeng";
+    if (source.includes("/kyyreactapiserver/v2/model-center/tasks")) return "yumeng";
     if (source.includes("/v1/seedance-special/videos") || source.includes("sd_2.0_special_") || source.includes("sd_2.0_fast_special_")) return "custom";
     if (source.includes("/sdapi/v1/txt2img") || source.includes("/sdapi/v1/img2img") || source.includes("alwayson_scripts")) return "custom";
     if (source.includes("sub2api") || textContainsUrlHost(source, ["code2alita.com"])) return "sub2api";

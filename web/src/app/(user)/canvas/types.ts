@@ -204,6 +204,7 @@ export type CanvasAssistantImage = {
 
 export type CanvasAssistantMessage = {
     id: string;
+    runId?: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
     title?: string;
     text: string;
@@ -214,6 +215,7 @@ export type CanvasAssistantMessage = {
 
 export type CanvasAssistantSession = {
     id: string;
+    conversationId?: string;
     title: string;
     messages: CanvasAssistantMessage[];
     createdAt: string;

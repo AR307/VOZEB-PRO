@@ -12,7 +12,14 @@ export async function GET(request: Request) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     try {
-        return commerceOk(await getReferralCenter(user.id, resolvePublicRequestOrigin(request)));
+        const params = new URL(request.url).searchParams;
+        return commerceOk(
+            await getReferralCenter(user.id, resolvePublicRequestOrigin(request), {
+                referralsPage: params.get("referralsPage"),
+                rewardsPage: params.get("rewardsPage"),
+                pageSize: params.get("pageSize"),
+            }),
+        );
     } catch (error) {
         return commerceError(error, "加载邀请中心失败", "Load referral center failed");
     }

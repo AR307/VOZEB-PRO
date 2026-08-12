@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { creativeComposerPopoverOverflow, resolveCreativeComposerPopoverPlacement } from "./creative-composer-popover";
+import { creativeComposerPopoverOverflow, resolveCreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 
 describe("creative composer popover positioning", () => {
     it("keeps desktop direction fixed without automatic flipping", () => {

@@ -9,7 +9,6 @@ import { createAgentRun, getAgentRunByClientRequestId, listAgentRuns } from "@/l
 import { CreativeStoreConflict } from "@/lib/server/creative-runtime-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
-import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { publicAgentRun } from "@/lib/server/agent-run-public";
 
 export const maxDuration = 2400;
@@ -21,7 +20,17 @@ export async function GET(request: Request) {
     const projectId = url.searchParams.get("projectId")?.trim() || "";
     const conversationId = url.searchParams.get("conversationId")?.trim() || "";
     const surface = normalizeCreativeSurface(url.searchParams.get("surface"));
-    const internalRuns = await listAgentRuns({ userId: user.id, projectId, conversationId, surface: surface || undefined, limit: 50 });
+    const activeOnly = url.searchParams.get("status") === "active";
+    const requestedLimit = Number(url.searchParams.get("limit"));
+    const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? Math.min(50, requestedLimit) : 50;
+    const internalRuns = await listAgentRuns({
+        userId: user.id,
+        projectId,
+        conversationId,
+        surface: surface || undefined,
+        statuses: activeOnly ? ["planning", "running", "paused"] : undefined,
+        limit,
+    });
     const runs = internalRuns.map(publicAgentRun);
     const activeTaskIds = runs.filter((run) => run.status === "planning" || run.status === "running").map((run) => run.id);
     if (activeTaskIds.length) {
@@ -45,7 +54,6 @@ export async function POST(request: Request) {
             const created = await createAgentRun(user.id, input);
             if (created.created) {
                 const origin = resolveInternalOrigin(new URL(request.url).origin);
-                await scheduleGenerationTask("agent", created.run.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "created" });
                 after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [created.run.id] }));
             }
             return NextResponse.json({ code: 0, data: { run: publicAgentRun(created.run), conversation: created.conversation, created: created.created }, msg: created.created ? "Agent 任务已创建" : "Agent 任务已存在" });

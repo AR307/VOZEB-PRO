@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanvasProject } from "@/lib/canvas-project-contract";
 
 const mocks = vi.hoisted(() => ({
+    CreativeEntityDeletionConflict: class CreativeEntityDeletionConflict extends Error {},
     createCreativeConversation: vi.fn(),
     createCanvasProject: vi.fn(),
     deleteCanvasProjectAggregates: vi.fn(),
+    deleteCanvasAssistantConversationAggregates: vi.fn(),
     getCanvasProject: vi.fn(),
     listCanvasProjectSummaries: vi.fn(),
     updateCanvasProject: vi.fn(),
@@ -23,17 +25,25 @@ vi.mock("@/lib/server/canvas-project-store", () => ({
     updateCanvasProjectMutationPatch: mocks.updateCanvasProjectMutationPatch,
 }));
 vi.mock("@/lib/server/creative-entity-deletion-store", () => ({
+    CreativeEntityDeletionConflict: mocks.CreativeEntityDeletionConflict,
     deleteCanvasProjectAggregates: mocks.deleteCanvasProjectAggregates,
+    deleteCanvasAssistantConversationAggregates: mocks.deleteCanvasAssistantConversationAggregates,
 }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
-import { createCanvasProjectForUser, deleteCanvasProjectsForUser, updateCanvasProjectForUser } from "./canvas-project-service";
+import { createCanvasProjectForUser, deleteCanvasAssistantConversationsForUser, deleteCanvasProjectsForUser, updateCanvasProjectForUser } from "./canvas-project-service";
 
 describe("canvas project service lifecycle", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.createCreativeConversation.mockResolvedValue({ id: "conversation-new" });
         mocks.deleteCanvasProjectAggregates.mockResolvedValue({ deletedConversations: 1, deletedProjects: 1, mediaStorageKeys: ["permanent/canvas.png"] });
+        mocks.deleteCanvasAssistantConversationAggregates.mockResolvedValue({
+            deletedConversations: 1,
+            deletedProjects: 0,
+            mediaStorageKeys: ["permanent/assistant.png"],
+            canvasAssistantState: { chatSessions: [assistantSession("session-new")], activeChatId: "session-new" },
+        });
         mocks.getCanvasProject.mockResolvedValue(null);
     });
 
@@ -62,6 +72,39 @@ describe("canvas project service lifecycle", () => {
 
         expect(mocks.deleteCanvasProjectAggregates).toHaveBeenCalledWith("user-one", ["canvas-one"]);
         expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["permanent/canvas.png"]);
+    });
+
+    it("deletes only assistant conversations linked to the current Canvas project", async () => {
+        mocks.getCanvasProject.mockResolvedValue({ ...project(), chatSessions: [assistantSession("session-one", "conversation-agent")] });
+
+        await expect(deleteCanvasAssistantConversationsForUser("user-one", "canvas-one", ["conversation-agent"])).resolves.toMatchObject({ deleted: 1, activeChatId: "session-new" });
+
+        expect(mocks.deleteCanvasAssistantConversationAggregates).toHaveBeenCalledWith("user-one", "canvas-one", ["conversation-agent"]);
+        expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["permanent/assistant.png"]);
+    });
+
+    it("returns the owned project state when no assistant conversation id is provided", async () => {
+        const current = { ...project(), chatSessions: [assistantSession("session-one")], activeChatId: "session-one" };
+        mocks.getCanvasProject.mockResolvedValue(current);
+
+        await expect(deleteCanvasAssistantConversationsForUser("user-one", "canvas-one", [])).resolves.toEqual({
+            deleted: 0,
+            chatSessions: current.chatSessions,
+            activeChatId: "session-one",
+        });
+
+        expect(mocks.getCanvasProject).toHaveBeenCalledWith("canvas-one", "user-one");
+        expect(mocks.deleteCanvasAssistantConversationAggregates).not.toHaveBeenCalled();
+        expect(mocks.deleteUserLocalMediaAssets).not.toHaveBeenCalled();
+    });
+
+    it("protects the Canvas primary conversation and unrelated assistant conversations", async () => {
+        mocks.getCanvasProject.mockResolvedValue({ ...project(), chatSessions: [assistantSession("session-one", "conversation-agent")] });
+        mocks.deleteCanvasAssistantConversationAggregates.mockRejectedValue(new mocks.CreativeEntityDeletionConflict("Agent 对话与当前画布不匹配"));
+
+        await expect(deleteCanvasAssistantConversationsForUser("user-one", "canvas-one", ["conversation-one"])).rejects.toMatchObject({ status: 409 });
+        await expect(deleteCanvasAssistantConversationsForUser("user-one", "canvas-one", ["conversation-other"])).rejects.toMatchObject({ status: 409 });
+        expect(mocks.deleteUserLocalMediaAssets).not.toHaveBeenCalled();
     });
 
     it("passes the explicit server version to the conditional store update", async () => {
@@ -169,4 +212,9 @@ function project(): CanvasProject {
         createdAt: now,
         updatedAt: now,
     };
+}
+
+function assistantSession(id: string, conversationId?: string): CanvasProject["chatSessions"][number] {
+    const now = new Date().toISOString();
+    return { id, ...(conversationId ? { conversationId } : {}), title: "Agent 对话", messages: [], createdAt: now, updatedAt: now };
 }

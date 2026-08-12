@@ -4,11 +4,12 @@ import { describe, expect, it } from "vitest";
 
 describe("create Agent home layout", () => {
     it("keeps Agent input, recent work and reusable public inspiration in one flow", async () => {
-        const [page, composer, generationControls, preferences, overview, inspiration, previewModal] = await Promise.all([
+        const [page, composer, conversationList, generationControls, preferences, overview, inspiration, previewModal] = await Promise.all([
             readFile(resolve(process.cwd(), "src/app/(user)/create/page.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-composer.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-conversation-list.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-generation-controls.tsx"), "utf8"),
-            readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-generation-preferences.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/components/creative-generation-preferences.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/create-workbench-overview.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/create-inspiration-gallery.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/components/works/public-work-preview-modal.tsx"), "utf8"),
@@ -23,6 +24,18 @@ describe("create Agent home layout", () => {
         expect(page).toContain("awayFromLatestRef.current = false");
         expect(page).toContain("setAwayFromLatestState(true)");
         expect(page).toContain("回到底部");
+        expect(page).toContain("historyOpen && screens.lg");
+        expect(page).toContain("historyOpen && screens.lg !== true");
+        expect(page).toContain("aria-expanded={historyOpen}");
+        const pageTools = page.match(/className="([^"]+)" data-testid="creative-page-tools"/)?.[1] || "";
+        expect(pageTools).toContain("absolute");
+        expect(pageTools).toContain("top-3");
+        expect(pageTools).not.toContain("h-14");
+        expect(pageTools).not.toContain("bg-");
+        expect(page).toContain("w-[min(280px,24vw)]");
+        expect(page).not.toContain("w-[320px]");
+        expect(conversationList).toContain('className="flex h-9 w-full');
+        expect(conversationList).toContain("group flex min-h-13");
         expect(page).not.toContain("最近创作");
         expect(page).toContain("<CreateInspirationGallery");
         expect(page.indexOf("<CreateWorkbenchOverview")).toBeLessThan(page.indexOf("<CreateInspirationGallery"));
@@ -30,7 +43,9 @@ describe("create Agent home layout", () => {
         expect(composer).toContain('centered ? "max-w-[1080px]"');
         expect(composer).toContain('data-compact="true"');
         expect(composer).toContain('data-compact="false"');
-        expect(composer).toContain("autoSize={{ minRows: 1, maxRows: 5 }}");
+        expect(composer).toContain("allMediaAttachments.map");
+        expect(composer).toContain("<ComposerMediaThumbnail key={asset.id} asset={asset} compact");
+        expect(composer).toContain("autoSize={compactMode ? { minRows: 1, maxRows: 5 }");
         expect(composer).toContain("<CreativeGenerationControls");
         expect(composer).toContain("使用 Skill");
         expect(composer).toContain('aria-label={optimizing ? "正在优化提示词" : "优化提示词"}');
@@ -38,6 +53,9 @@ describe("create Agent home layout", () => {
         expect(page).toContain("mode: creationMode");
         expect(composer).toContain('aria-label={mediaAttachments.length ? "继续添加参考素材" : "添加素材"}');
         expect(composer).toContain("创作类型");
+        expect(composer).toContain("transition hover:bg-[#eef3f6] dark:hover:bg-[#29323a]");
+        expect(composer).toContain('selected ? "text-[#20242a] dark:text-white"');
+        expect(composer).not.toContain('selected ? "bg-[#eef3f6]');
         expect(composer).toContain('const popoverPlacement = centered ? "bottomLeft" : "topLeft"');
         expect(composer).toContain("placement={popoverPlacement}");
         expect(composer).not.toContain("上传中");

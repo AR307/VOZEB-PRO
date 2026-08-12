@@ -146,6 +146,8 @@ Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/proj
 
 Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutation：请求携带稳定 `mutationId`、最后确认的 `baseUpdatedAt`，以及节点、连线、助手会话的 upsert/delete 和发生变化的项目字段。成功响应 `data.ack` 返回 `projectId`、新 `updatedAt` 与原 `mutationId`；同一 mutation 重放返回原确认且不重复应用，版本落后返回 409 并保留服务器快照。旧的完整项目 PATCH 只供现有非交互调用路径使用，仍要求 `expectedUpdatedAt`。
 
+`DELETE /api/canvas/projects/{id}/assistant-conversations` 接收 `{ conversationIds: string[] }`，只删除当前用户、当前 Canvas 项目 `chatSessions` 已关联的 Agent 会话。成功响应 `data` 为 `{ deleted, chatSessions, activeChatId }`，其中会话列表和活动 ID 是服务端权威状态；空数组和重复删除返回当前状态且不重复删除。Canvas 主生成会话、跨项目或未关联会话返回 409。删除会话、消息、Run/事件、任务、生成记录和项目会话引用在同一 PostgreSQL 事务或文件 Provider 多文件锁中完成；删除最后一条已持久化会话时，服务端创建一条无 `conversationId` 的空会话。候选媒体只在提交后按全站引用保护回收。
+
 `POST /api/agent/runs` 接收：
 
 ```ts
@@ -182,7 +184,7 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 
 ## 生成任务恢复、Worker 与回调
 
-文本、图片、视频和音频任务详情接口，以及 Agent Run SSE，只会唤醒当前用户正在读取的同一持久任务。业务状态与执行阶段分离：`pending/running` 任务可处于 `created/submitting/submitted/polling/result_ready/persisting`；普通 Agent 生成完成后可进入 `review_pending/reviewing/review_unavailable/completed`，持久 Worker 最多尝试三次复盘，复盘失败不改变用户已经收到的生成结果。`needs_review` 和普通终态不会被页面或 Worker 自动推进。已经保存上游任务 ID 后，恢复路径只能查询原任务；`result_ready` 只重试结果保存，不能再次创建上游任务。
+文本、图片、视频和音频任务详情接口，以及 Agent Run SSE，只会唤醒当前用户正在读取的同一持久任务。业务状态与执行阶段分离：`pending/running` 任务可处于 `created/submitting/submitted/polling/result_ready/persisting`；普通 Agent 生成完成后可进入 `review_pending/reviewing/review_unavailable/completed`，持久 Worker 执行一次复盘，调用失败即记录为不可用，不会使用未配置的固定次数重复计费，也不改变用户已经收到的生成结果。`needs_review` 和普通终态不会被页面或 Worker 自动推进。已经保存上游任务 ID 后，恢复路径只能查询原任务；`result_ready` 只重试结果保存，不能再次创建上游任务。
 
 - `POST /api/maintenance/generation-tasks/run`：使用 `Authorization: Bearer <VOZEB_PRO_WORKER_TOKEN>` 领取一个有界恢复批次；可通过 `x-vozeb-pro-worker-id` 同步心跳。
 - `POST /api/maintenance/generation-tasks/heartbeat`：使用相同 Worker Bearer Token 和必填 `x-vozeb-pro-worker-id` 上报心跳。

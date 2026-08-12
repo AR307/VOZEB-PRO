@@ -271,8 +271,8 @@ describe("admin models route", () => {
         expect(response.status).toBe(200);
         expect(payload.models).toEqual(expect.arrayContaining(["seedream_5.0Pro", "seedance-2.5"]));
         expect(payload.modelConfigs).toMatchObject({
-            "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id" },
-            "seedance-2.5": { capability: "video", protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", supportsReferenceVideo: false },
+            "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id" },
+            "seedance-2.5": { capability: "video", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id", supportsReferenceVideo: false },
         });
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock).toHaveBeenCalledWith("https://yumeng.example.com/kyyReactApiServer/v2/model-center/models", expect.objectContaining({ headers: { authorization: "Bearer yumeng-secret" } }));

@@ -189,12 +189,11 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const updateGenerationConcurrency = (key: keyof AuthSettings["generationConcurrency"], value: number | null) => {
-        const limits = { agent: { max: 10, fallback: 2 }, image: { max: 10, fallback: 4 }, video: { max: 5, fallback: 1 }, audio: { max: 10, fallback: 2 }, text: { max: 20, fallback: 4 }, render: { max: 5, fallback: 1 } }[key];
         setSettings((current) => ({
             ...current,
             generationConcurrency: {
                 ...current.generationConcurrency,
-                [key]: clampInteger(value, 1, limits.max, limits.fallback),
+                [key]: Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : current.generationConcurrency[key],
             },
         }));
     };
@@ -527,5 +526,5 @@ function mergeAdminModelConfigs(current: SystemChannelAdvancedConfig["modelConfi
         const protocol = config.protocol || channelProtocol;
         if (config.source === "manual" && (protocol !== channelProtocol || !channelProtocolDefinition(protocol).strict || !merged[model])) merged[model] = config;
     });
-    return Object.fromEntries(Object.entries(merged).map(([model, config]) => [model, normalizeStrictProtocolModelConfig(config, channelProtocol)]));
+    return Object.fromEntries(Object.entries(merged).map(([model, config]) => [model, normalizeStrictProtocolModelConfig(config, channelProtocol, model)]));
 }

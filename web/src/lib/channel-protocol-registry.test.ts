@@ -38,9 +38,13 @@ describe("channel protocol registry", () => {
         expect(channelProtocolDefinition("volcengine-video").modelCatalogPaths).toEqual(["/api/v3/models"]);
         expect(channelProtocolDefinition("stable-diffusion").modelCatalogPaths).toEqual(["/sdapi/v1/sd-models"]);
         expect(channelProtocolDefinition("gemini").modelCatalogPaths).toEqual(["/v1beta/models"]);
-        expect(channelProtocolDefinition("yumeng")).toMatchObject({ label: "昱梦", modelCatalogPaths: [], capabilities: ["image", "video"], builtInModels: expect.any(Array) });
+        expect(channelProtocolDefinition("yumeng")).toMatchObject({
+            label: "昱梦",
+            modelCatalogPaths: [],
+            capabilities: ["image", "video"],
+            builtInModels: expect.any(Array),
+        });
         expect(channelProtocolDefinition("yumeng").builtInModels).toHaveLength(29);
-        expect(channelProtocolDefinition("yumeng")).not.toHaveProperty("defaultBaseUrl");
     });
 
     it("keeps strict protocol paths and request contracts isolated", () => {
@@ -56,8 +60,15 @@ describe("channel protocol registry", () => {
         expect(channelProtocolDefinition("volcengine-video").operations.video).toEqual(channelProtocolDefinition("seedance").operations.video);
         expect(channelProtocolDefinition("stable-diffusion").operations.image).toMatchObject({ createPath: "/sdapi/v1/txt2img", editPath: "/sdapi/v1/img2img", resultField: "images[0]" });
         expect(channelProtocolDefinition("yumeng").operations).toMatchObject({
-            image: { createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", resultField: "result_url / image_url", supportsReferenceImage: true },
-            video: { createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", resultField: "result_url / video_url", supportsReferenceImage: true, supportsReferenceVideo: false, supportsReferenceAudio: true },
+            image: { createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id", resultField: "result_url / image_url", supportsReferenceImage: true },
+            video: {
+                createPath: "/kyyReactApiServer/v2/model-center/tasks",
+                queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id",
+                resultField: "result_url / video_url",
+                supportsReferenceImage: true,
+                supportsReferenceVideo: false,
+                supportsReferenceAudio: true,
+            },
         });
         expect(channelProtocolDefinition("seedance-special").operations.video).toMatchObject({ createPath: "/v1/seedance-special/videos", queryPath: "/v1/result/:task_id" });
         expect(channelProtocolDefinition("vozeb-recommended").operations.video).toMatchObject({
@@ -91,7 +102,7 @@ describe("channel protocol registry", () => {
     });
 
     it("applies the VOZEB recommended preset to frontend channel drafts", () => {
-        const configured = applyChannelProtocol({ ...channel, models: ["Seedance 2.0-fast-720p"] }, "vozeb-recommended");
+        const configured = applyChannelProtocol({ ...channel, baseUrl: "", models: ["Seedance 2.0-fast-720p"] }, "vozeb-recommended");
 
         expect(configured).toMatchObject({ baseUrl: "https://new.aiym.ink/v1", apiFormat: "openai" });
         expect(configured.advancedConfig).toMatchObject({
@@ -124,12 +135,18 @@ describe("channel protocol registry", () => {
     });
 
     it("uses the Gemini API key header for the explicit Gemini protocol", () => {
-        const configured = applyChannelProtocol({ ...channel, models: ["veo-3.1-generate-preview"] }, "gemini");
+        const configured = applyChannelProtocol({ ...channel, baseUrl: "", models: ["veo-3.1-generate-preview"] }, "gemini");
 
         expect(configured.baseUrl).toBe("https://generativelanguage.googleapis.com");
         expect(configured.apiFormat).toBe("gemini");
         expect(configured.advancedConfig?.modelConfigs?.["veo-3.1-generate-preview"]).toMatchObject({ protocol: "gemini", apiFormat: "gemini", capability: "video" });
         expect(protocolAuthHeaders("secret", configured.advancedConfig, "gemini")).toEqual({ "x-goog-api-key": "secret" });
+    });
+
+    it("preserves an administrator-configured Base URL when selecting a protocol", () => {
+        expect(applyChannelProtocol(channel, "gemini").baseUrl).toBe(channel.baseUrl);
+        expect(applyChannelProtocol(channel, "vozeb-recommended").baseUrl).toBe(channel.baseUrl);
+        expect(applyChannelProtocol(channel, "yumeng").baseUrl).toBe(channel.baseUrl);
     });
 
     it("applies only the documented Yumeng v2 model-center contract", () => {
@@ -140,12 +157,14 @@ describe("channel protocol registry", () => {
         expect(configured.models).toContain("seedream_5.0Pro");
         expect(configured.models).toContain("klingo3");
         expect(configured.advancedConfig?.modelConfigs).toMatchObject({
-            "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/v2/model-center/tasks" },
-            klingo3: { capability: "video", protocol: "yumeng", createPath: "/v2/model-center/tasks" },
+            "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks" },
+            klingo3: { capability: "video", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks" },
+            videos_stable: { capability: "video", protocol: "yumeng", durationRange: "4-15 秒", supportsReferenceVideo: true, requestTemplate: expect.stringContaining("first_image") },
+            videos_stable_fast: { capability: "video", protocol: "yumeng", durationRange: "4-15 秒", supportsReferenceVideo: true, requestTemplate: expect.stringContaining("last_image") },
         });
         expect(configured.advancedConfig?.operationConfigs).toMatchObject({
-            image: { protocol: "yumeng", capability: "image", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id" },
-            video: { protocol: "yumeng", capability: "video", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", supportsReferenceVideo: false },
+            image: { protocol: "yumeng", capability: "image", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id" },
+            video: { protocol: "yumeng", capability: "video", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id", supportsReferenceVideo: false },
         });
         expect(protocolAuthHeaders("secret", configured.advancedConfig)).toEqual({ authorization: "Bearer secret" });
         expect(channelSupportsModelCatalog(configured)).toBe(false);

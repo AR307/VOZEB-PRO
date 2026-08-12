@@ -102,7 +102,7 @@ export async function POST(request: Request) {
         const merged = mergeModelCatalogEntries(configuredCatalog, builtInCatalog);
         const builtInConfigs = Object.fromEntries(
             protocolDefinition.builtInModels.flatMap(({ id, capability }) => {
-                const config = protocolModelConfig(protocol, capability);
+                const config = protocolModelConfig(protocol, capability, id);
                 return config ? [[normalizeModelId(id), config] as const] : [];
             }),
         );
@@ -192,7 +192,7 @@ export async function POST(request: Request) {
                 if (!protocolDefinition.strict) return [];
                 const configuredProtocol = configuredConfigs[normalizeModelId(entry.id)]?.protocol;
                 if (configuredProtocol && configuredProtocol !== protocol) return [];
-                const config = protocolModelConfig(protocol, entry.capability);
+                const config = protocolModelConfig(protocol, entry.capability, entry.id);
                 return config ? [[normalizeModelId(entry.id), config] as const] : [];
             }),
         );

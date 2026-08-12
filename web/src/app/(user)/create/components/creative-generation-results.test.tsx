@@ -8,12 +8,13 @@ import { CreativeVideoResult } from "./creative-video-result";
 
 describe("creative generation results", () => {
     it("renders a single portrait image shrink-to-fit without a switcher", () => {
-        const markup = renderToStaticMarkup(<CreativeMediaResult assets={[asset("image-one", "image", 720, 1280)]} renderActions={(active, context) => <div data-active={active.id} data-actions-width={context.shellWidth} />} />);
+        const markup = renderToStaticMarkup(<CreativeMediaResult assets={[asset("image-one", "image", 720, 1280)]} renderActions={(active) => <div data-active={active.id} />} />);
 
         expect(markup).toContain('data-results-count="1"');
         expect(markup).toContain('data-rendered-width="300"');
         expect(markup).toContain('data-rendered-height="533"');
-        expect(markup).toContain('data-actions-width="352"');
+        expect(markup).toContain('data-active="image-one"');
+        expect(markup).toContain("col-start-1 row-start-2");
         expect(markup).not.toContain("更多生成结果");
         expect(markup).not.toContain("max-w-[612px]");
         expect(markup).not.toContain("min-h-[300px]");
@@ -52,6 +53,7 @@ describe("creative generation results", () => {
         expect(markup).toContain('data-results-count="2"');
         expect(markup).toContain("更多生成结果");
         expect(markup).toContain('aria-label="查看生成结果 2"');
+        expect((markup.match(/preload="metadata"/g) || []).length).toBe(1);
     });
 
     it("counts only successful video assets when deciding whether to render more results", () => {

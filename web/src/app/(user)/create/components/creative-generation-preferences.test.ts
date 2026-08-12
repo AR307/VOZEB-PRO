@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
-import { normalizePositiveInteger, normalizePositiveNumber, normalizeVideoQuality } from "./creative-generation-preference-fields";
-import { generationPreferenceSummary, normalizeGenerationCount } from "./creative-generation-preferences";
+import { normalizePositiveInteger, normalizePositiveNumber, normalizeVideoQuality } from "@/components/creative-generation-preference-fields";
+import { generationPreferenceSummary, normalizeGenerationCount } from "@/components/creative-generation-preferences";
 
 describe("generationPreferenceSummary", () => {
     it("keeps image, video and audio settings readable in one compact label", () => {
@@ -15,8 +17,8 @@ describe("generationPreferenceSummary", () => {
     it("accepts custom generation counts within the server contract", () => {
         expect(normalizeGenerationCount("6")).toBe(6);
         expect(normalizeGenerationCount(10)).toBe(10);
+        expect(normalizeGenerationCount(11)).toBe(11);
         expect(normalizeGenerationCount("0")).toBe(0);
-        expect(normalizeGenerationCount("11")).toBe(0);
         expect(normalizeGenerationCount("6份")).toBe(0);
     });
 
@@ -26,5 +28,22 @@ describe("generationPreferenceSummary", () => {
         expect(normalizePositiveInteger(1.5)).toBe(0);
         expect(normalizePositiveNumber(8)).toBe(8);
         expect(normalizePositiveNumber(0)).toBe(0);
+    });
+
+    it("exposes the same positive custom pixel editor for images and videos", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/components/creative-generation-preferences.tsx"), "utf8");
+
+        expect(source).toContain('aria-label={`打开${capability === "image" ? "图片" : "视频"}自定义像素尺寸`}');
+        expect(source).toContain("<CustomMediaSizeEditor capability={capability}");
+        expect(source).toContain('`自定义${capability === "image" ? "图片" : "视频"}宽度`');
+        expect(source).toContain('`自定义${capability === "image" ? "图片" : "视频"}高度`');
+    });
+
+    it("keeps media type above the canvas and output parameter tabs", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/components/creative-generation-preferences.tsx"), "utf8");
+
+        expect(source.indexOf("availableCapabilities.map")).toBeLessThan(source.indexOf("<PreferencePanel"));
+        expect(source.indexOf("画面")).toBeLessThan(source.indexOf("输出"));
+        expect(source.indexOf("比例")).toBeLessThan(source.indexOf("自定义像素尺寸"));
     });
 });

@@ -18,7 +18,7 @@ export function normalizeVideoGenerationReferences(value: unknown): VideoGenerat
     if (value === undefined || value === null) return [];
     if (!Array.isArray(value)) throw new Error("视频参考素材格式不正确");
     const references: VideoGenerationReference[] = [];
-    for (const item of value.slice(0, 20)) {
+    for (const item of value) {
         if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("视频参考素材格式不正确");
         const source = item as Record<string, unknown>;
         const type = source.type === "image" || source.type === "video" || source.type === "audio" ? source.type : undefined;
@@ -28,7 +28,6 @@ export function normalizeVideoGenerationReferences(value: unknown): VideoGenerat
         if (role !== "reference" && type !== "image") throw new Error("视频首尾帧只能使用图片素材");
         references.push({ type, url, role });
     }
-    if (value.length > 20) throw new Error("一次最多使用 20 个视频参考素材");
     const firstFrames = references.filter((reference) => reference.role === "first_frame");
     const lastFrames = references.filter((reference) => reference.role === "last_frame");
     if (firstFrames.length > 1) throw new Error("一次只能指定一张首帧图片");

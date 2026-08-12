@@ -8,6 +8,7 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import { CanvasConfigComposer } from "../components/canvas-config-composer";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
+import { CanvasAssetsPanel } from "../components/canvas-assets-panel";
 import { CanvasSurface, type CanvasInteractionMode } from "../components/canvas-surface";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog } from "../components/canvas-node-crop-dialog";
@@ -22,9 +23,6 @@ import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CanvasNodeType, type Position } from "../types";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
-
 import { CanvasRefreshShell, ConnectionCreateMenu, NodeCreateMenu } from "./canvas-page-elements";
 import { getInputSummary, isHiddenBatchChild } from "./canvas-page-utils";
 
@@ -75,7 +73,6 @@ function VozebProCanvasPage() {
         createProject,
         updateProject,
         projectSaveState,
-        retryProjectSave,
         renameProject,
         deleteProjects,
         currentProject,
@@ -224,7 +221,6 @@ function VozebProCanvasPage() {
         createVideoFileNode,
         createAudioFileNode,
         createTextNodeFromClipboard,
-        pasteSystemClipboard,
         handleImageDimensions,
         toggleNodeFreeResize,
         handleNodeContentChange,
@@ -265,6 +261,19 @@ function VozebProCanvasPage() {
     if (!projectLoaded) return <CanvasRefreshShell />;
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.backdrop, color: theme.node.text }}>
+            <CanvasAssetsPanel
+                open={assetPickerOpen}
+                projectId={projectId}
+                projectTitle={currentProject?.title || "未命名画布"}
+                nodes={nodes}
+                onOpenProject={(id) => router.push(`/canvas/${id}`)}
+                onOpenProjects={() => router.push("/canvas")}
+                onCreateProject={createAndOpenProject}
+                onInsertAsset={handleAssetInsert}
+                onInsertPrompt={insertAssistantText}
+                onLocateNode={locateCanvasNode}
+                onClose={() => setAssetPickerOpen(false)}
+            />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || "未命名画布"}
@@ -275,16 +284,15 @@ function VozebProCanvasPage() {
                     onFinishTitleEditing={finishTitleEditing}
                     onCancelTitleEditing={() => setTitleEditing(false)}
                     saveState={projectSaveState}
-                    onRetrySave={() => (projectSaveState?.status === "conflict" ? window.location.reload() : retryProjectSave(projectId))}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
                     onWorkbench={() => router.push("/create")}
-                    onProjects={() => router.push("/canvas")}
-                    onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onImportImage={() => handleUploadRequest()}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
+                    assetsOpen={assetPickerOpen}
+                    onToggleAssets={() => setAssetPickerOpen((value) => !value)}
                     agentOpen={assistantOpen}
                     onToggleAgent={() => (assistantOpen ? closeAgent() : openAgent())}
                 />
@@ -462,7 +470,7 @@ function VozebProCanvasPage() {
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
-                    onSaveAsset={(node) => void saveNodeAsset(node)}
+                    onSaveAsset={(node) => void saveNodeAsset(node).catch((error) => message.error(error instanceof Error ? error.message : "素材保存失败"))}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
@@ -498,7 +506,7 @@ function VozebProCanvasPage() {
                     onInteractionModeChange={setInteractionMode}
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
-                    onOpenMyAssets={() => {
+                    onOpenAssets={() => {
                         setAssetPickerOpen(true);
                     }}
                 />
@@ -530,16 +538,35 @@ function VozebProCanvasPage() {
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
 
-                {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
+                {cropNode?.metadata?.content ? (
+                    <CanvasNodeCropDialog
+                        dataUrl={cropNode.metadata.content}
+                        open={Boolean(cropNode)}
+                        onClose={() => setCropNodeId(null)}
+                        onConfirm={(crop) => void cropImageNode(cropNode!, crop).catch((error) => message.error(error instanceof Error ? error.message : "图片裁剪失败"))}
+                    />
+                ) : null}
 
                 {maskEditNode?.metadata?.content ? (
                     <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />
                 ) : null}
 
-                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
+                {splitNode?.metadata?.content ? (
+                    <CanvasNodeSplitDialog
+                        dataUrl={splitNode.metadata.content}
+                        open={Boolean(splitNode)}
+                        onClose={() => setSplitNodeId(null)}
+                        onConfirm={(params) => void splitImageNode(splitNode!, params).catch((error) => message.error(error instanceof Error ? error.message : "图片切分失败"))}
+                    />
+                ) : null}
 
                 {upscaleNode?.metadata?.content ? (
-                    <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
+                    <CanvasNodeUpscaleDialog
+                        dataUrl={upscaleNode.metadata.content}
+                        open={Boolean(upscaleNode)}
+                        onClose={() => setUpscaleNodeId(null)}
+                        onConfirm={(params) => void upscaleImageNode(upscaleNode!, params).catch((error) => message.error(error instanceof Error ? error.message : "图片放大失败"))}
+                    />
                 ) : null}
 
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
@@ -572,12 +599,9 @@ function VozebProCanvasPage() {
                 >
                     <p className="text-sm opacity-60">这会删除当前画布上的所有节点和连线。</p>
                 </Modal>
-
-                {assetPickerOpen ? <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} /> : null}
             </section>
             {assistantMounted ? (
                 <CanvasAssistantPanel
-                    conversationId={currentProject?.creativeConversationId}
                     nodes={nodes}
                     selectedNodeIds={selectedNodeIds}
                     snapshot={agentSnapshot}
@@ -585,7 +609,6 @@ function VozebProCanvasPage() {
                     activeSessionId={activeChatId}
                     onSelectNodeIds={setSelectedNodeIds}
                     onSessionsChange={handleAssistantSessionsChange}
-                    onConversationChange={(conversationId) => updateProject(projectId, { creativeConversationId: conversationId })}
                     onApplyOps={applyAgentOps}
                     onLocateNode={locateCanvasNode}
                     onPasteImage={pasteAssistantImage}

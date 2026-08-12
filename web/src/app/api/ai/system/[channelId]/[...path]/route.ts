@@ -451,8 +451,8 @@ function classifyConfiguredPointsRequest(
     multipliers?: GenerationPointMultipliers,
 ): PointsRequest | null {
     if (method.toUpperCase() !== "POST") return null;
-    const cleanPath = `/${(path[0] === "v1" || path[0] === "v1beta" ? path.slice(1) : path).join("/")}`.replace(/\/+$/, "").toLowerCase();
-    if (!createPaths.some((createPath) => createPath && cleanPath === createPath.replace(/\/+$/, "").toLowerCase())) return null;
+    const cleanPath = normalizedConfiguredProxyPath(`/${path.join("/")}`);
+    if (!createPaths.some((createPath) => createPath && cleanPath === normalizedConfiguredProxyPath(createPath))) return null;
     const payload = readRequestBody(contentType, body);
     const model = readRequestModel(payload) || modelHint;
     if (!model) return null;
@@ -461,6 +461,14 @@ function classifyConfiguredPointsRequest(
     if (capability === "video") return { model, amount: videoParameterMultiplier(payload, multipliers), usageKind: "video" };
     if (capability === "audio") return { model, amount: 1, usageKind: "audio" };
     return capability === "text" ? { model, amount: 1, usageKind: "text" } : null;
+}
+
+function normalizedConfiguredProxyPath(value: string) {
+    return `/${value
+        .trim()
+        .replace(/^\/+/, "")
+        .replace(/^(?:v1|v1beta)\//i, "")
+        .replace(/\/+$/, "")}`.toLowerCase();
 }
 
 function sameModel(left: string, right: string) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { storyboardReferenceImages } from "./drama-shot-generation-utils";
+import { shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
 
 describe("storyboardReferenceImages", () => {
     it("marks the storyboard start and end images as explicit video frames", () => {
@@ -32,5 +32,13 @@ describe("storyboardReferenceImages", () => {
         } as never);
 
         expect(references).toEqual([expect.objectContaining({ id: "storyboard-start-shot-two", videoRole: "first_frame", remoteUrl: "https://cdn.example.com/start.png" })]);
+    });
+
+    it("keeps every matching project reference instead of taking the first four", () => {
+        const characters = Array.from({ length: 5 }, (_, index) => ({ id: `character-${index}`, name: `角色 ${index}`, references: [{ id: `reference-${index}`, url: `/api/reference-assets/${index}.png` }], primaryReferenceId: `reference-${index}` }));
+        const references = shotReferenceImages({ characters, scenes: [], props: [], sourceAssets: [] } as never, { characterIds: characters.map((item) => item.id), propIds: [] } as never);
+
+        expect(references).toHaveLength(5);
+        expect(references.at(-1)).toMatchObject({ id: "character-4", serverUrl: "/api/reference-assets/4.png" });
     });
 });

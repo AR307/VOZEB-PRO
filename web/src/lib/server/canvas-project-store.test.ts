@@ -11,7 +11,17 @@ vi.mock("@/lib/server/data-adapter", () => ({
     writeJsonDataFile: vi.fn(async (name: string, value: unknown) => mocks.files.set(name, structuredClone(value))),
 }));
 
-import { createCanvasProject, getCanvasProject, getLatestCanvasProjectOverview, listCanvasProjects, listCanvasProjectSummaries, updateCanvasProject, updateCanvasProjectMutation, updateCanvasProjectMutationPatch } from "./canvas-project-store";
+import {
+    createCanvasProject,
+    getCanvasProject,
+    getLatestCanvasProjectOverview,
+    listCanvasProjectPage,
+    listCanvasProjects,
+    listCanvasProjectSummaries,
+    updateCanvasProject,
+    updateCanvasProjectMutation,
+    updateCanvasProjectMutationPatch,
+} from "./canvas-project-store";
 
 describe("canvas project file provider", () => {
     beforeEach(() => {
@@ -172,6 +182,26 @@ describe("canvas project file provider", () => {
         expect(statement).not.toMatch(/SELECT\s+project_json\s+FROM/i);
         expect(statement).toContain("LIMIT $2 OFFSET $3");
         expect(params).toEqual(["user-one", 12, 12]);
+    });
+
+    it("paginates complete PostgreSQL Canvas snapshots for explicit user export", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValue({ rows: [{ project_json: project("canvas-one", "画布一"), total_count: 3 }] });
+
+        await expect(listCanvasProjectPage("user-one", { page: 2, pageSize: 2 })).resolves.toMatchObject({ items: [{ id: "canvas-one" }], total: 3, page: 2, pageSize: 2 });
+
+        const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
+        expect(statement).toContain("WHERE user_id = $1");
+        expect(statement).toContain("ORDER BY updated_at DESC, id ASC");
+        expect(statement).toContain("LIMIT $2 OFFSET $3");
+        expect(params).toEqual(["user-one", 2, 2]);
+    });
+
+    it("prevents the unbounded Canvas reader from querying PostgreSQL", async () => {
+        mocks.provider = "postgres";
+
+        await expect(listCanvasProjects("user-one")).rejects.toThrow("paginated project query");
+        expect(mocks.postgresQuery).not.toHaveBeenCalled();
     });
 
     it("returns only the latest file-provider project summary", async () => {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import axios from "axios";
 
 const mocks = vi.hoisted(() => ({ imageToDataUrl: vi.fn() }));
 
@@ -6,6 +7,7 @@ vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: vi.fn(async
 vi.mock("@/services/file-storage", () => ({ getMediaBlob: vi.fn(), uploadMediaFile: vi.fn() }));
 vi.mock("@/services/image-storage", () => ({ imageToDataUrl: mocks.imageToDataUrl }));
 vi.mock("@/stores/use-config-store", () => ({
+    buildApiUrl: vi.fn((baseUrl: string, path: string) => `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`),
     resolveModelRequestConfig: vi.fn((config: Record<string, unknown>, model: string) => ({ ...config, model, apiSource: "system" })),
     modelOptionName: vi.fn((model: string) => model),
 }));
@@ -15,6 +17,9 @@ import type { ReferenceImage } from "@/types/image";
 import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask } from "./video";
 import { createUpstreamVideoGenerationTask } from "./video-core";
 import { buildCompatibleVideoPayloadVariants, compatibleVideoCreatePaths, compatibleVideoPollPaths, isGlobalAiOpcVideoConfig } from "./video-providers";
+import { normalizeCompatibleVideoDuration, normalizeGlobalAiOpcVideoDuration } from "./video-payloads";
+import { normalizeVideoSeconds } from "./video-support";
+import { GLOBAL_AIOPC_VIDEO_CREATE_PATH } from "./video-types";
 
 const config = {
     model: "video-v1",
@@ -130,6 +135,32 @@ describe("video API service", () => {
         expect(isGlobalAiOpcVideoConfig({ ...config, baseUrl: "https://kyyreactapiserver-production.example.com/v1" }, "other-model")).toBe(true);
     });
 
+    it("preserves administrator-configured durations until protocol-specific normalization", () => {
+        expect(normalizeVideoSeconds("60")).toBe("60");
+        expect(normalizeCompatibleVideoDuration("60")).toBe(60);
+        expect(normalizeGlobalAiOpcVideoDuration("60")).toBe(60);
+        expect(normalizeCompatibleVideoDuration("-1")).toBe(-1);
+    });
+
+    it("keeps every explicit reference in compatible video payloads", async () => {
+        const images = Array.from({ length: 10 }, (_, index) => ({
+            id: `image-${index + 1}`,
+            name: `参考图 ${index + 1}`,
+            type: "image/png",
+            dataUrl: `https://cdn.example.com/image-${index + 1}.png`,
+            url: `https://cdn.example.com/image-${index + 1}.png`,
+        })) as ReferenceImage[];
+        const videos = Array.from({ length: 4 }, (_, index) => ({ id: `video-${index + 1}`, name: `参考视频 ${index + 1}`, type: "video/mp4", url: `https://cdn.example.com/video-${index + 1}.mp4` }));
+        const audios = Array.from({ length: 4 }, (_, index) => ({ id: `audio-${index + 1}`, name: `参考音频 ${index + 1}`, type: "audio/mpeg", url: `https://cdn.example.com/audio-${index + 1}.mp3` }));
+
+        const payloads = await buildCompatibleVideoPayloadVariants({ ...config, baseUrl: "https://api.globalaiopc.com/v1" } as AiConfig, config.model, "生成视频", images, GLOBAL_AIOPC_VIDEO_CREATE_PATH, videos, audios);
+        const serialized = JSON.stringify(payloads);
+
+        expect(serialized).toContain("image-10.png");
+        expect(serialized).toContain("video-4.mp4");
+        expect(serialized).toContain("audio-4.mp3");
+    });
+
     it("uses only the Yumeng v2 paths and request template", async () => {
         const yumeng = {
             ...config,
@@ -140,33 +171,51 @@ describe("video API service", () => {
             videoSeconds: "60",
             advancedConfig: {
                 protocol: "yumeng",
-                createPath: "/v2/model-center/tasks",
-                queryPath: "/v2/model-center/tasks/:task_id",
+                createPath: "/kyyReactApiServer/v2/model-center/tasks",
+                queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id",
                 referenceRule: "参考素材必须使用公网 URL",
-                requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}"}',
+                requestTemplate:
+                    '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_videos":"{{videos}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","first_image":"{{first_frame}}","last_image":"{{last_frame}}"}',
             },
         } as AiConfig;
         const imageReference = { id: "image-one", name: "参考图片", type: "image/png", dataUrl: "https://cdn.example.com/reference.png", url: "https://cdn.example.com/reference.png" } as ReferenceImage;
+        const videoReference = { id: "video-one", name: "参考视频", type: "video/mp4", url: "https://cdn.example.com/reference.mp4" };
         const audioReference = { id: "audio-one", name: "参考音频", type: "audio/mpeg", url: "https://cdn.example.com/reference.mp3" };
 
-        expect(compatibleVideoCreatePaths(yumeng, yumeng.model)).toEqual(["/v2/model-center/tasks"]);
-        expect(compatibleVideoPollPaths(yumeng, { id: "task-one", model: yumeng.model } as never)).toEqual(["/v2/model-center/tasks/:task_id"]);
-        await expect(buildCompatibleVideoPayloadVariants(yumeng, yumeng.model, "生成视频", [imageReference], "/v2/model-center/tasks", [], [audioReference])).resolves.toEqual([
-            expect.objectContaining({ model: "seedance-2.5", prompt: "生成视频", duration: 30, aspect_ratio: "16:9", reference_images: ["https://cdn.example.com/reference.png"], reference_audios: ["https://cdn.example.com/reference.mp3"] }),
+        expect(compatibleVideoCreatePaths(yumeng, yumeng.model)).toEqual(["/kyyReactApiServer/v2/model-center/tasks"]);
+        expect(compatibleVideoPollPaths(yumeng, { id: "task-one", model: yumeng.model } as never)).toEqual(["/kyyReactApiServer/v2/model-center/tasks/:task_id"]);
+        await expect(buildCompatibleVideoPayloadVariants(yumeng, yumeng.model, "生成视频", [imageReference], "/kyyReactApiServer/v2/model-center/tasks", [videoReference], [audioReference])).resolves.toEqual([
+            expect.objectContaining({
+                model: "seedance-2.5",
+                prompt: "生成视频",
+                duration: 15,
+                aspect_ratio: "16:9",
+                reference_images: ["https://cdn.example.com/reference.png"],
+                reference_videos: ["https://cdn.example.com/reference.mp4"],
+                reference_audios: ["https://cdn.example.com/reference.mp3"],
+            }),
         ]);
     });
 
-    it("rejects reference video before submitting to the Yumeng v2 API", async () => {
+    it("submits reference video to the documented Yumeng v2 API", async () => {
         const yumeng = {
             ...config,
             baseUrl: "/api/ai/system/yumeng",
             apiKey: "system",
             model: "seedance-2.5",
             videoModel: "seedance-2.5",
-            advancedConfig: { protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id", requestTemplate: "{}" },
+            advancedConfig: {
+                protocol: "yumeng",
+                createPath: "/kyyReactApiServer/v2/model-center/tasks",
+                queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id",
+                requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","reference_videos":"{{videos}}"}',
+            },
         } as AiConfig;
+        const post = vi.spyOn(axios, "post").mockResolvedValue({ data: { id: "yumeng-task", status: "queued" }, headers: {} });
+        const reference = { id: "video-one", name: "参考视频", type: "video/mp4", url: "https://cdn.example.com/reference.mp4" };
 
-        await expect(createUpstreamVideoGenerationTask(yumeng, "生成视频", [], [{ id: "video-one", name: "参考视频", type: "video/mp4", url: "https://cdn.example.com/reference.mp4" }])).rejects.toThrow("昱梦新版模型中心暂不支持参考视频");
+        await expect(createUpstreamVideoGenerationTask(yumeng, "生成视频", [], [reference])).resolves.toMatchObject({ id: "yumeng-task" });
+        expect(post.mock.calls[0][1]).toMatchObject({ reference_videos: ["https://cdn.example.com/reference.mp4"] });
     });
 });
 

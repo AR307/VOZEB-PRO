@@ -14,6 +14,7 @@ import { GenerationSubmissionUncertainError } from "@/lib/server/generation-subm
 import { rankTextPlanningCandidates } from "@/lib/server/text-planning-runtime";
 import { filterAgentPlannerModels } from "@/lib/server/agent-run-planning-profile";
 import { buildAgentRunPlannerAudit } from "@/lib/server/agent-run-audit";
+import { orderCreativeAssetsByIds } from "@/lib/creative-asset-references";
 
 const globalAgentExecutors = globalThis as typeof globalThis & { __vozebProAgentRunControllers?: Map<string, AbortController> };
 const controllers = (globalAgentExecutors.__vozebProAgentRunControllers ??= new Map<string, AbortController>());
@@ -49,18 +50,19 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         }
         const directModelSelection = Boolean(claimed.requestedModelIds?.length);
         const usesMemoryCandidates = !directModelSelection && claimed.surface === "chat" && claimed.referencedAssetIds.length === 0;
-        const [settings, explicitAssets, conversationContext, memoryAssets] = await Promise.all([
+        const [settings, loadedExplicitAssets, conversationContext, memoryAssets] = await Promise.all([
             getAuthSettings(),
             getCreativeAssetsByIds(claimed.referencedAssetIds),
             directModelSelection ? Promise.resolve(undefined) : getCreativeConversationContext(claimed.conversationId, claimed.userId, claimed.id),
             usesMemoryCandidates ? listRecentCreativeMediaAssets(claimed.conversationId, claimed.userId, 6) : Promise.resolve([]),
         ]);
+        const explicitAssets = orderCreativeAssetsByIds(loadedExplicitAssets, claimed.referencedAssetIds);
         const allModels = agentModelOptions(settings);
         const availableModels = prioritizeAgentPlannerModels(filterAgentPlannerModels(allModels, claimed), claimed, settings);
         const skillOptions = plannerAgentSkills(settings, claimed);
+        const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds);
         if (!(await canContinue(run.id, executionId))) return;
         if (claimed.requestedModelIds?.length) {
-            const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds);
             const directModelOptions = claimed.generationPreferences?.mode ? availableModels : allModels;
             const selectedModels = claimed.requestedModelIds.map((id) => directModelOptions.find((item) => item.id === id && item.capability !== "text")).filter((item): item is ReturnType<typeof agentModelOptions>[number] => Boolean(item));
             if (selectedModels.length !== claimed.requestedModelIds.length) throw new Error("部分所选模型当前不可用，请重新选择");
@@ -85,7 +87,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         if (!model || !candidates.length) throw new Error("后台尚未配置可用的默认文本模型");
         const fallbackExample = agentPlanFallbackExample(availableModels);
         const plannerContext = buildAgentPlannerInput(claimed, conversationContext!, referencedAssets, referenceSource, skillOptions, availableModels, settings);
-        if (!(await updateAgentRunById(run.id, { plannerContext: plannerContext.summary }, undefined, ["running"], executionId))) return;
+        if (!(await updateAgentRunById(run.id, { plannerContext: plannerContext.summary }, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId))) return;
         const planningInput = [
             {
                 role: "system",
@@ -127,7 +129,6 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         }
         if (!plan) throw latestPlanningError instanceof Error ? latestPlanningError : new Error("没有可用的文本模型渠道");
         if (claimed.surface === "canvas") plan = normalizeCanvasPlanForSelection(plan, claimed.snapshot, claimed.prompt);
-        const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds);
         const plannerAudit = buildAgentRunPlannerAudit({
             mode: "model",
             logicalModelId: model,
@@ -139,7 +140,6 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             pointsRecordId: acceptedPlan?.call.pointsRecordId,
             skills,
         });
-        await updateAgentRunById(run.id, {}, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId);
         if (!(await canContinue(run.id, executionId))) {
             await refundAcceptedPlan();
             return;

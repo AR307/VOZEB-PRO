@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CreativeAgentRun } from "@/services/api/creative";
 
-import { creativeRunPresentation } from "./creative-run-presentation";
+import { creativeRunDuration, creativeRunPresentation } from "./creative-run-presentation";
 
 describe("creativeRunPresentation", () => {
     it("shows public final video parameters without internal planning fields", () => {
@@ -47,5 +47,11 @@ describe("creativeRunPresentation", () => {
             { key: "quality", label: "画质", value: "高画质" },
             { key: "status", label: "状态", value: "规划中" },
         ]);
+    });
+
+    it("formats the persisted run duration without inventing a timeout", () => {
+        expect(creativeRunDuration({ createdAt: 1_000, updatedAt: 66_000 } as CreativeAgentRun)).toBe("1分5秒");
+        expect(creativeRunDuration({ createdAt: 1_000, updatedAt: 1_200 } as CreativeAgentRun)).toBe("1秒");
+        expect(creativeRunDuration({ createdAt: 2_000, updatedAt: 1_000 } as CreativeAgentRun)).toBe("");
     });
 });

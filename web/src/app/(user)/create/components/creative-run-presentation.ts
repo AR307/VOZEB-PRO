@@ -34,6 +34,19 @@ export function creativeRunPresentation(run: CreativeAgentRun | undefined, model
     return items;
 }
 
+export function creativeRunDuration(run: CreativeAgentRun | undefined) {
+    const startedAt = Number(run?.createdAt);
+    const finishedAt = Number(run?.updatedAt);
+    if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || finishedAt <= startedAt) return "";
+    const totalSeconds = Math.max(1, Math.round((finishedAt - startedAt) / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours) return `${hours}小时${minutes ? `${minutes}分` : ""}`;
+    if (minutes) return `${minutes}分${seconds ? `${seconds}秒` : ""}`;
+    return `${seconds}秒`;
+}
+
 export function creativeRunMode(run: CreativeAgentRun | undefined): CreativeGenerationMode | undefined {
     const taskMode = run?.tasks.find((task) => task.type === "image" || task.type === "video" || task.type === "audio")?.type;
     return taskMode === "image" || taskMode === "video" || taskMode === "audio" ? taskMode : run?.generationPreferences?.mode;

@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ getAgentRun: vi.fn(), getLatestCreativeRunEven
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user" })) }));
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun }));
-vi.mock("@/lib/server/creative-runtime-store", () => ({ getLatestCreativeRunEventId: mocks.getLatestCreativeRunEventId, listCreativeRunEvents: mocks.listCreativeRunEvents }));
+vi.mock("@/lib/server/creative-runtime-store", () => ({ CREATIVE_RUN_EVENT_BATCH_SIZE: 500, getLatestCreativeRunEventId: mocks.getLatestCreativeRunEventId, listCreativeRunEvents: mocks.listCreativeRunEvents }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.recover }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
@@ -33,8 +33,23 @@ describe("Agent Run SSE", () => {
         expect(body).toContain("id: 2");
         expect(body).toContain("event: run.snapshot");
         expect(body).toContain('"status":"completed"');
-        expect(mocks.getAgentRun).toHaveBeenCalledTimes(2);
+        expect(mocks.getAgentRun).toHaveBeenCalledTimes(1);
         expect(mocks.listCreativeRunEvents).toHaveBeenCalledWith("run", "1");
+    });
+
+    it("drains every persisted event batch before closing a terminal run", async () => {
+        const firstBatch = Array.from({ length: 500 }, (_, index) => ({ id: String(index + 2), runId: "run", type: "run.planning", createdAt: index + 2 }));
+        mocks.listCreativeRunEvents.mockResolvedValueOnce(firstBatch).mockResolvedValueOnce([{ id: "502", runId: "run", type: "run.completed", createdAt: 502, data: { reply: "完成" } }]);
+
+        const response = await GET(new Request("http://localhost/api/agent/runs/run/events", { headers: { "last-event-id": "1" } }), { params: Promise.resolve({ id: "run" }) });
+        const body = await response.text();
+
+        expect(body).toContain("id: 501");
+        expect(body).toContain("id: 502");
+        expect(body.indexOf("id: 502")).toBeLessThan(body.indexOf("event: run.snapshot"));
+        expect(mocks.listCreativeRunEvents).toHaveBeenNthCalledWith(1, "run", "1");
+        expect(mocks.listCreativeRunEvents).toHaveBeenNthCalledWith(2, "run", "501");
+        expect(mocks.getAgentRun).toHaveBeenCalledTimes(1);
     });
 
     it("starts after the latest manual retry instead of replaying an older failure", async () => {

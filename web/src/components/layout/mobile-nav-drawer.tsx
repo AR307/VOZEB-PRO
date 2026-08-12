@@ -93,7 +93,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                     aria-current={helpActive ? "page" : undefined}
                 >
                     <CircleHelp className="size-[18px] shrink-0" />
-                    <span className="min-w-0 flex-1 truncate">帮助中心</span>
+                    <span className="min-w-0 flex-1 truncate">帮助</span>
                     <span className={cn("size-1.5 rounded-full", helpActive ? "bg-current" : "bg-transparent")} />
                 </Link>
             </div>

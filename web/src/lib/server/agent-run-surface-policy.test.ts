@@ -55,7 +55,7 @@ describe("agentPlannerInput", () => {
         expect(compact).not.toHaveProperty("viewport");
     });
 
-    it("enforces message, asset and Skill planner budgets without sending full instructions", () => {
+    it("keeps the complete validated conversation, asset and Skill planning context", () => {
         const settings = {
             ...DEFAULT_SETTINGS,
             agentSkills: [
@@ -85,18 +85,17 @@ describe("agentPlannerInput", () => {
         const context = input.conversationContext as { summary: string; recentMessages: Array<{ content: string; sequence: number }> };
         const skill = (input.availableSkills as Array<Record<string, unknown>>)[0];
 
-        expect(context.summary.length).toBeLessThanOrEqual("长期摘要".repeat(2000).length);
-        expect(context.recentMessages.length).toBeGreaterThan(0);
+        expect(context.summary).toBe("长期摘要".repeat(2000));
+        expect(context.recentMessages).toEqual(recentMessages);
         expect(context.recentMessages.at(-1)?.sequence).toBe(10);
-        expect((input.referencedAssets as unknown[]).length).toBeGreaterThan(0);
-        expect(String(skill.plannerSummary)).toBe("精简规划说明".repeat(40).slice(0, String(skill.plannerSummary).length));
-        expect(String(skill.plannerSummary).length).toBeLessThanOrEqual(240);
+        expect(input.referencedAssets).toEqual(assets.map((asset) => expect.objectContaining({ id: asset.id, textContent: asset.textContent })));
+        expect(skill.plannerSummary).toBe("精简规划说明".repeat(40));
         expect(skill).not.toHaveProperty("instructions");
-        expect(JSON.stringify(input).length).toBeLessThanOrEqual(12_000);
-        expect(input.planningBudget).toEqual({ complexity: "ordinary", maxOutputTokens: 1200 });
+        expect(JSON.stringify(input).length).toBeGreaterThan(12_000);
+        expect(input).not.toHaveProperty("planningBudget");
     });
 
-    it("keeps a required model at the end of configuration and records actual omissions", () => {
+    it("keeps the complete capability-filtered model catalog without fixed truncation", () => {
         const tailModelId = `tail-${"x".repeat(60)}`;
         const models = Array.from({ length: 300 }, (_, index) => ({ id: index === 299 ? tailModelId : `model-${index}-${"x".repeat(60)}`, name: `模型 ${index} ${"名称".repeat(120)}`, capability: "image" }));
         const settings = { ...DEFAULT_SETTINGS, defaultModels: { ...DEFAULT_SETTINGS.defaultModels, imageModel: tailModelId } };
@@ -113,13 +112,14 @@ describe("agentPlannerInput", () => {
         const keptIds = (input.availableModels as Array<{ id: string }>).map((model) => model.id);
 
         expect(keptIds[0]).toBe(tailModelId);
-        expect(keptIds).toContain(tailModelId);
-        expect(summary.kept.modelIds).toContain(tailModelId);
-        expect(summary.omitted.modelIds.length).toBeGreaterThan(0);
-        expect(summary.serializedChars).toBeLessThanOrEqual(summary.maxInputChars);
+        expect(keptIds).toHaveLength(models.length);
+        expect(summary.kept.modelIds).toEqual(keptIds);
+        expect(summary.omitted.modelIds).toEqual([]);
+        expect(summary.serializedChars).toBe(JSON.stringify(input).length);
+        expect(summary).not.toHaveProperty("maxInputChars");
     });
 
-    it("keeps current-turn asset identities ahead of memory candidates under the same character budget", () => {
+    it("keeps all current-turn and memory candidate assets without a platform character budget", () => {
         const assets = Array.from({ length: 40 }, (_, index) => ({
             id: `asset-${index}`,
             type: "image",
@@ -134,13 +134,67 @@ describe("agentPlannerInput", () => {
         const memory = buildAgentPlannerInput(run, { summary: "", summaryThroughSequence: 0, recentMessages: [] } as never, assets as never, "conversation-memory-candidates", [], common, DEFAULT_SETTINGS);
 
         expect(explicit.summary.kept.assetIds).toEqual(assets.map((asset) => asset.id));
-        expect(explicit.summary.kept.assetIds.length).toBeGreaterThan(memory.summary.kept.assetIds.length);
-        expect(explicit.summary.serializedChars).toBeLessThanOrEqual(explicit.summary.maxInputChars);
+        expect(memory.summary.kept.assetIds).toEqual(assets.map((asset) => asset.id));
+        expect(memory.summary.omitted.assetIds).toEqual([]);
+        expect((memory.input.referencedAssets as Array<{ textContent: string }>).every((asset) => asset.textContent === "素材正文".repeat(200))).toBe(true);
     });
 
-    it("uses larger bounded budgets only for multi-output and complex project planning", () => {
-        expect(resolveAgentPlanningProfile({ surface: "chat", prompt: "生成四张角色图" })).toMatchObject({ complexity: "multi", maxInputChars: 22_000, maxOutputTokens: 1600 });
-        expect(resolveAgentPlanningProfile({ surface: "drama", prompt: "继续当前项目" })).toMatchObject({ complexity: "complex", maxInputChars: 32_000, maxOutputTokens: 2400 });
+    it("maps current-turn aliases by the stable requested asset order", () => {
+        const assets = [
+            { id: "second", type: "image", title: "第二张", metadata: {} },
+            { id: "first", type: "image", title: "第一张", metadata: {} },
+        ];
+        const input = agentPlannerInput(
+            { surface: "chat", prompt: "@图片1 保持人物，@图片2 改成夜景", referencedAssetIds: ["first", "second"], selectedSkillIds: [] } as never,
+            { summary: "", summaryThroughSequence: 0, recentMessages: [] } as never,
+            assets as never,
+            "current-turn-explicit",
+            [],
+            [{ id: "image", name: "图片", capability: "image" }],
+            DEFAULT_SETTINGS,
+        ) as { referencedAssets: Array<{ id: string; alias: string }> };
+
+        expect(input.referencedAssets).toEqual([expect.objectContaining({ id: "first", alias: "@图片1" }), expect.objectContaining({ id: "second", alias: "@图片2" })]);
+    });
+
+    it("classifies planning complexity without adding input or output limits", () => {
+        const multi = resolveAgentPlanningProfile({ surface: "chat", prompt: "生成四张角色图" });
+        const complex = resolveAgentPlanningProfile({ surface: "drama", prompt: "继续当前项目" });
+
+        expect(multi).toMatchObject({ complexity: "multi" });
+        expect(complex).toMatchObject({ complexity: "complex" });
+        expect(multi).not.toHaveProperty("maxInputChars");
+        expect(multi).not.toHaveProperty("maxOutputTokens");
+        expect(complex).not.toHaveProperty("maxInputChars");
+        expect(complex).not.toHaveProperty("maxOutputTokens");
+    });
+
+    it("keeps every explicit Canvas selection and the complete project snapshot", () => {
+        const selectedNodeIds = Array.from({ length: 25 }, (_, index) => `node-${index}`);
+        const canvasInput = agentPlannerInput(
+            { surface: "canvas", prompt: "整理选中节点", snapshot: { selectedNodeIds, nodes: selectedNodeIds.map((id) => ({ id, type: "text", title: id, metadata: { content: "正文".repeat(400) } })), connections: [] } } as never,
+            { summary: "", summaryThroughSequence: 0, recentMessages: [] } as never,
+            [],
+            "none",
+            [],
+            [{ id: "text", name: "文本", capability: "text" }],
+            DEFAULT_SETTINGS,
+        ) as { canvasSnapshot: { selectedNodeIds: string[]; nodes: Array<{ metadata: { content: string } }> } };
+        const projectSnapshot = Object.fromEntries(Array.from({ length: 35 }, (_, index) => [`field-${index}`, { nested: [{ content: `完整内容-${index}-${"长文本".repeat(400)}` }] }]));
+        const dramaInput = agentPlannerInput(
+            { surface: "drama", projectId: "drama-one", prompt: "继续项目", snapshot: projectSnapshot } as never,
+            { summary: "", summaryThroughSequence: 0, recentMessages: [] } as never,
+            [],
+            "none",
+            [],
+            [{ id: "text", name: "文本", capability: "text" }],
+            DEFAULT_SETTINGS,
+        ) as { projectSnapshot: typeof projectSnapshot };
+
+        expect(canvasInput.canvasSnapshot.selectedNodeIds).toEqual(selectedNodeIds);
+        expect(canvasInput.canvasSnapshot.nodes).toHaveLength(selectedNodeIds.length);
+        expect(canvasInput.canvasSnapshot.nodes[0].metadata.content).toBe("正文".repeat(400));
+        expect(dramaInput.projectSnapshot).toEqual(projectSnapshot);
     });
 
     it("prefilters models by request capability while preserving real text planning", () => {

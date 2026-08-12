@@ -1,5 +1,6 @@
 import type { AuthSettings } from "@/lib/auth/store";
 import type { CreativeAsset, CreativeConversationContext, CreativeSurface } from "@/lib/creative-runtime-contract";
+import { creativeAssetReferenceAliases, orderCreativeAssetsByIds } from "@/lib/creative-asset-references";
 import type { AgentRun, AgentRunPlannerContextSummary, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 import { resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
@@ -35,7 +36,7 @@ export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExamp
         surface === "chat"
             ? "只有用户原文明确要求创建、建立或整理成画布/短剧项目时才填写 projectHandoff；生成短视频、短片、图片或系列媒体不等于创建项目，必须省略 projectHandoff。只做明确项目交接且无需新产物时允许 deliverables=[]。projectHandoff.assetIds 只能引用 referencedAssets，当前 Run 新生成的资产会由服务端自动合并。"
             : "当前入口不得填写 projectHandoff。";
-    return `${identity}先结合 conversationContext 的长期摘要和近期消息理解用户的自然语言、指代和连续创作关系，再判断 intent：问候、闲聊、能力咨询、使用说明和知识问答为 conversation；${surfaceRules}conversation 必须 deliverables=[]、decisions=[]，直接在 reply 回答。generationPreferences.mode 非空时代表用户本轮明确选择的产物类型，必须按该类型执行 generation，deliverables 只能使用该媒体类型；generationPreferences 中该类型的尺寸、画质、时长、音色和格式是用户本轮明确参数，不得改选。视频 generationPreferences.referenceMode、firstFrameAssetId 和 lastFrameAssetId 是用户显式指定的首尾帧角色，必须规划视频任务且不得猜测、交换、删除或改成普通参考图；服务端会强制注入对应资产。generation 必须先形成 foundation：brief 说明目标、受众、使用场景、核心信息、约束和参考素材策略；direction 给出一个明确推荐的风格、构图/镜头、色彩、光线、视觉关键词和避免事项。${projectRule}${handoffRule}requestedSkillIds 非空时必须使用且只使用这些技能；requestedSkillIds 为空时 skillIds 必须为空，不得自动选择任何普通 Skill。没有 Skill 时仍需执行提示词优化、视觉方向、模型选择和参数规划。referenceContext.source=current-turn-explicit 表示 referencedAssets 是本轮用户明确附件，必须优先且排他；source=conversation-memory-candidates 表示它们只是同会话最近成功媒体候选，只有自然语义明确延续、修改、变体或保持上一轮主体/场景时，才把确需使用的资产 ID 写入 deliverable.assetIds，新主题、独立创作或无法确认时不得引用。随后规划整套 deliverables 和依赖顺序，并主动从 availableModels 中为每个产物选择能力匹配的逻辑模型，决定画幅、质量、数量、时长、音色或格式。只能引用 referencedAssets 中存在的资产 ID；需要使用一个或多个资产时，将它们写入对应 deliverable.assetIds。每个 deliverable 的 prompt 必须执行同一 foundation，保持主体、信息、色彩和视觉语言一致。不要盲目照抄默认值，默认值只在没有更明确判断时作为兜底。严格遵守 planningBudget.maxOutputTokens，优先保留可执行参数并压缩解释。reply 用自然中文概括推荐方向；decisions 用 2–6 项说明“选择了什么、为什么”；每个 deliverable 必须填写 model。优先调用 create_agent_plan；若渠道不支持工具调用，必须直接返回与函数参数完全一致的单个 JSON 对象，不要 Markdown 或额外文本，严格仿照这个完整结构：${fallbackExample}。不得暴露隐藏思维链，只输出可验证的决策摘要。`;
+    return `${identity}先结合 conversationContext 的长期摘要和近期消息理解用户的自然语言、指代和连续创作关系，再判断 intent：问候、闲聊、能力咨询、使用说明和知识问答为 conversation；${surfaceRules}conversation 必须 deliverables=[]、decisions=[]，直接在 reply 回答。generationPreferences.mode 非空时代表用户本轮明确选择的产物类型，必须按该类型执行 generation，deliverables 只能使用该媒体类型；generationPreferences 中该类型的尺寸、画质、时长、音色和格式是用户本轮明确参数，不得改选。视频 generationPreferences.referenceMode、firstFrameAssetId 和 lastFrameAssetId 是用户显式指定的首尾帧角色，必须规划视频任务且不得猜测、交换、删除或改成普通参考图；服务端会强制注入对应资产。generation 必须先形成 foundation：brief 说明目标、受众、使用场景、核心信息、约束和参考素材策略；direction 给出一个明确推荐的风格、构图/镜头、色彩、光线、视觉关键词和避免事项。${projectRule}${handoffRule}requestedSkillIds 非空时必须使用且只使用这些技能；requestedSkillIds 为空时 skillIds 必须为空，不得自动选择任何普通 Skill。没有 Skill 时仍需执行提示词优化、视觉方向、模型选择和参数规划。referenceContext.source=current-turn-explicit 表示 referencedAssets 是本轮用户明确附件，必须优先且排他；其中 alias 是用户正文中的通用引用名，必须严格按 alias 对应的真实 id 理解“@图片1 做什么、@图片2 做什么”等逐素材指令，不得按标题、数组偶然顺序或文本相似度猜测。source=conversation-memory-candidates 表示它们只是同会话最近成功媒体候选，只有自然语义明确延续、修改、变体或保持上一轮主体/场景时，才把确需使用的资产 ID 写入 deliverable.assetIds，新主题、独立创作或无法确认时不得引用。随后规划整套 deliverables 和依赖顺序，并主动从 availableModels 中为每个产物选择能力匹配的逻辑模型，决定画幅、质量、数量、时长、音色或格式。只能引用 referencedAssets 中存在的资产 ID；需要使用一个或多个资产时，将它们写入对应 deliverable.assetIds。每个 deliverable 的 prompt 必须执行同一 foundation，保持主体、信息、色彩和视觉语言一致。不要盲目照抄默认值，默认值只在没有更明确判断时作为兜底。reply 用自然中文概括推荐方向；decisions 用 2–6 项说明“选择了什么、为什么”；每个 deliverable 必须填写 model。优先调用 create_agent_plan；若渠道不支持工具调用，必须直接返回与函数参数完全一致的单个 JSON 对象，不要 Markdown 或额外文本，严格仿照这个完整结构：${fallbackExample}。不得暴露隐藏思维链，只输出可验证的决策摘要。`;
 }
 
 export function agentPlannerInput(
@@ -59,9 +60,10 @@ export function buildAgentPlannerInput(
     availableModels: Array<{ id: string; name: string; capability: string }>,
     settings: AuthSettings,
 ): { input: Record<string, unknown>; summary: AgentRunPlannerContextSummary } {
-    const planningProfile = resolveAgentPlanningProfile(run);
     const selectedNodeIds = run.surface === "canvas" ? selectedCanvasNodeIds(run.snapshot) : [];
     const prioritizedModels = prioritizeAgentPlannerModels(availableModels, run, settings);
+    const orderedAssets = orderCreativeAssetsByIds(referencedAssets, run.referencedAssetIds || []);
+    const referenceAliases = referenceSource === "current-turn-explicit" ? creativeAssetReferenceAliases(orderedAssets, run.referencedAssetIds || []) : new Map<string, string>();
     const payload = {
         requirement: run.prompt,
         conversationContext: {
@@ -73,19 +75,23 @@ export function buildAgentPlannerInput(
         ...(run.surface === "canvas" ? { canvasSnapshot: compactCanvasSnapshot(run.snapshot) } : run.surface === "drama" ? { projectSnapshot: compactProjectSnapshot(run.snapshot) } : {}),
         ...(selectedNodeIds.length ? { currentTurnSelection: { selectedNodeIds, rule: "这些节点是本轮明确附件；编辑任务不得改用历史节点" } } : {}),
         referenceContext: { source: referenceSource },
-        referencedAssets: referencedAssets.map(plannerAssetSummary),
+        referencedAssets: orderedAssets.map((asset) => plannerAssetSummary(asset, referenceAliases.get(asset.id))),
         requestedSkillIds: run.selectedSkillIds || [],
         ...(run.generationPreferences ? { generationPreferences: run.generationPreferences } : {}),
         availableSkills: availableSkills.map(plannerSkillSummary),
         availableModels: prioritizedModels,
         defaultModels: settings.defaultModels,
         generationDefaults: settings.generationDefaults,
-        planningBudget: { complexity: planningProfile.complexity, maxOutputTokens: planningProfile.maxOutputTokens },
     };
-    return fitPlannerInput(payload, planningProfile.maxInputChars, {
-        referenceSource,
-        protectedModelIds: protectedPlannerModelIds(run, settings, planningProfile.capabilities),
-    });
+    const kept = plannerContextIds(payload);
+    return {
+        input: payload,
+        summary: {
+            serializedChars: serializedLength(payload),
+            kept,
+            omitted: { modelIds: [], skillIds: [], assetIds: [], recentMessageSequences: [] },
+        },
+    };
 }
 
 export function prioritizeAgentPlannerModels<T extends { id: string; capability: string }>(models: T[], run: Pick<AgentRun, "requestedModelIds" | "surface" | "prompt" | "snapshot" | "generationPreferences">, settings: AuthSettings) {
@@ -102,7 +108,7 @@ function plannerSkillSummary(skill: AuthSettings["agentSkills"][number]) {
     return {
         id: skill.id,
         name: skill.name,
-        plannerSummary: (skill.plannerSummary || skill.description || skill.instructions).slice(0, 240),
+        plannerSummary: skill.plannerSummary || skill.description || skill.instructions,
         workspaces: skill.workspaces || ["image"],
     };
 }
@@ -122,15 +128,14 @@ export function compactCanvasSnapshot(snapshot: unknown) {
     }
     const nodes = records(source.nodes)
         .filter((node) => selected.has(text(node.id)) || node.type === "config")
-        .slice(0, 20)
         .map(compactCanvasNode);
     return {
         projectId: text(source.projectId),
-        title: text(source.title).slice(0, 160),
-        imageSize: text(source.imageSize).slice(0, 40),
+        title: text(source.title),
+        imageSize: text(source.imageSize),
         selectedNodeIds,
         nodes,
-        connections: connections.slice(0, 30).map((connection) => ({ id: text(connection.id), fromNodeId: text(connection.fromNodeId), toNodeId: text(connection.toNodeId) })),
+        connections: connections.map((connection) => ({ id: text(connection.id), fromNodeId: text(connection.fromNodeId), toNodeId: text(connection.toNodeId) })),
     };
 }
 
@@ -139,13 +144,13 @@ function compactCanvasNode(node: Record<string, unknown>) {
     return {
         id: text(node.id),
         type: text(node.type),
-        title: text(node.title).slice(0, 160),
+        title: text(node.title),
         width: number(node.width),
         height: number(node.height),
         metadata: {
-            size: text(metadata.size).slice(0, 40),
-            content: text(metadata.content || metadata.prompt).slice(0, 600),
-            url: text(metadata.serverUrl || metadata.remoteUrl || metadata.url).slice(0, 1000),
+            size: text(metadata.size),
+            content: text(metadata.content || metadata.prompt),
+            url: text(metadata.serverUrl || metadata.remoteUrl || metadata.url),
             naturalWidth: number(metadata.naturalWidth),
             naturalHeight: number(metadata.naturalHeight),
         },
@@ -153,97 +158,7 @@ function compactCanvasNode(node: Record<string, unknown>) {
 }
 
 function compactProjectSnapshot(snapshot: unknown) {
-    const source = record(snapshot);
-    return Object.fromEntries(
-        Object.entries(source)
-            .slice(0, 30)
-            .map(([key, value]) => [key, compactValue(value, 0)]),
-    );
-}
-
-function compactValue(value: unknown, depth: number): unknown {
-    if (typeof value === "string") return value.slice(0, 800);
-    if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
-    if (depth >= 3) return undefined;
-    if (Array.isArray(value)) return value.slice(0, 12).map((item) => compactValue(item, depth + 1));
-    if (value && typeof value === "object")
-        return Object.fromEntries(
-            Object.entries(value)
-                .slice(0, 24)
-                .map(([key, item]) => [key, compactValue(item, depth + 1)]),
-        );
-    return undefined;
-}
-
-function fitPlannerInput(payload: Record<string, unknown>, maxChars: number, options: { referenceSource: "current-turn-explicit" | "conversation-memory-candidates" | "none"; protectedModelIds: Set<string> }) {
-    const input = structuredClone(payload);
-    const original = plannerContextIds(input);
-    const context = record(input.conversationContext);
-    const messages = records(context.recentMessages);
-    context.recentMessages = messages;
-    input.conversationContext = context;
-
-    const latestMessage = messages.at(-1);
-    while (serializedLength(input) > maxChars && messages.length && messages[0] !== latestMessage) messages.shift();
-    shrinkRecordTextToFit(input, context, "summary", maxChars);
-    compactRecordsToFit(input, messages, ["content"], maxChars);
-
-    const assets = records(input.referencedAssets);
-    input.referencedAssets = assets;
-    if (options.referenceSource === "conversation-memory-candidates") while (serializedLength(input) > maxChars && assets.length) assets.pop();
-    else compactRecordsToFit(input, assets, ["textContent", "title", "mimeType", "url"], maxChars);
-
-    const canvasSnapshot = record(input.canvasSnapshot);
-    if (Object.keys(canvasSnapshot).length) {
-        const connections = records(canvasSnapshot.connections);
-        canvasSnapshot.connections = connections;
-        while (serializedLength(input) > maxChars && connections.length) connections.pop();
-        const selected = new Set(strings(canvasSnapshot.selectedNodeIds));
-        const nodes = records(canvasSnapshot.nodes);
-        canvasSnapshot.nodes = nodes;
-        removeUnprotectedRecordsToFit(input, nodes, (node) => selected.has(text(node.id)) || text(node.type) === "config", maxChars);
-        compactRecordsToFit(
-            input,
-            nodes.map((node) => record(node.metadata)),
-            ["content", "url"],
-            maxChars,
-        );
-    }
-
-    const projectSnapshot = record(input.projectSnapshot);
-    const projectKeys = Object.keys(projectSnapshot);
-    while (serializedLength(input) > maxChars && projectKeys.length) delete projectSnapshot[projectKeys.pop()!];
-
-    const skills = records(input.availableSkills);
-    input.availableSkills = skills;
-    compactRecordsToFit(input, skills, ["plannerSummary", "name", "workspaces"], maxChars);
-
-    const models = records(input.availableModels);
-    input.availableModels = models;
-    compactRecordsToFit(input, models, ["name"], maxChars);
-    removeUnprotectedRecordsToFit(input, models, (model) => options.protectedModelIds.has(text(model.id)), maxChars);
-
-    shrinkRecordTextToFit(input, input, "requirement", maxChars);
-    while (serializedLength(input) > maxChars && skills.length) skills.pop();
-    while (serializedLength(input) > maxChars && assets.length && options.referenceSource !== "current-turn-explicit") assets.pop();
-
-    const final = plannerContextIds(input);
-    const summary: AgentRunPlannerContextSummary = {
-        maxInputChars: maxChars,
-        serializedChars: serializedLength(input),
-        kept: final,
-        omitted: {
-            modelIds: difference(original.modelIds, final.modelIds),
-            skillIds: difference(original.skillIds, final.skillIds),
-            assetIds: difference(original.assetIds, final.assetIds),
-            recentMessageSequences: differenceNumbers(original.recentMessageSequences, final.recentMessageSequences),
-        },
-    };
-    return { input, summary };
-}
-
-function protectedPlannerModelIds(run: Pick<AgentRun, "requestedModelIds">, settings: AuthSettings, capabilities: Set<string>) {
-    return new Set([...(run.requestedModelIds || []), ...defaultPlannerModelIds(settings, capabilities)].map((id) => id.trim()).filter(Boolean));
+    return { ...record(snapshot) };
 }
 
 function defaultPlannerModelIds(settings: AuthSettings, capabilities: Set<string>) {
@@ -259,27 +174,6 @@ function modelPriority(id: string, requested: Map<string, number>, defaults: Map
     if (requested.has(id)) return requested.get(id)!;
     if (defaults.has(id)) return requested.size + defaults.get(id)!;
     return requested.size + defaults.size;
-}
-
-function shrinkRecordTextToFit(root: Record<string, unknown>, target: Record<string, unknown>, key: string, maxChars: number) {
-    let value = text(target[key]);
-    while (serializedLength(root) > maxChars && value) {
-        const overflow = serializedLength(root) - maxChars;
-        value = value.slice(0, Math.max(0, value.length - Math.max(1, overflow)));
-        target[key] = value;
-    }
-}
-
-function compactRecordsToFit(root: Record<string, unknown>, values: Array<Record<string, unknown>>, keys: string[], maxChars: number) {
-    for (const key of keys) {
-        for (let index = values.length - 1; index >= 0 && serializedLength(root) > maxChars; index -= 1) delete values[index][key];
-    }
-}
-
-function removeUnprotectedRecordsToFit(root: Record<string, unknown>, values: Array<Record<string, unknown>>, protectedRecord: (value: Record<string, unknown>) => boolean, maxChars: number) {
-    for (let index = values.length - 1; index >= 0 && serializedLength(root) > maxChars; index -= 1) {
-        if (!protectedRecord(values[index])) values.splice(index, 1);
-    }
 }
 
 function plannerContextIds(input: Record<string, unknown>) {
@@ -303,16 +197,6 @@ function serializedLength(value: unknown) {
     return JSON.stringify(value).length;
 }
 
-function difference(values: string[], kept: string[]) {
-    const keep = new Set(kept);
-    return values.filter((value) => !keep.has(value));
-}
-
-function differenceNumbers(values: number[], kept: number[]) {
-    const keep = new Set(kept);
-    return values.filter((value) => !keep.has(value));
-}
-
 function record(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -325,10 +209,6 @@ function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
 }
 
-function strings(value: unknown) {
-    return Array.isArray(value) ? value.map(text).filter(Boolean) : [];
-}
-
 function number(value: unknown) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
@@ -337,7 +217,7 @@ function number(value: unknown) {
 export function selectedCanvasNodeIds(snapshot: unknown) {
     if (!snapshot || typeof snapshot !== "object") return [];
     const ids = (snapshot as { selectedNodeIds?: unknown }).selectedNodeIds;
-    return Array.isArray(ids) ? Array.from(new Set(ids.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map((id) => id.trim()))).slice(0, 20) : [];
+    return Array.isArray(ids) ? Array.from(new Set(ids.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map((id) => id.trim()))) : [];
 }
 
 export function taskPlanSummary(task: AgentRunTask) {
@@ -371,10 +251,10 @@ export function assetAccessUrl(asset?: CreativeAsset) {
     return [asset.remoteUrl, asset.serverUrl].find((value) => typeof value === "string" && value.trim() && !value.startsWith("data:"))?.trim();
 }
 
-export function creativeAssetContext(asset: CreativeAsset) {
+export function creativeAssetContext(asset: CreativeAsset, alias?: string) {
     const content = asset.textContent?.trim();
     const url = assetAccessUrl(asset);
-    return [`资产 ID：${asset.id}`, `类型：${asset.type}`, `标题：${asset.title}`, content ? `文本：${content.slice(0, 2000)}` : "", url ? `媒体地址：${url}` : ""].filter(Boolean).join("；");
+    return [alias ? `引用别名：@${alias}` : "", `资产 ID：${asset.id}`, `类型：${asset.type}`, `标题：${asset.title}`, content ? `文本：${content}` : "", url ? `媒体地址：${url}` : ""].filter(Boolean).join("；");
 }
 
 export function agentPlanReply(_plan: AgentPlan, tasks: AgentRunTask[], surface: CreativeSurface) {
@@ -385,12 +265,13 @@ export function agentPlanReply(_plan: AgentPlan, tasks: AgentRunTask[], surface:
     return hasReferences ? "已收到，我会基于当前参考素材完成这次创作。" : "已收到，我会按你的要求完成这次创作。";
 }
 
-function plannerAssetSummary(asset: CreativeAsset) {
+function plannerAssetSummary(asset: CreativeAsset, alias?: string) {
     return {
         id: asset.id,
+        ...(alias ? { alias: `@${alias}` } : {}),
         type: asset.type,
         title: asset.title,
-        ...(asset.textContent ? { textContent: asset.textContent.slice(0, 600) } : {}),
+        ...(asset.textContent ? { textContent: asset.textContent } : {}),
         ...(assetAccessUrl(asset) ? { url: assetAccessUrl(asset) } : {}),
         ...(asset.mimeType ? { mimeType: asset.mimeType } : {}),
     };

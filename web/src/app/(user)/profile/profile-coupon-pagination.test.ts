@@ -12,6 +12,8 @@ describe("profile coupon pagination", () => {
         expect(hook).toContain("setCouponsPage(1)");
         expect(hook).toContain("couponsQueuedRequest");
         expect(hook).toContain("couponTemplatesLoaded");
+        expect(hook).toContain("templatePageSize: COUPON_PAGE_SIZE");
+        expect(hook).toContain("changeCouponTemplatePage");
         expect(hook).toContain("refreshTemplates: true");
         expect(hook).toContain("includeTemplates: currentRequest.refreshTemplates || !couponTemplatesLoaded.current");
     });
@@ -20,6 +22,8 @@ describe("profile coupon pagination", () => {
         const [wallet, page] = await Promise.all([readFile(resolve(process.cwd(), "src/app/(user)/profile/profile-coupon-wallet.tsx"), "utf8"), readFile(resolve(process.cwd(), "src/app/(user)/profile/page.tsx"), "utf8")]);
 
         expect(wallet).toContain("total > COUPON_PAGE_SIZE");
+        expect(wallet).toContain("templatesTotal > COUPON_PAGE_SIZE");
+        expect(wallet).toContain("current={templatePage}");
         expect(wallet).toContain("<Pagination");
         expect(wallet).toContain("current={page}");
         expect(wallet).toContain("onChange={onPageChange}");

@@ -3,7 +3,7 @@
 import { Checkbox, Form, Input, InputNumber, Modal, Select } from "antd";
 
 import type { AdminDashboardController } from "./use-admin-dashboard-controller";
-import { ADMIN_PERMISSION_DEFINITIONS, ADMIN_PERMISSION_PRESETS, adminPermissionSummary, hasAdminPermission, hasAllAdminPermissions, normalizeAdminPermissions } from "@/lib/admin-permissions";
+import { ADMIN_PERMISSION_DEFINITIONS, ADMIN_PERMISSION_GROUPS, ADMIN_PERMISSION_PRESETS, adminPermissionSummary, hasAdminPermission, hasAllAdminPermissions, normalizeAdminPermissions } from "@/lib/admin-permissions";
 
 export function AdminUserEditorModal({ controller }: { controller: AdminDashboardController }) {
     const { currentUser, userForm, editingUser, creatingUser, updatingUserId, closeUserEditor, saveUserEditor } = controller;
@@ -16,15 +16,12 @@ export function AdminUserEditorModal({ controller }: { controller: AdminDashboar
     const canEditAccount = touchesAdministrator ? canManageAdministrators && targetWithinScope : canManageUsers;
     const ownPermissions = normalizeAdminPermissions(currentUser.adminPermissions);
     const allowedPresets = ADMIN_PERMISSION_PRESETS.filter((preset) => preset.permissions.every((permission) => ownPermissions.includes(permission)));
-    const permissionOptions = ADMIN_PERMISSION_DEFINITIONS.filter((permission) => ownPermissions.includes(permission.key)).map((permission) => ({
-        value: permission.key,
-        label: (
-            <span className="min-w-0">
-                <span className="block text-sm font-medium text-stone-800 dark:text-stone-200">{permission.label}</span>
-                <span className="block text-xs leading-5 text-stone-500 dark:text-stone-400">{permission.description}</span>
-            </span>
-        ),
-    }));
+    const assignablePermissions = ADMIN_PERMISSION_DEFINITIONS.filter((permission) => ownPermissions.includes(permission.key));
+    const selectedPermissions = normalizeAdminPermissions(Form.useWatch("adminPermissions", userForm));
+    const assignablePermissionGroups = ADMIN_PERMISSION_GROUPS.map((group) => ({
+        ...group,
+        permissions: assignablePermissions.filter((permission) => permission.group === group.key),
+    })).filter((group) => group.permissions.length > 0);
     const canUseRole = (role: "user" | "admin") => {
         if (creatingUser) return role === "admin" ? canManageAdministrators : canManageUsers;
         if (editingUser?.role === "admin") return canManageAdministrators && targetWithinScope;
@@ -59,10 +56,12 @@ export function AdminUserEditorModal({ controller }: { controller: AdminDashboar
             open={creatingUser || Boolean(editingUser)}
             okText={creatingUser ? "新增" : "保存"}
             cancelText="取消"
-            width={720}
+            centered
+            width="min(960px, calc(100vw - 24px))"
             confirmLoading={creatingUser ? updatingUserId === "__new__" : Boolean(editingUser && updatingUserId === editingUser.id)}
             onOk={() => userForm.submit()}
             onCancel={closeUserEditor}
+            styles={{ container: { display: "flex", maxHeight: "calc(100dvh - 24px)", flexDirection: "column" }, body: { minHeight: 0, overflowY: "auto", paddingTop: 12 }, footer: { flexShrink: 0 } }}
         >
             <Form form={userForm} layout="vertical" requiredMark={false} onFinish={saveUserEditor}>
                 <div className="grid gap-x-4 md:grid-cols-2">
@@ -110,7 +109,42 @@ export function AdminUserEditorModal({ controller }: { controller: AdminDashboar
                                 </Form.Item>
                             </div>
                             <Form.Item label="职责权限" name="adminPermissions" rules={[{ type: "array", min: 1, message: "管理员至少需要一项职责权限" }]} extra="只能授予当前管理员自己拥有的权限。">
-                                <Checkbox.Group className="grid w-full gap-2 sm:grid-cols-2" disabled={!canEditAccount} options={permissionOptions} onChange={selectPermissions} />
+                                <Checkbox.Group className="!block w-full" disabled={!canEditAccount} onChange={selectPermissions} aria-label="职责权限">
+                                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2" data-admin-permission-grid>
+                                        {assignablePermissionGroups.map((group) => {
+                                            const selectedCount = group.permissions.filter((permission) => selectedPermissions.includes(permission.key)).length;
+                                            return (
+                                                <section key={group.key} className="min-w-0 self-start overflow-hidden rounded-md border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900/70" data-admin-permission-group={group.key}>
+                                                    <div className="flex items-start justify-between gap-3 border-b border-stone-200 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-950/30">
+                                                        <div className="min-w-0">
+                                                            <h4 className="text-sm font-semibold leading-5 text-stone-900 dark:text-stone-100">{group.label}</h4>
+                                                            <p className="mt-0.5 text-xs leading-5 text-stone-500 dark:text-stone-400">{group.description}</p>
+                                                        </div>
+                                                        <span className="shrink-0 pt-0.5 text-xs leading-5 text-stone-500 tabular-nums dark:text-stone-400">
+                                                            {selectedCount}/{group.permissions.length} 已选
+                                                        </span>
+                                                    </div>
+                                                    <div className="divide-y divide-stone-200/80 dark:divide-stone-800">
+                                                        {group.permissions.map((permission) => (
+                                                            <div
+                                                                key={permission.key}
+                                                                className={`px-4 py-2.5 transition-colors ${canEditAccount ? "hover:bg-stone-50 focus-within:bg-stone-50 dark:hover:bg-stone-800/40 dark:focus-within:bg-stone-800/40" : "opacity-70"}`}
+                                                                data-admin-permission-item
+                                                            >
+                                                                <Checkbox value={permission.key} className="!m-0 !flex !w-full min-w-0 items-start" classNames={{ icon: "mt-0.5", label: "min-w-0 flex-1" }}>
+                                                                    <span className="grid min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-baseline gap-x-3">
+                                                                        <span className="text-[13px] font-medium leading-5 text-stone-800 dark:text-stone-200">{permission.label}</span>
+                                                                        <span className="text-xs leading-5 text-stone-500 dark:text-stone-400">{permission.description}</span>
+                                                                    </span>
+                                                                </Checkbox>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </section>
+                                            );
+                                        })}
+                                    </div>
+                                </Checkbox.Group>
                             </Form.Item>
                         </div>
                     ) : (

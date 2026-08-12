@@ -50,7 +50,7 @@ test("image results shrink to their real 1:1, 9:16, 16:9 and long-image sizes", 
         const result = page.getByTestId("creative-media-result");
         const primary = result.getByTestId("creative-primary-result");
         await expect(primary).toBeVisible({ timeout: 45_000 });
-        await expect(result.getByText("更多生成结果", { exact: true })).toHaveCount(0);
+        await expect(result.getByText("更多", { exact: true })).toHaveCount(0);
         await expect(result.getByTestId("creative-result-switcher")).toHaveCount(0);
         await expect(primary).toHaveAttribute("data-rendered-width", String(expected[index].width));
         await expect(primary).toHaveAttribute("data-rendered-height", String(expected[index].height));
@@ -73,14 +73,87 @@ test("multiple image results share one switcher and actions follow the selected 
     const primary = result.getByTestId("creative-primary-result");
     await expect(result).toBeVisible({ timeout: 45_000 });
     await expect(result.getByTestId("creative-result-switcher")).toHaveAttribute("data-results-count", "4");
-    await expect(result.getByText("更多生成结果", { exact: true })).toBeVisible();
+    await expect(result.getByText("更多", { exact: true })).toBeVisible();
+    await expect(round.getByLabel("生成耗时：8秒")).toBeVisible();
+    await expect(round.getByLabel(/完成时间：/)).toBeVisible();
+    const [titleBounds, timingBounds] = await Promise.all([
+        round.getByRole("heading", { name: "已为你生成图片" }).evaluate((element) => element.getBoundingClientRect().toJSON()),
+        round.getByTestId("creative-run-timing").evaluate((element) => element.getBoundingClientRect().toJSON()),
+    ]);
+    expect(Math.abs(titleBounds.bottom - timingBounds.bottom)).toBeLessThanOrEqual(8);
     await expect(primary).toHaveAttribute("data-rendered-width", "420");
     expect(fixture.repeatedRequests()).toHaveLength(0);
 
-    await result.getByRole("button", { name: "查看生成结果 3" }).click();
+    await round.getByRole("button", { name: "复制输入内容" }).click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __lastCopiedText?: string }).__lastCopiedText)).toBe(fixture.prompt);
+
+    const thirdResult = result.getByRole("button", { name: "查看生成结果 3" });
+    await thirdResult.click();
     await expect(primary).toHaveAttribute("data-rendered-width", "560");
     await expect(primary).toHaveAttribute("data-rendered-height", "315");
     await expect(round.getByLabel("本轮创作操作", { exact: true })).toHaveAttribute("data-active-asset-id", fixture.assets[2].id);
+    await expect(thirdResult.locator(".lucide-check")).toHaveCount(0);
+    const selectedOutline = thirdResult.locator("[data-selected-outline]");
+    const thumbnailContent = thirdResult.locator("[data-thumbnail-content]");
+    await expect(selectedOutline).toHaveCount(1);
+    await expect(thumbnailContent).toHaveCount(1);
+    const [thumbnailBounds, outlineBounds, contentBounds] = await Promise.all([
+        thirdResult.evaluate((element) => element.getBoundingClientRect().toJSON()),
+        selectedOutline.evaluate((element) => element.getBoundingClientRect().toJSON()),
+        thumbnailContent.evaluate((element) => element.getBoundingClientRect().toJSON()),
+    ]);
+    expect(Math.abs(thumbnailBounds.left - outlineBounds.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(thumbnailBounds.top - outlineBounds.top)).toBeLessThanOrEqual(1);
+    expect(Math.abs(thumbnailBounds.right - outlineBounds.right)).toBeLessThanOrEqual(1);
+    expect(Math.abs(thumbnailBounds.bottom - outlineBounds.bottom)).toBeLessThanOrEqual(1);
+    expect(contentBounds.left - thumbnailBounds.left).toBeGreaterThanOrEqual(1.5);
+    expect(contentBounds.top - thumbnailBounds.top).toBeGreaterThanOrEqual(1.5);
+    expect(thumbnailBounds.right - contentBounds.right).toBeGreaterThanOrEqual(1.5);
+    expect(thumbnailBounds.bottom - contentBounds.bottom).toBeGreaterThanOrEqual(1.5);
+    const [primaryBounds, switcherBounds] = await Promise.all([primary.evaluate((element) => element.getBoundingClientRect().toJSON()), result.getByTestId("creative-result-switcher").evaluate((element) => element.getBoundingClientRect().toJSON())]);
+    expect(primaryBounds.height).toBeLessThanOrEqual(page.viewportSize()!.height / 3 + 2);
+    expect(switcherBounds.left).toBeGreaterThan(primaryBounds.right);
+    expect(switcherBounds.left - primaryBounds.right).toBeLessThanOrEqual(16);
+    expect(Math.abs(switcherBounds.top - primaryBounds.top)).toBeLessThanOrEqual(1);
+    expect(switcherBounds.height).toBeLessThanOrEqual(primaryBounds.height + 1);
+    expect(thumbnailBounds.width).toBeLessThan(primaryBounds.width / 4);
+    const selectionColors = await selectedOutline.evaluate((element) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--primary)";
+        document.body.appendChild(probe);
+        const colors = { border: getComputedStyle(element).borderTopColor, primary: getComputedStyle(probe).color };
+        probe.remove();
+        return colors;
+    });
+    expect(selectionColors.border).toBe(selectionColors.primary);
+    const actionPalettes = await Promise.all(
+        ["复制提示词", "下载"].map((name) =>
+            round.getByRole("button", { name, exact: true }).evaluate((element) => {
+                const style = getComputedStyle(element);
+                return { background: style.backgroundColor, border: style.borderTopColor, color: style.color };
+            }),
+        ),
+    );
+    expect(actionPalettes[1]).toEqual(actionPalettes[0]);
+    await round.getByRole("button", { name: "复制提示词" }).click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __lastCopiedText?: string }).__lastCopiedText)).toBe(fixture.optimizedPromptFor(2));
+    const actionBounds = await round.getByLabel("本轮创作操作", { exact: true }).evaluate((element) => element.getBoundingClientRect().toJSON());
+    expect(actionBounds.width).toBeLessThanOrEqual(primaryBounds.width + 1);
+    await round.getByRole("button", { name: "下载", exact: true }).click();
+    await expect(page.getByText("下载当前结果", { exact: true })).toBeVisible();
+    await expect(page.getByText(`下载全部结果（${fixture.assets.length}）`, { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await round.getByRole("button", { name: "更多本轮创作操作" }).click();
+    await expect(page.getByText("新窗口打开", { exact: true })).toHaveCount(0);
+    await page.getByText("引用结果", { exact: true }).click();
+    await expect(page.getByRole("button", { name: `移除${fixture.assets[2].title}` })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: `移除${fixture.assets[0].title}` })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: `移除${fixture.assets[1].title}` })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: `移除${fixture.assets[3].title}` })).toHaveCount(0);
+    await round.getByRole("button", { name: "更多本轮创作操作" }).click();
+    await page.getByText("取消引用", { exact: true }).click();
+    await expect(page.getByRole("button", { name: `移除${fixture.assets[2].title}` })).toHaveCount(0);
     await captureResult(result, testInfo, "image-multiple-results");
 
     await result.getByRole("button", { name: "查看生成结果 4" }).click();
@@ -88,14 +161,92 @@ test("multiple image results share one switcher and actions follow the selected 
     await expect(primary).toHaveAttribute("data-rendered-height", "1280");
     await expect(round.getByLabel("本轮创作操作", { exact: true })).toHaveAttribute("data-active-asset-id", fixture.assets[3].id);
 
-    await round.getByRole("button", { name: "更多本轮创作操作" }).click();
-    await page.getByText("新窗口打开", { exact: true }).click();
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __lastOpenedUrl?: string }).__lastOpenedUrl)).toBe(fixture.assets[3].serverUrl);
+    await round.getByRole("button", { name: "复制提示词" }).click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __lastCopiedText?: string }).__lastCopiedText)).toBe(fixture.optimizedPromptFor(3));
     await expectNoHorizontalOverflow(page);
     await expect(round.getByRole("button", { name: "复制提示词" })).toBeVisible();
     await expect(round.getByRole("button", { name: "重新编辑" })).toHaveCount(0);
     await expect(round.getByRole("button", { name: "再次生成" })).toHaveCount(0);
     expect(fixture.repeatedRequests()).toHaveLength(0);
+    const conversationScroll = page.getByTestId("creative-conversation-scroll");
+    await conversationScroll.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+    const [scrollBounds, roundBounds] = await Promise.all([conversationScroll.evaluate((element) => element.getBoundingClientRect().toJSON()), round.evaluate((element) => element.getBoundingClientRect().toJSON())]);
+    expect(scrollBounds.bottom - roundBounds.bottom).toBeLessThanOrEqual(48);
+});
+
+test("copy prompt refreshes a restored run whose cached details omit the public prompt", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "旧会话提示词刷新由桌面基准项目验证");
+    await preparePage(page, testInfo);
+    const fixture = await mockCreativeRound(page, { type: "image", sizes: [IMAGE_SIZES[0]], withholdPrompts: true });
+    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+
+    const copyButton = page.getByTestId("creative-media-round").getByRole("button", { name: "复制提示词" });
+    await expect(copyButton).toBeVisible({ timeout: 45_000 });
+    await expect(copyButton).toBeEnabled();
+    const requestsBeforeCopy = fixture.runRequests();
+
+    fixture.revealPrompts();
+    await copyButton.click();
+
+    await expect.poll(fixture.runRequests).toBeGreaterThan(requestsBeforeCopy);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __lastCopiedText?: string }).__lastCopiedText)).toBe(fixture.optimizedPromptFor(0));
+});
+
+test("a 100-result batch stays complete inside the bounded result rail", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    const desktop = testInfo.project.name === "chromium";
+    const fixture = await mockCreativeRound(page, { type: "image", sizes: Array.from({ length: 100 }, () => IMAGE_SIZES[0]) });
+    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+
+    const result = page.getByTestId("creative-media-result");
+    const primary = result.getByTestId("creative-primary-result");
+    const switcher = result.getByTestId("creative-result-switcher");
+    const strip = switcher.getByLabel("更多生成结果", { exact: true });
+    await expect(switcher).toBeVisible({ timeout: 45_000 });
+    await expect(switcher).toHaveAttribute("data-results-count", "100");
+    await expect(switcher.getByRole("button", { name: /查看生成结果/ })).toHaveCount(100);
+    await expect(switcher.getByTestId("creative-result-position")).toHaveText("1 / 100");
+    await expect(switcher).toHaveAttribute("data-orientation", desktop ? "vertical" : "horizontal");
+    await expect(switcher).toHaveAttribute("data-overflow", "true");
+
+    const [primaryBounds, switcherBounds, stripMetrics] = await Promise.all([
+        primary.evaluate((element) => element.getBoundingClientRect().toJSON()),
+        switcher.evaluate((element) => element.getBoundingClientRect().toJSON()),
+        strip.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth })),
+    ]);
+    if (desktop) {
+        expect(switcherBounds.height).toBeLessThanOrEqual(primaryBounds.height + 1);
+        expect(stripMetrics.scrollHeight).toBeGreaterThan(stripMetrics.clientHeight);
+    } else {
+        expect(switcherBounds.width).toBeLessThanOrEqual(primaryBounds.width + 1);
+        expect(stripMetrics.scrollWidth).toBeGreaterThan(stripMetrics.clientWidth);
+    }
+
+    await switcher.getByRole("button", { name: "查看更多生成结果" }).click();
+    await expect.poll(() => strip.evaluate((element, vertical) => (vertical ? element.scrollTop : element.scrollLeft), desktop)).toBeGreaterThan(0);
+    await switcher.getByRole("button", { name: "查看生成结果 100" }).click();
+    await expect(switcher.getByTestId("creative-result-position")).toHaveText("100 / 100");
+    await expectNoHorizontalOverflow(page);
+});
+
+test("a long-running media task uses warm elapsed-time feedback", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "运行中人格化文案由桌面基准项目验证");
+    await preparePage(page, testInfo);
+    const fixture = await mockPendingCreativeRound(page, "video");
+
+    try {
+        await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+        const waiting = page.getByTestId("creative-generation-waiting");
+        await expect(waiting).toBeVisible({ timeout: 45_000 });
+        await expect(waiting).toContainText("主人，久等了");
+        await expect(waiting.getByTestId("creative-generation-elapsed")).toContainText("已等待 2分");
+        await expect(waiting).not.toContainText("正在处理");
+        await expect(page.getByRole("heading", { name: "已为你生成视频" })).toHaveCount(0);
+        await expectNoHorizontalOverflow(page);
+        await captureResult(waiting, testInfo, "creative-generation-waiting");
+    } finally {
+        fixture.releaseEvents();
+    }
 });
 
 test("single video results keep real ratios and retain complete player controls", async ({ page }, testInfo) => {
@@ -116,7 +267,7 @@ test("single video results keep real ratios and retain complete player controls"
         const video = player.locator("video").first();
         await expect(result).toBeVisible({ timeout: 45_000 });
         await video.evaluate((element) => element.dispatchEvent(new Event("loadedmetadata")));
-        await expect(result.getByText("更多生成结果", { exact: true })).toHaveCount(0);
+        await expect(result.getByText("更多", { exact: true })).toHaveCount(0);
         await expect(result.getByTestId("creative-result-switcher")).toHaveCount(0);
         await expect(result.getByText(/视频亮点|镜头分镜|配乐氛围|文案摘要/)).toHaveCount(0);
         await expect(primary).toHaveAttribute("data-rendered-width", String(expected[index].width));
@@ -197,7 +348,7 @@ test("multiple videos switch src, poster and size while releasing the previous p
     await expect(round.getByLabel("本轮创作操作", { exact: true })).toHaveAttribute("data-active-asset-id", fixture.assets[1].id);
     await expect.poll(() => page.evaluate(() => Number((window as unknown as { __mediaPauseCalls?: number }).__mediaPauseCalls || 0))).toBeGreaterThan(pausesBeforeSwitch);
     await expect.poll(() => page.evaluate(() => Number((window as unknown as { __mediaLoadCalls?: number }).__mediaLoadCalls || 0))).toBeGreaterThan(0);
-    await expect(result.getByText("更多生成结果", { exact: true })).toBeVisible();
+    await expect(result.getByText("更多", { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await captureResult(result, testInfo, "video-multiple-results");
 });
@@ -242,6 +393,133 @@ test("partial image and video runs keep every successful result visible with a f
     }
 });
 
+test("asset mentions stay as inline thumbnail references while the editor is focused", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    for (const type of ["image", "video"] as const) {
+        const fixture = await mockCreativeRound(page, { type, sizes: (type === "image" ? IMAGE_SIZES : VIDEO_SIZES).slice(0, 2) });
+        const label = type === "image" ? "图片" : "视频";
+        await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+
+        const composer = page.locator(".creative-composer");
+        const input = composer.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" });
+        await expect(input).toBeVisible({ timeout: 45_000 });
+        await input.fill("书店收购价格");
+        await input.evaluate((element) => {
+            const textarea = element as HTMLTextAreaElement;
+            textarea.setSelectionRange(0, 0);
+        });
+        await composer.getByRole("button", { name: "引用当前对话资产" }).click();
+        const mentionPicker = page.getByTestId("creative-asset-mention-picker");
+        await expect(mentionPicker.getByRole("tablist", { name: "引用素材类型" })).toHaveCount(0);
+        const mentionGrid = mentionPicker.getByTestId(`creative-asset-mention-${type}-grid`);
+        const pickerItems = mentionGrid.getByRole("button");
+        await expect(pickerItems).toHaveCount(2);
+        await expect(pickerItems.nth(0)).toHaveAttribute("data-asset-id", String(fixture.assets[0].id));
+        await expect(pickerItems.nth(1)).toHaveAttribute("data-asset-id", String(fixture.assets[1].id));
+        const [firstPickerBounds, secondPickerBounds] = await Promise.all([pickerItems.nth(0).boundingBox(), pickerItems.nth(1).boundingBox()]);
+        expect(firstPickerBounds && secondPickerBounds && Math.abs(firstPickerBounds.y - secondPickerBounds.y)).toBeLessThan(1);
+        expect(firstPickerBounds && secondPickerBounds && secondPickerBounds.x).toBeGreaterThan(firstPickerBounds?.x || 0);
+        await expect(mentionPicker.getByText(`${label}结果 1`, { exact: true })).toHaveCount(0);
+        await page.getByRole("button", { name: `选择${label}结果 1`, exact: true }).click();
+        await expect(input).toHaveValue(`@${label}1 书店收购价格`);
+        await expect
+            .poll(() =>
+                input.evaluate((element) => {
+                    const textarea = element as HTMLTextAreaElement;
+                    return { start: textarea.selectionStart, end: textarea.selectionEnd, next: textarea.value[textarea.selectionStart] };
+                }),
+            )
+            .toEqual({ start: `@${label}1 `.length, end: `@${label}1 `.length, next: "书" });
+        await expect(composer.getByLabel(`已上传${label} ${label}结果 1`)).toBeVisible();
+        const mentionPreview = composer.getByTestId("creative-composer-mention-preview");
+        const chips = mentionPreview.getByTestId("creative-composer-reference-chip");
+        await expect(chips).toHaveCount(1);
+        await expect(chips).toContainText(`${label}1`);
+        await expect(chips).not.toContainText(`@${label}1`);
+        await expect(chips.locator("img")).toHaveCount(1);
+        await expect(chips.locator("[data-mention-token-width]")).toHaveText(`@${label}1`);
+
+        await input.fill(`@${label}1 生成男孩子，@`);
+        await page.getByRole("button", { name: `选择${label}结果 2`, exact: true }).click();
+        await expect(input).toHaveValue(`@${label}1 生成男孩子，@${label}2 `);
+        await expect(composer.getByLabel(`已上传${label} ${label}结果 1`)).toBeVisible();
+        await expect(composer.getByLabel(`已上传${label} ${label}结果 2`)).toBeVisible();
+        await expect(chips).toHaveCount(2);
+        await expect(chips.nth(0)).toHaveAttribute("data-asset-id", String(fixture.assets[0].id));
+        await expect(chips.nth(1)).toHaveAttribute("data-asset-id", String(fixture.assets[1].id));
+
+        await composer.getByRole("button", { name: `移除${label}结果 1`, exact: true }).click();
+        await expect(composer.getByLabel(`已上传${label} ${label}结果 1`)).toHaveCount(0);
+        await expect(composer.getByLabel(`已上传${label} ${label}结果 2`)).toBeVisible();
+        await expect(input).toHaveValue(`生成男孩子，@${label}1`);
+        await expect(chips).toHaveCount(1);
+        await expect(chips).toHaveAttribute("data-asset-id", String(fixture.assets[1].id));
+        await expectNoHorizontalOverflow(page);
+    }
+
+    await page.evaluate(() => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: "dark" }, version: 0 })));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await expectNoHorizontalOverflow(page);
+});
+
+test("prompt library searches, filters and scrolls through bounded server pages", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    const promptRequests: URL[] = [];
+    await page.route(/\/api\/prompts(?:\?.*)?$/, async (route) => {
+        const url = new URL(route.request().url());
+        promptRequests.push(url);
+        const currentPage = Math.max(1, Number(url.searchParams.get("page")) || 1);
+        const keyword = url.searchParams.get("keyword") || "";
+        const category = url.searchParams.get("category") || "";
+        const start = (currentPage - 1) * 20;
+        const items = Array.from({ length: 20 }, (_, index) => ({
+            id: `prompt-${keyword || "all"}-${category || "all"}-${start + index + 1}`,
+            title: `提示词 ${start + index + 1}`,
+            coverUrl: imageDataUrl(IMAGE_SIZES[0], start + index),
+            prompt: `${keyword || "通用"}${category || "创作"}提示词 ${start + index + 1}`,
+            tags: [],
+            category: category || "海报",
+            preview: "",
+            createdAt: "2026-08-11T00:00:00.000Z",
+            updatedAt: "2026-08-11T00:00:00.000Z",
+        }));
+        await route.fulfill({ json: { items, tags: [], categories: currentPage === 1 ? ["海报", "摄影"] : [], total: 40 } });
+    });
+
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "打开资产面板" }).click();
+    await page.getByRole("tab", { name: /提示词库/ }).click();
+    const scroll = page.getByTestId("creative-prompt-scroll");
+    await expect(scroll).toBeVisible({ timeout: 45_000 });
+    await expect(scroll.getByTestId("creative-prompt-thumbnails").locator("article")).toHaveCount(20);
+    await scroll.getByRole("button", { name: "加载更多" }).click();
+    await expect(scroll.getByTestId("creative-prompt-thumbnails").locator("article")).toHaveCount(40);
+    await expect
+        .poll(() =>
+            scroll.evaluate((element) => ({
+                clientHeight: element.clientHeight,
+                scrollHeight: element.scrollHeight,
+            })),
+        )
+        .toMatchObject({ clientHeight: expect.any(Number), scrollHeight: expect.any(Number) });
+    const beforeScroll = await scroll.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+    expect(beforeScroll.scrollHeight).toBeGreaterThan(beforeScroll.clientHeight);
+    await scroll.hover();
+    await page.mouse.wheel(0, beforeScroll.scrollHeight);
+    await expect(scroll.getByRole("button", { name: "插入：提示词 40" })).toBeVisible();
+    expect(promptRequests.some((url) => url.searchParams.get("page") === "2" && url.searchParams.get("includeFacets") === "0")).toBe(true);
+
+    const search = scroll.getByRole("textbox", { name: "搜索提示词" });
+    await search.fill("产品");
+    await search.press("Enter");
+    await expect.poll(() => promptRequests.some((url) => url.searchParams.get("keyword") === "产品" && url.searchParams.get("page") === "1")).toBe(true);
+    await scroll.getByRole("button", { name: "提示词分类" }).click();
+    await page.getByText("海报", { exact: true }).last().click();
+    await expect.poll(() => promptRequests.some((url) => url.searchParams.get("keyword") === "产品" && url.searchParams.get("category") === "海报")).toBe(true);
+    await expectNoHorizontalOverflow(page);
+});
+
 test("result layouts remain contained at 390px and 430px", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name === "chromium", "移动端项目覆盖窄屏回归");
     await preparePage(page, testInfo);
@@ -253,8 +531,11 @@ test("result layouts remain contained at 390px and 430px", async ({ page }, test
         const primary = result.getByTestId("creative-primary-result");
         await expect(primary).toBeVisible({ timeout: 45_000 });
         const bounds = await primary.evaluate((element) => element.getBoundingClientRect().toJSON());
+        const switcherBounds = await result.getByTestId("creative-result-switcher").evaluate((element) => element.getBoundingClientRect().toJSON());
         expect(bounds.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+        expect(bounds.height).toBeLessThanOrEqual(page.viewportSize()!.height / 3 + 2);
         expect(bounds.width / bounds.height).toBeCloseTo(type === "image" ? 1 : 9 / 16, 1);
+        expect(switcherBounds.top).toBeGreaterThanOrEqual(bounds.bottom);
         await expectNoHorizontalOverflow(page);
     }
 });
@@ -266,17 +547,19 @@ async function preparePage(page: Page, testInfo: TestInfo) {
     await installBrowserSpies(page);
 }
 
-async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: MediaSize[]; failed?: boolean; partialFailure?: boolean; omitDimensions?: boolean; reportedRatio?: string }) {
+async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: MediaSize[]; failed?: boolean; partialFailure?: boolean; omitDimensions?: boolean; reportedRatio?: string; withholdPrompts?: boolean }) {
     const id = `e2e-result-${randomUUID()}`;
     const runId = `e2e-run-${randomUUID()}`;
     const timestamp = Date.now();
     const prompt = options.type === "image" ? `生成 ${Math.max(1, options.sizes.length)} 张商业主视觉` : `生成 ${Math.max(1, options.sizes.length)} 条产品短视频`;
+    const optimizedPromptFor = (index: number) => (options.type === "image" ? "夏日海边商业主视觉，人物自然微笑，通透明亮，保留真实肤质" : `产品短视频镜头 ${index + 1}，运镜平稳，动作自然，光线连贯`);
     const assets = [] as Array<Record<string, unknown>>;
 
     for (let index = 0; index < options.sizes.length; index += 1) {
         const size = options.sizes[index];
         const serverUrl = options.type === "image" ? imageDataUrl(size, index) : await createVideoDataUrl(page, size, index);
         const coverUrl = imageDataUrl(size, index + 10);
+        const agentTaskId = options.partialFailure ? `${options.type}-task` : options.type === "image" ? "image-task" : `video-task-${index + 1}`;
         assets.push({
             id: `${options.type}-asset-${randomUUID()}`,
             userId: "e2e-user",
@@ -293,7 +576,7 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
             mimeType: options.type === "image" ? "image/svg+xml" : "video/webm",
             ...(options.omitDimensions ? {} : { width: size.width, height: size.height }),
             durationMs: options.type === "video" ? 15_000 : undefined,
-            metadata: { coverUrl, ratio: options.reportedRatio || `${size.width}:${size.height}` },
+            metadata: { coverUrl, ratio: options.reportedRatio || `${size.width}:${size.height}`, agentTaskId },
             createdAt: timestamp + index + 1,
             updatedAt: timestamp + index + 1,
         });
@@ -315,7 +598,18 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
     const conversation = { id, userId: "e2e-user", surface: "chat", source: "agent", title: prompt, status: "active", contextSummary: "", contextSummaryThroughSequence: 0, createdAt: timestamp, updatedAt: timestamp, lastMessageAt: timestamp };
     const primarySize = options.sizes[0] || (options.type === "image" ? IMAGE_SIZES[0] : VIDEO_SIZES[0]);
     const tasks = options.failed
-        ? [{ id: `${options.type}-task`, title: options.type === "image" ? "图片生成" : "视频生成", type: options.type, model: `${options.type}-gen`, count: 1, status: "failed", error: "当前模型暂不可用，请切换模型或稍后重试。" }]
+        ? [
+              {
+                  id: `${options.type}-task`,
+                  title: options.type === "image" ? "图片生成" : "视频生成",
+                  type: options.type,
+                  model: `${options.type}-gen`,
+                  optimizedPrompt: optimizedPromptFor(0),
+                  count: 1,
+                  status: "failed",
+                  error: "当前模型暂不可用，请切换模型或稍后重试。",
+              },
+          ]
         : options.partialFailure
           ? [
                 {
@@ -323,6 +617,7 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
                     title: options.type === "image" ? "图片生成" : "视频生成",
                     type: options.type,
                     model: `${options.type}-gen`,
+                    optimizedPrompt: optimizedPromptFor(0),
                     count: options.sizes.length + 1,
                     status: "failed",
                     error: "部分结果生成失败",
@@ -333,8 +628,31 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
                 },
             ]
           : options.type === "image"
-            ? [{ id: "image-task", title: "生成图片", type: "image", model: "image-gen", ratio: options.reportedRatio || primarySize.label, quality: "high", count: Math.max(1, options.sizes.length), status: "completed" }]
-            : options.sizes.map((size, index) => ({ id: `video-task-${index + 1}`, title: "生成视频", type: "video", model: "video-gen", ratio: options.reportedRatio || size.label, quality: "high", seconds: 15, count: 1, status: "completed" }));
+            ? [
+                  {
+                      id: "image-task",
+                      title: "生成图片",
+                      type: "image",
+                      model: "image-gen",
+                      optimizedPrompt: optimizedPromptFor(0),
+                      ratio: options.reportedRatio || primarySize.label,
+                      quality: "high",
+                      count: Math.max(1, options.sizes.length),
+                      status: "completed",
+                  },
+              ]
+            : options.sizes.map((size, index) => ({
+                  id: `video-task-${index + 1}`,
+                  title: "生成视频",
+                  type: "video",
+                  model: "video-gen",
+                  optimizedPrompt: optimizedPromptFor(index),
+                  ratio: options.reportedRatio || size.label,
+                  quality: "high",
+                  seconds: 15,
+                  count: 1,
+                  status: "completed",
+              }));
     const run = {
         id: runId,
         conversationId: id,
@@ -349,7 +667,7 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
         assetIds: assets.map((asset) => asset.id),
         tasks,
         createdAt: timestamp,
-        updatedAt: timestamp,
+        updatedAt: timestamp + 8_000,
     };
     const repeatedRun = {
         ...run,
@@ -361,11 +679,17 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
         tasks: [],
     };
     const repeatedRequests: Array<Record<string, unknown>> = [];
+    let promptsVisible = !options.withholdPrompts;
+    let runRequestCount = 0;
 
     await page.route(new RegExp(`/api/creative/conversations/${id}$`), (route) => route.fulfill({ json: { code: 0, data: { conversation }, msg: "OK" } }));
     await page.route(new RegExp(`/api/creative/conversations/${id}/messages(?:\\?.*)?$`), (route) => route.fulfill({ json: { code: 0, data: { messages: [userMessage, assistantMessage] }, msg: "OK" } }));
     await page.route(new RegExp(`/api/creative/conversations/${id}/assets$`), (route) => route.fulfill({ json: { code: 0, data: { assets }, msg: "OK" } }));
-    await page.route(new RegExp(`/api/agent/runs/${runId}$`), (route) => route.fulfill({ json: { code: 0, data: { run }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/agent/runs/${runId}$`), (route) => {
+        runRequestCount += 1;
+        const responseRun = promptsVisible ? run : { ...run, tasks: run.tasks.map((task) => Object.fromEntries(Object.entries(task).filter(([key]) => key !== "optimizedPrompt"))) };
+        return route.fulfill({ json: { code: 0, data: { run: responseRun }, msg: "OK" } });
+    });
     await page.route(new RegExp(`/api/agent/runs/${repeatedRun.id}/events(?:\\?.*)?$`), (route) =>
         route.fulfill({
             status: 200,
@@ -378,7 +702,68 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
         repeatedRequests.push((await route.request().postDataJSON()) as Record<string, unknown>);
         return route.fulfill({ json: { code: 0, data: { run: repeatedRun, created: true }, msg: "OK" } });
     });
-    return { id, prompt, assets, repeatedRequests: () => repeatedRequests };
+    return {
+        id,
+        prompt,
+        assets,
+        optimizedPromptFor,
+        repeatedRequests: () => repeatedRequests,
+        revealPrompts: () => {
+            promptsVisible = true;
+        },
+        runRequests: () => runRequestCount,
+    };
+}
+
+async function mockPendingCreativeRound(page: Page, type: MediaType) {
+    const id = `e2e-pending-${randomUUID()}`;
+    const runId = `e2e-pending-run-${randomUUID()}`;
+    const timestamp = Date.now();
+    const startedAt = timestamp - 2 * 60 * 1000;
+    const prompt = type === "image" ? "生成一张有温度的生活照片" : "生成一段有温度的生活视频";
+    const userMessage = { id: `user-${runId}`, conversationId: id, runId, sequence: 1, role: "user", status: "completed", content: prompt, metadata: {}, createdAt: startedAt, updatedAt: startedAt };
+    const assistantMessage = {
+        id: `assistant-${runId}`,
+        conversationId: id,
+        runId,
+        sequence: 2,
+        role: "assistant",
+        status: "running",
+        content: `正在处理「${type === "image" ? "图片" : "视频"}生成」`,
+        metadata: {},
+        createdAt: startedAt,
+        updatedAt: timestamp,
+    };
+    const conversation = { id, userId: "e2e-user", surface: "chat", source: "agent", title: prompt, status: "active", contextSummary: "", contextSummaryThroughSequence: 0, createdAt: startedAt, updatedAt: timestamp, lastMessageAt: timestamp };
+    const run = {
+        id: runId,
+        conversationId: id,
+        inputMessageId: userMessage.id,
+        assistantMessageId: assistantMessage.id,
+        status: "running",
+        prompt,
+        referencedAssetIds: [],
+        requestedModelIds: [`${type}-gen`],
+        generationPreferences: type === "image" ? { mode: "image", image: { size: "1:1", quality: "high" } } : { mode: "video", video: { size: "16:9", quality: "high", seconds: 15 } },
+        assetIds: [],
+        tasks: [{ id: `${type}-task`, title: `${type === "image" ? "图片" : "视频"}生成`, type, model: `${type}-gen`, status: "running" }],
+        createdAt: startedAt,
+        updatedAt: timestamp,
+    };
+    let releaseEvents = () => undefined;
+    const eventsReleased = new Promise<void>((resolve) => {
+        releaseEvents = resolve;
+    });
+
+    await page.route(new RegExp(`/api/creative/conversations/${id}$`), (route) => route.fulfill({ json: { code: 0, data: { conversation }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/creative/conversations/${id}/messages(?:\\?.*)?$`), (route) => route.fulfill({ json: { code: 0, data: { messages: [userMessage, assistantMessage] }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/creative/conversations/${id}/assets$`), (route) => route.fulfill({ json: { code: 0, data: { assets: [] }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/agent/runs/${runId}$`), (route) => route.fulfill({ json: { code: 0, data: { run }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/agent/runs/${runId}/events(?:\\?.*)?$`), async (route) => {
+        await eventsReleased;
+        await route.abort();
+    });
+    return { id, releaseEvents };
 }
 
 function imageDataUrl(size: MediaSize, index: number) {
@@ -472,10 +857,13 @@ async function installBrowserSpies(page: Page) {
             (window as unknown as { __fullscreenRequests?: number }).__fullscreenRequests = Number((window as unknown as { __fullscreenRequests?: number }).__fullscreenRequests || 0) + 1;
         };
         document.exitFullscreen = async () => undefined;
-        window.open = ((url?: string | URL) => {
-            (window as unknown as { __lastOpenedUrl?: string }).__lastOpenedUrl = String(url || "");
-            return null;
-        }) as typeof window.open;
+        document.execCommand = ((command: string) => {
+            if (command.toLowerCase() !== "copy") return true;
+            const selection = document.getSelection()?.toString() || "";
+            const activeValue = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : "";
+            (window as unknown as { __lastCopiedText?: string }).__lastCopiedText = selection || activeValue;
+            return true;
+        }) as typeof document.execCommand;
     });
 }
 
@@ -487,8 +875,10 @@ async function expectTightMediaBounds(primary: ReturnType<Page["getByTestId"]>, 
             .first()
             .evaluate((element) => element.getBoundingClientRect().toJSON()),
     ]);
-    expect(Math.abs(card.width - expected.width)).toBeLessThanOrEqual(2);
-    expect(Math.abs(card.height - expected.height)).toBeLessThanOrEqual(2);
+    const viewportHeight = await primary.evaluate(() => window.innerHeight);
+    const scale = Math.min(1, viewportHeight / 3 / expected.height);
+    expect(Math.abs(card.width - expected.width * scale)).toBeLessThanOrEqual(2);
+    expect(Math.abs(card.height - expected.height * scale)).toBeLessThanOrEqual(2);
     expect(card.width - media.width).toBeLessThanOrEqual(3);
     expect(card.height - media.height).toBeLessThanOrEqual(3);
 }
@@ -499,10 +889,9 @@ async function expectShrinkToFitShell(result: ReturnType<Page["getByTestId"]>, m
         result.getByTestId("creative-primary-result").evaluate((element) => element.getBoundingClientRect().toJSON()),
         result.getByLabel("本轮创作操作", { exact: true }).evaluate((element) => element.getBoundingClientRect().toJSON()),
     ]);
-    const expectedShellWidth = Math.max(mediaWidth, 352);
-    expect(Math.abs(shell.width - expectedShellWidth)).toBeLessThanOrEqual(2);
-    expect(Math.abs(actions.width - expectedShellWidth)).toBeLessThanOrEqual(2);
-    expect(Math.abs(primary.width - mediaWidth)).toBeLessThanOrEqual(2);
+    expect(Math.abs(shell.width - primary.width)).toBeLessThanOrEqual(2);
+    expect(actions.width).toBeLessThanOrEqual(primary.width + 2);
+    expect(primary.width).toBeLessThanOrEqual(mediaWidth + 2);
 }
 
 async function captureResult(locator: ReturnType<Page["getByTestId"]>, testInfo: TestInfo, name: string) {

@@ -404,8 +404,8 @@ function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: Syst
         if (!key || !config) return;
         write({ ...config, ...patch });
     };
-    const selectProtocol = (protocol: SystemChannelProtocol | undefined) => config && write(applyModelProtocol(config, protocol || advanced.protocol));
-    const selectCapability = (capability: LogicalModelCapability) => config && write(applyModelProtocol({ ...config, capability }, selectedProtocol));
+    const selectProtocol = (protocol: SystemChannelProtocol | undefined) => config && write(applyModelProtocol(config, protocol || advanced.protocol, selectedModel));
+    const selectCapability = (capability: LogicalModelCapability) => config && write(applyModelProtocol({ ...config, capability }, selectedProtocol, selectedModel));
     const clearRoutes = () => {
         if (!key || !config) return;
         const next = { ...(advanced.modelConfigs || {}) };

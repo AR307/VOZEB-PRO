@@ -15,6 +15,31 @@ describe("BillingOrderRepository.listOrders", () => {
     });
 });
 
+describe("BillingOrderRepository.getOrderByProviderIdentifiers", () => {
+    it("looks up an order by exact provider identifiers without a paginated search", async () => {
+        const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
+        const repository = new BillingOrderRepository({ query } as unknown as QueryExecutor);
+
+        await repository.getOrderByProviderIdentifiers("stripe", ["pi_one", "ch_one", "pi_one", ""]);
+
+        const [sql, params] = query.mock.calls[0] || [];
+        expect(String(sql)).toContain("provider = $1");
+        expect(String(sql)).toContain("provider_order_id = ANY($2::text[])");
+        expect(String(sql)).toContain("provider_payment_id = ANY($2::text[])");
+        expect(String(sql)).toContain("ORDER BY created_at DESC, id DESC");
+        expect(String(sql)).toContain("LIMIT 1");
+        expect(params).toEqual(["stripe", ["pi_one", "ch_one"]]);
+    });
+
+    it("does not query when no provider identifier is available", async () => {
+        const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
+        const repository = new BillingOrderRepository({ query } as unknown as QueryExecutor);
+
+        await expect(repository.getOrderByProviderIdentifiers("stripe", ["", " "])).resolves.toBeNull();
+        expect(query).not.toHaveBeenCalled();
+    });
+});
+
 describe("BillingOrderRepository.getSummary", () => {
     it("returns the financial summary with one bounded aggregate query", async () => {
         const query = vi.fn(async (..._args: unknown[]) => ({
@@ -109,7 +134,8 @@ describe("BillingOrderRepository.getSummary", () => {
             },
         });
         expect(query).toHaveBeenCalledTimes(1);
-        const [sql, params] = query.mock.calls[0] || [];
+        const [sql, rawParams] = query.mock.calls[0] || [];
+        const params = rawParams as unknown[] | undefined;
         expect(String(sql)).toContain("WITH scoped_orders AS MATERIALIZED");
         expect(String(sql)).toContain("promotion_discount_cents > 0 AND status IN ('paid', 'refunded')");
         expect(String(sql)).toContain("coupon_discount_cents > 0 AND status IN ('paid', 'refunded')");
@@ -134,6 +160,23 @@ describe("BillingOrderRepository.expirePendingOrders", () => {
         expect(String(sql)).toContain("released_coupons AS");
         expect(String(sql)).toContain("coupon.locked_order_id = orders.id");
         expect(String(sql)).toContain("CASE WHEN coupon.expires_at <= $1 THEN 'expired' ELSE 'available' END");
+        expect(String(sql)).toContain("pg_notify('vozeb_pro_billing_order_events', closed_orders.id)");
         expect(params).toEqual(["2026-07-26T00:00:00.000Z", 100, null, "订单超时自动关闭", "expiration-job"]);
+    });
+});
+
+describe("BillingOrderRepository.updateOrder", () => {
+    it("notifies subscribers when an order status changes", async () => {
+        const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
+        const repository = new BillingOrderRepository({ query } as unknown as QueryExecutor);
+
+        await repository.updateOrder("order-one", { status: "paid" });
+
+        const [sql, rawParams] = query.mock.calls[0] || [];
+        const params = rawParams as unknown[] | undefined;
+        expect(String(sql)).toContain("WITH updated_order AS");
+        expect(String(sql)).toContain("CASE WHEN $7::text IS NOT NULL THEN pg_notify('vozeb_pro_billing_order_events', updated_order.id)");
+        expect(params?.[0]).toBe("order-one");
+        expect(params?.[6]).toBe("paid");
     });
 });

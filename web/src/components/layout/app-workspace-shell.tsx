@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { isFullscreenWorkspacePath } from "@/components/layout/app-workspace-path";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
@@ -24,7 +25,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const [sidebarExpanded, setSidebarExpanded] = useState(true);
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
     const tool = navigationToolForPathname(pathname);
-    const fullscreen = /^\/canvas\/[^/]+/.test(pathname);
+    const fullscreen = isFullscreenWorkspacePath(pathname);
     const rootSlug = pathname.split("/").filter(Boolean)[0] || "";
     const pageTitle = tool?.label || PAGE_TITLES[rootSlug] || "工作空间";
 

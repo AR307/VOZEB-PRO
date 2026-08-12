@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
     refundVideoTask: vi.fn(),
     refundAudioTask: vi.fn(),
     refundTextTask: vi.fn(),
+    getAuthSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-scheduler", () => ({
@@ -63,6 +64,7 @@ vi.mock("@/lib/server/generation-task-cancellation-service", () => ({
     isCancellationExecutionPhase: vi.fn((value: string) => value === "cancel_requested" || value === "cancel_polling"),
     requestUpstreamGenerationCancellation: mocks.requestCancellation,
 }));
+vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
 
 import { runGenerationTaskRecoveryBatch } from "./generation-task-recovery-service";
 
@@ -71,6 +73,7 @@ describe("generation task recovery service", () => {
         vi.clearAllMocks();
         mocks.release.mockResolvedValue({});
         mocks.renew.mockResolvedValue(1);
+        mocks.getAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });
     });
 
     it("returns without starting a heartbeat when no task is due", async () => {
@@ -136,6 +139,26 @@ describe("generation task recovery service", () => {
         expect(mocks.release.mock.invocationCallOrder.find((order) => order < mocks.executeAgentRun.mock.invocationCallOrder[0]!)).toBeTruthy();
         expect(mocks.executeAgentRun).toHaveBeenCalledTimes(1);
         expect(result).toMatchObject({ claimed: 1, completed: 1 });
+    });
+
+    it("recovers every Agent child task in configured batches", async () => {
+        const childTasks = Array.from({ length: 51 }, (_, index) => ({ id: `child-${index}`, status: "pending", attempt: 1 }));
+        const run = {
+            id: "agent-one",
+            userId: "user-one",
+            status: "running",
+            tasks: [{ id: "agent-task", type: "image", status: "running", childTasks }],
+            createdAt: 1_000,
+        };
+        mocks.claim.mockResolvedValueOnce([lease()]).mockResolvedValue([]);
+        mocks.getAgentRun.mockResolvedValueOnce(run).mockResolvedValueOnce({ ...run, status: "completed" });
+
+        await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.claim).toHaveBeenNthCalledWith(2, expect.objectContaining({ workerId: "worker-one:children", taskIds: childTasks.slice(0, 20).map((item) => item.id), limit: 20 }));
+        expect(mocks.claim).toHaveBeenNthCalledWith(3, expect.objectContaining({ workerId: "worker-one:children", taskIds: childTasks.slice(20, 40).map((item) => item.id), limit: 20 }));
+        expect(mocks.claim).toHaveBeenNthCalledWith(4, expect.objectContaining({ workerId: "worker-one:children", taskIds: childTasks.slice(40).map((item) => item.id), limit: 11 }));
+        expect(mocks.executeAgentRun).toHaveBeenCalledWith(run, "http://internal", "worker-context:user-one");
     });
 
     it("passes the task owner to a worker-driven video poll", async () => {

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
-import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
+import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import { adjustPermanentPointsInAuthDb, adjustPermanentPointsInPostgresTransaction, walletClock } from "@/lib/server/points-wallet-service";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
 import { hashPassword, verifyPassword } from "./password";
@@ -347,7 +347,9 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
     });
 }
 
-export async function deleteUserByAdmin(actorId: string, userId: string) {
+export type BeforeAdminUserDelete = (client: QueryExecutor, userId: string) => Promise<void>;
+
+export async function deleteUserByAdmin(actorId: string, userId: string, options: { beforeDelete?: BeforeAdminUserDelete } = {}) {
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
@@ -366,6 +368,7 @@ export async function deleteUserByAdmin(actorId: string, userId: string) {
                 const activeFullAdminIds = await users.lockActiveFullAdminIds(ALL_ADMIN_PERMISSIONS);
                 if (!activeFullAdminIds.some((id) => id !== user.id)) throw new AuthInputError("至少需要保留一个可用的全权限管理员");
             }
+            await options.beforeDelete?.(client, user.id);
             await users.delete(user.id);
             return { ok: true };
         });

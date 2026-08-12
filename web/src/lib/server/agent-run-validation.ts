@@ -35,8 +35,8 @@ export type AgentPlan = {
 
 export function validateAgentPlan(value: unknown): asserts value is AgentPlan {
     const plan = value as AgentPlan;
-    if (!plan?.objective?.trim() || !Array.isArray(plan.deliverables) || plan.deliverables.length > 50) throw new Error("模型返回的创作计划无效");
-    if (plan.skillIds !== undefined && (!Array.isArray(plan.skillIds) || plan.skillIds.length > 6 || plan.skillIds.some((id) => typeof id !== "string" || !id.trim()))) throw new Error("模型返回的技能选择无效");
+    if (!plan?.objective?.trim() || !Array.isArray(plan.deliverables)) throw new Error("模型返回的创作计划无效");
+    if (plan.skillIds !== undefined && (!Array.isArray(plan.skillIds) || plan.skillIds.some((id) => typeof id !== "string" || !id.trim()))) throw new Error("模型返回的技能选择无效");
     if (plan.intent === "conversation") {
         if (!plan.reply?.trim() || plan.deliverables.length || plan.projectHandoff) throw new Error("模型返回的对话结果无效");
         return;
@@ -56,6 +56,7 @@ export function validateAgentPlan(value: unknown): asserts value is AgentPlan {
                 !item?.title?.trim() ||
                 !item?.prompt?.trim() ||
                 !["text", "image", "video", "audio"].includes(item.type) ||
+                (item.count !== undefined && (!Number.isSafeInteger(Number(item.count)) || Number(item.count) <= 0)) ||
                 (item.seconds !== undefined && (!Number.isFinite(Number(item.seconds)) || Number(item.seconds) <= 0)) ||
                 (item.generateAudio !== undefined && typeof item.generateAudio !== "boolean") ||
                 (item.watermark !== undefined && typeof item.watermark !== "boolean") ||
@@ -64,7 +65,7 @@ export function validateAgentPlan(value: unknown): asserts value is AgentPlan {
         )
     )
         throw new Error("模型返回的任务参数无效");
-    if (plan.decisions && (!Array.isArray(plan.decisions) || plan.decisions.length > 8 || plan.decisions.some((item) => !item?.label?.trim() || !item?.value?.trim() || !item?.reason?.trim()))) throw new Error("模型返回的决策摘要无效");
+    if (plan.decisions && (!Array.isArray(plan.decisions) || plan.decisions.some((item) => !item?.label?.trim() || !item?.value?.trim() || !item?.reason?.trim()))) throw new Error("模型返回的决策摘要无效");
     const ids = new Set(plan.deliverables.map((item, index) => item.id?.trim() || `task-${index}`));
     if (ids.size !== plan.deliverables.length || plan.deliverables.some((item) => item.dependencies?.some((dependency) => typeof dependency !== "string" || !ids.has(dependency.trim())))) throw new Error("模型返回的任务依赖无效");
     assertAcyclicDependencies(plan);
@@ -83,13 +84,13 @@ export function validateAgentTaskResult(type: AgentPlan["deliverables"][number][
 }
 
 export function agentTaskCopies(type: AgentPlan["deliverables"][number]["type"], count: number) {
-    return type === "image" || type === "video" ? Math.max(1, Math.min(10, Math.floor(Number(count) || 1))) : 1;
+    return type === "image" || type === "video" ? Math.max(1, Number.isSafeInteger(Number(count)) ? Math.floor(Number(count)) : 1) : 1;
 }
 
 export function resolveAgentTaskCount(type: AgentPlan["deliverables"][number]["type"], planned: unknown, skillDefault: unknown, canvasDefault: unknown) {
     if (type !== "image" && type !== "video") return 1;
     const value = Number(planned) || Number(skillDefault) || Number(canvasDefault) || 1;
-    return Math.max(1, Math.min(10, Math.floor(value)));
+    return Math.max(1, Number.isSafeInteger(value) ? Math.floor(value) : 1);
 }
 
 export function resolveAgentVideoSeconds(type: AgentPlan["deliverables"][number]["type"], planned: unknown, skillDefault: unknown, backendDefault: unknown) {

@@ -17,13 +17,11 @@ type CreateDraftAttachmentsStore = {
     clear: () => void;
 };
 
-const MAX_DRAFT_ATTACHMENTS = 20;
-
 export const useCreateDraftAttachmentsStore = create<CreateDraftAttachmentsStore>()((set) => ({
     attachments: [],
     add: (files, conversationId) => {
         const now = Date.now();
-        const additions = files.slice(0, 6).map((file, index) => {
+        const additions = files.map((file, index) => {
             const previewUrl = URL.createObjectURL(file);
             return {
                 file,
@@ -45,11 +43,7 @@ export const useCreateDraftAttachmentsStore = create<CreateDraftAttachmentsStore
             } satisfies DraftAttachment;
         });
         set((state) => {
-            const combined = [...state.attachments, ...additions];
-            const attachments = combined.slice(-MAX_DRAFT_ATTACHMENTS);
-            const retainedIds = new Set(attachments.map((item) => item.asset.id));
-            releaseDraftAttachments(combined.filter((item) => !retainedIds.has(item.asset.id)));
-            return { attachments };
+            return { attachments: [...state.attachments, ...additions] };
         });
         return additions.map((item) => item.asset);
     },

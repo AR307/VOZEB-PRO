@@ -1,14 +1,15 @@
 "use client";
 
-import { App, Button, Drawer } from "antd";
+import { App, Button, Drawer, Grid } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import { ChevronsDown, Clapperboard, History, Play, Plus, ScanFace, ShoppingBag, Sparkles } from "lucide-react";
+import { ChevronsDown, Clapperboard, FolderOpen, History, Play, Plus, ScanFace, ShoppingBag, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CREATIVE_UPLOAD_ACCEPT, CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { CreateOverviewAsset } from "@/lib/create-workbench-overview";
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences, CreativeMessage } from "@/lib/creative-runtime-contract";
+import { cn } from "@/lib/utils";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
 import { listAgentSkills, type AgentSkillSummary } from "@/services/api/agent-skills";
@@ -19,12 +20,14 @@ import type { PublicGalleryItem } from "@/services/api/work-governance";
 import { createAgentPromptFromHash } from "@/lib/create-agent-prompt";
 
 import { CreativeComposer } from "./components/creative-composer";
+import { CreativeAssetsPanel } from "./components/creative-assets-panel";
 import { applyAgentGenerationCapability, shouldShowVideoFrameControls } from "./components/creative-composer-video-mode";
 import { CreativeConversationList } from "./components/creative-conversation-list";
 import { CreateInspirationGallery } from "./components/create-inspiration-gallery";
 import { CreativeMessages } from "./components/creative-messages";
 import { creativeRunReplayPreferences } from "./components/creative-run-replay";
 import { CreateWorkbenchOverview } from "./components/create-workbench-overview";
+import { publicCreativeAssetPrompt, remapCreativeAssetReferences } from "./components/creative-asset-mention";
 import { createConversationHref, createConversationIdFromSearch } from "./create-conversation-navigation";
 import { useCreateAgent } from "./use-create-agent";
 
@@ -38,6 +41,7 @@ const SKILL_VISUALS = [
 export default function CreatePage() {
     const { message } = App.useApp();
     const router = useRouter();
+    const screens = Grid.useBreakpoint();
     const inputRef = useRef<TextAreaRef>(null);
     const attachmentInputRef = useRef<HTMLInputElement>(null);
     const frameInputRef = useRef<HTMLInputElement>(null);
@@ -60,6 +64,7 @@ export default function CreatePage() {
     const [creationMode, setCreationMode] = useState<"agent" | CreativeGenerationMode>("agent");
     const [generationPreferences, setGenerationPreferences] = useState<CreativeGenerationPreferences>({});
     const [historyOpen, setHistoryOpen] = useState(false);
+    const [assetsOpen, setAssetsOpen] = useState(false);
     const [awayFromLatest, setAwayFromLatest] = useState(false);
     const [composerExpanded, setComposerExpanded] = useState(true);
     const publicSettings = usePublicSessionStore((state) => state.payload?.settings);
@@ -165,7 +170,14 @@ export default function CreatePage() {
         promptRevisionRef.current += 1;
         try {
             const preferences = { ...generationPreferences, ...(creationMode !== "agent" ? { mode: creationMode } : {}) };
-            if (await agent.submit(prompt, { skillIds: selectedSkillId ? [selectedSkillId] : [], ...(!smartPlanning && selectedModelIds.length ? { modelIds: selectedModelIds } : {}), ...(Object.keys(preferences).length ? { preferences } : {}) })) {
+            if (
+                await agent.submit(prompt, {
+                    publicPrompt: publicCreativeAssetPrompt(prompt),
+                    skillIds: selectedSkillId ? [selectedSkillId] : [],
+                    ...(!smartPlanning && selectedModelIds.length ? { modelIds: selectedModelIds } : {}),
+                    ...(Object.keys(preferences).length ? { preferences } : {}),
+                })
+            ) {
                 updatePrompt("");
                 setSelectedSkillId(undefined);
                 setGenerationPreferences((current) => (current.video ? { ...current, video: { ...current.video, firstFrameAssetId: undefined, lastFrameAssetId: undefined } } : current));
@@ -272,7 +284,7 @@ export default function CreatePage() {
 
     const toggleModel = (model: (typeof modelOptions)[number]) => {
         setSelectedModelIds((current) => {
-            const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id].slice(-6);
+            const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id];
             setSmartPlanning(next.length === 0);
             return next;
         });
@@ -350,7 +362,11 @@ export default function CreatePage() {
     };
 
     const removeAttachment = (id: string) => {
+        const currentAssetIds = agent.selectedAssetIds;
+        const nextAssetIds = currentAssetIds.filter((assetId) => assetId !== id);
+        const nextPrompt = remapCreativeAssetReferences(promptValueRef.current, [...agent.assets, ...agent.selectedAssets], currentAssetIds, nextAssetIds);
         agent.removeAttachment(id);
+        if (nextPrompt !== promptValueRef.current) updatePrompt(nextPrompt);
         setGenerationPreferences((current) =>
             current.video
                 ? {
@@ -363,6 +379,14 @@ export default function CreatePage() {
                   }
                 : current,
         );
+    };
+
+    const toggleReferencedAsset = (id: string) => {
+        const currentAssetIds = agent.selectedAssetIds;
+        const nextAssetIds = currentAssetIds.includes(id) ? currentAssetIds.filter((assetId) => assetId !== id) : [...currentAssetIds, id];
+        const nextPrompt = remapCreativeAssetReferences(promptValueRef.current, [...agent.assets, ...agent.selectedAssets], currentAssetIds, nextAssetIds);
+        agent.toggleAsset(id);
+        if (nextPrompt !== promptValueRef.current) updatePrompt(nextPrompt);
     };
 
     const setAwayFromLatestState = (away: boolean) => {
@@ -402,6 +426,7 @@ export default function CreatePage() {
         });
     };
 
+    const composerCompact = showConversation && awayFromLatest && !composerExpanded;
     const composer = (
         <CreativeComposer
             inputRef={inputRef}
@@ -423,7 +448,7 @@ export default function CreatePage() {
             creationMode={creationMode}
             generationPreferences={generationPreferences}
             uploading={agent.uploading}
-            compact={showConversation && awayFromLatest && !composerExpanded}
+            compact={composerCompact}
             onExpand={() => {
                 setComposerExpanded(true);
                 window.requestAnimationFrame(() => inputRef.current?.focus());
@@ -453,94 +478,204 @@ export default function CreatePage() {
             onRemoveVideoFrame={removeVideoFrame}
             onAttachment={() => attachmentInputRef.current?.click()}
             onPasteImages={(files) => void uploadAttachments(files)}
+            referenceAssets={agent.assets}
+            selectedAssetIds={agent.selectedAssetIds}
+            onReferenceAsset={agent.selectAsset}
         />
+    );
+
+    const historyPanel = (
+        <div className="flex h-full min-h-0 flex-col bg-white dark:bg-[#181b20]">
+            <div className="hidden h-14 shrink-0 items-center gap-2 border-b border-[#eceef1] px-4 lg:flex dark:border-[#2b3036]">
+                <History className="size-4 text-[#5b61cf] dark:text-[#b4b7ff]" />
+                <h2 className="min-w-0 flex-1 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">创作历史</h2>
+                <Button type="text" shape="circle" icon={<X className="size-4" />} onClick={() => setHistoryOpen(false)} aria-label="关闭创作历史" title="关闭创作历史" />
+            </div>
+            <div className="min-h-0 flex-1">
+                <CreativeConversationList
+                    items={agent.conversations}
+                    activeId={agent.conversationId}
+                    loading={agent.historyLoading}
+                    hasMore={agent.historyHasMore}
+                    loadingMore={agent.historyLoadingMore}
+                    onLoadMore={() => void agent.loadMoreConversations()}
+                    onNew={() => {
+                        newConversation();
+                        if (screens.lg !== true) setHistoryOpen(false);
+                    }}
+                    onOpen={(id) => {
+                        openConversation(id);
+                        if (screens.lg !== true) setHistoryOpen(false);
+                    }}
+                    onRename={async (id, title) => {
+                        try {
+                            await agent.renameConversation(id, title);
+                            message.success("标题已更新");
+                        } catch (error) {
+                            message.error(error instanceof Error ? error.message : "修改标题失败");
+                            throw error;
+                        }
+                    }}
+                    onDelete={async (ids) => {
+                        try {
+                            await agent.deleteConversations(ids);
+                            message.success(ids.length > 1 ? `已删除 ${ids.length} 条对话` : "对话已删除");
+                        } catch (error) {
+                            message.error(error instanceof Error ? error.message : "删除对话失败");
+                            throw error;
+                        }
+                    }}
+                />
+            </div>
+        </div>
     );
 
     return (
         <main className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#fcfdff_100%)] text-[#20242a] dark:bg-[linear-gradient(180deg,#111316_0%,#12151a_100%)] dark:text-[#f3f5f7]">
-            <div className="absolute right-3 top-3 z-10 flex items-center gap-1 sm:right-5 sm:top-4">
-                {hasConversation ? <Button type="text" shape="circle" icon={<Plus className="size-4" />} onClick={newConversation} aria-label="新建对话" title="新建对话" /> : null}
-                <Button type="text" shape="circle" icon={<History className="size-4" />} onClick={() => setHistoryOpen(true)} aria-label="创作历史" title="创作历史" />
-            </div>
-
-            <section
-                ref={conversationScrollRef}
-                data-testid="creative-conversation-scroll"
-                className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
-                onScroll={(event) => updateConversationScrollState(event.currentTarget)}
-                onWheelCapture={(event) => {
-                    if (event.deltaY < 0) {
-                        setAwayFromLatestState(true);
-                        setComposerExpanded(false);
-                    }
-                }}
-            >
-                {showConversation ? (
-                    <CreativeMessages
-                        messages={agent.messages}
-                        assets={agent.assets}
-                        loading={agent.conversationLoading}
-                        projectLinks={agent.projectLinks}
-                        projectErrors={agent.projectErrors}
-                        runDetails={agent.runDetails}
-                        materializingProjectId={agent.materializingProjectId}
-                        onMaterializeProject={agent.materializeProject}
-                        onEditMessage={restoreRoundInput}
-                        selectedAssetIds={agent.selectedAssetIds}
-                        onToggleAsset={agent.toggleAsset}
-                        hasOlder={agent.hasOlderMessages}
-                        olderLoading={agent.olderMessagesLoading}
-                        onLoadOlder={() => void agent.loadOlderMessages()}
-                        followLatest={!awayFromLatest}
-                    />
-                ) : (
-                    <div className="mx-auto flex min-h-full w-full min-w-0 max-w-[1240px] flex-col items-center px-2.5 pb-3 pt-5 sm:px-8 sm:pb-8 sm:pt-14 lg:pt-[10vh]">
-                        <div className="text-center">
-                            <h1 className="text-[23px] font-semibold leading-tight sm:text-[31px]">{siteTitle} 创作 Agent</h1>
-                            <p className="mt-2 text-sm text-[#8b949f] dark:text-[#7f8996]">从一个想法开始</p>
-                        </div>
-                        <div className="mt-5 w-full sm:mt-8">{composer}</div>
-                        <div className="mt-2 flex w-full min-w-0 flex-wrap justify-center gap-1.5 sm:mt-3 sm:gap-2">
-                            {skillsLoading ? <span className="px-2 py-2 text-xs text-[#9aa2ad]">正在加载创作 Skill...</span> : null}
-                            {skills.map((skill, index) => {
-                                const visual = skillVisual(skill, index);
-                                const Icon = visual.icon;
-                                return (
-                                    <button
-                                        key={skill.id}
-                                        type="button"
-                                        aria-label={`使用 ${skill.name} Skill`}
-                                        title={skill.description}
-                                        className="inline-flex h-9 items-center gap-2 rounded-full border border-[#e3e7eb] bg-white px-3 text-sm font-medium text-[#343b44] transition hover:border-[#cfd6dd] hover:bg-[#f7f8fa] dark:border-[#343a42] dark:bg-[#181b20] dark:text-[#dce1e7] dark:hover:border-[#4a525d] dark:hover:bg-[#20242a]"
-                                        onClick={() => selectSkill(skill)}
-                                    >
-                                        <Icon className={`size-4 ${visual.iconClass}`} />
-                                        <span>{skill.name}</span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                        <CreateWorkbenchOverview onUseAsset={useRecentAsset} />
-                        <CreateInspirationGallery onUsePrompt={usePublicPrompt} onUseImage={usePublicImage} />
-                    </div>
-                )}
-            </section>
-
-            {showConversation ? (
-                <div className="relative shrink-0">
-                    {awayFromLatest ? (
+            <div className="flex min-h-0 flex-1">
+                {historyOpen && screens.lg ? <aside className="h-full min-h-0 w-[min(280px,24vw)] shrink-0 border-r border-[#eceef1] dark:border-[#2b3036]">{historyPanel}</aside> : null}
+                <div className="relative flex min-w-0 flex-1 flex-col">
+                    <div className="pointer-events-none absolute right-3 top-3 z-30 flex items-center gap-0.5 sm:right-5" data-testid="creative-page-tools">
+                        {hasConversation ? (
+                            <Button
+                                type="text"
+                                shape="circle"
+                                className="pointer-events-auto !size-9 !min-w-9 !text-[#68727e] hover:!bg-[#f1f3f5] hover:!text-[#20242a] dark:!text-[#aab2bc] dark:hover:!bg-[#262b31] dark:hover:!text-white"
+                                icon={<Plus className="size-4" />}
+                                onClick={newConversation}
+                                aria-label="新建对话"
+                                title="新建对话"
+                            />
+                        ) : null}
                         <Button
                             type="text"
-                            icon={<ChevronsDown className="size-4" />}
-                            className="!absolute !-top-11 !left-1/2 !z-20 !h-9 !-translate-x-1/2 !rounded-lg !border !border-[#e1e5e9] !bg-white !px-3 !text-sm !font-medium !text-[#596572] !shadow-[0_6px_20px_rgba(32,36,42,0.08)] hover:!bg-[#f4f6f8] hover:!text-[#20242a] dark:!border-[#343a42] dark:!bg-[#1c2025] dark:!text-[#b7c0ca] dark:!shadow-black/25 dark:hover:!bg-[#272c33] dark:hover:!text-white"
-                            onClick={scrollToLatest}
-                        >
-                            回到底部
-                        </Button>
+                            shape="circle"
+                            className={
+                                historyOpen
+                                    ? "pointer-events-auto !size-9 !min-w-9 !bg-[#eeeeff] !text-[#565ccb] dark:!bg-[#2c2e4b] dark:!text-[#b8bbff]"
+                                    : "pointer-events-auto !size-9 !min-w-9 !text-[#68727e] hover:!bg-[#f1f3f5] hover:!text-[#20242a] dark:!text-[#aab2bc] dark:hover:!bg-[#262b31] dark:hover:!text-white"
+                            }
+                            icon={<History className="size-4" />}
+                            onClick={() => {
+                                setHistoryOpen((current) => !current);
+                                setAssetsOpen(false);
+                            }}
+                            aria-label={historyOpen ? "关闭创作历史" : "打开创作历史"}
+                            aria-expanded={historyOpen}
+                            title="创作历史"
+                        />
+                        <Button
+                            type="text"
+                            shape="circle"
+                            icon={<FolderOpen className="size-4" />}
+                            className={
+                                assetsOpen
+                                    ? "pointer-events-auto !size-9 !min-w-9 !bg-[#eeeeff] !text-[#565ccb] dark:!bg-[#2c2e4b] dark:!text-[#b8bbff]"
+                                    : "pointer-events-auto !size-9 !min-w-9 !text-[#68727e] hover:!bg-[#f1f3f5] hover:!text-[#20242a] dark:!text-[#aab2bc] dark:hover:!bg-[#262b31] dark:hover:!text-white"
+                            }
+                            onClick={() => {
+                                setAssetsOpen((current) => !current);
+                                setHistoryOpen(false);
+                            }}
+                            aria-label={assetsOpen ? "关闭资产面板" : "打开资产面板"}
+                            aria-expanded={assetsOpen}
+                            title="资产"
+                        />
+                    </div>
+
+                    <section
+                        ref={conversationScrollRef}
+                        data-testid="creative-conversation-scroll"
+                        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+                        onScroll={(event) => updateConversationScrollState(event.currentTarget)}
+                        onWheelCapture={(event) => {
+                            if (event.deltaY < 0) {
+                                setAwayFromLatestState(true);
+                                setComposerExpanded(false);
+                            }
+                        }}
+                    >
+                        {showConversation ? (
+                            <CreativeMessages
+                                messages={agent.messages}
+                                assets={agent.assets}
+                                loading={agent.conversationLoading}
+                                projectLinks={agent.projectLinks}
+                                projectErrors={agent.projectErrors}
+                                runDetails={agent.runDetails}
+                                materializingProjectId={agent.materializingProjectId}
+                                onMaterializeProject={agent.materializeProject}
+                                onEditMessage={restoreRoundInput}
+                                selectedAssetIds={agent.selectedAssetIds}
+                                onToggleAsset={toggleReferencedAsset}
+                                hasOlder={agent.hasOlderMessages}
+                                olderLoading={agent.olderMessagesLoading}
+                                onLoadOlder={() => void agent.loadOlderMessages()}
+                                followLatest={!awayFromLatest}
+                            />
+                        ) : (
+                            <div className="mx-auto flex min-h-full w-full min-w-0 max-w-[1240px] flex-col items-center px-2.5 pb-3 pt-5 sm:px-8 sm:pb-8 sm:pt-14 lg:pt-[10vh]">
+                                <div className="text-center">
+                                    <h1 className="text-[23px] font-semibold leading-tight sm:text-[31px]">{siteTitle} 创作 Agent</h1>
+                                    <p className="mt-2 text-sm text-[#8b949f] dark:text-[#7f8996]">从一个想法开始</p>
+                                </div>
+                                <div className="mt-5 w-full sm:mt-8">{composer}</div>
+                                <div className="mt-2 flex w-full min-w-0 flex-wrap justify-center gap-1.5 sm:mt-3 sm:gap-2">
+                                    {skillsLoading ? <span className="px-2 py-2 text-xs text-[#9aa2ad]">正在加载创作 Skill...</span> : null}
+                                    {skills.map((skill, index) => {
+                                        const visual = skillVisual(skill, index);
+                                        const Icon = visual.icon;
+                                        return (
+                                            <button
+                                                key={skill.id}
+                                                type="button"
+                                                aria-label={`使用 ${skill.name} Skill`}
+                                                title={skill.description}
+                                                className="inline-flex h-9 items-center gap-2 rounded-full border border-[#e3e7eb] bg-white px-3 text-sm font-medium text-[#343b44] transition hover:border-[#cfd6dd] hover:bg-[#f7f8fa] dark:border-[#343a42] dark:bg-[#181b20] dark:text-[#dce1e7] dark:hover:border-[#4a525d] dark:hover:bg-[#20242a]"
+                                                onClick={() => selectSkill(skill)}
+                                            >
+                                                <Icon className={`size-4 ${visual.iconClass}`} />
+                                                <span>{skill.name}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <CreateWorkbenchOverview onUseAsset={useRecentAsset} />
+                                <CreateInspirationGallery onUsePrompt={usePublicPrompt} onUseImage={usePublicImage} />
+                            </div>
+                        )}
+                    </section>
+
+                    {showConversation ? (
+                        <div data-testid="creative-composer-dock" data-compact={composerCompact ? "true" : "false"} className={cn("relative shrink-0", composerCompact && "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-transparent")}>
+                            {awayFromLatest ? (
+                                <Button
+                                    type="text"
+                                    icon={<ChevronsDown className="size-4" />}
+                                    className="!pointer-events-auto !absolute !-top-11 !left-1/2 !z-20 !h-9 !-translate-x-1/2 !rounded-lg !border !border-[#e1e5e9] !bg-white !px-3 !text-sm !font-medium !text-[#596572] !shadow-[0_6px_20px_rgba(32,36,42,0.08)] hover:!bg-[#f4f6f8] hover:!text-[#20242a] dark:!border-[#343a42] dark:!bg-[#1c2025] dark:!text-[#b7c0ca] dark:!shadow-black/25 dark:hover:!bg-[#272c33] dark:hover:!text-white"
+                                    onClick={scrollToLatest}
+                                >
+                                    回到底部
+                                </Button>
+                            ) : null}
+                            {composer}
+                        </div>
                     ) : null}
-                    {composer}
                 </div>
-            ) : null}
+                <CreativeAssetsPanel
+                    open={assetsOpen}
+                    conversationId={agent.conversationId}
+                    assets={agent.assets}
+                    selectedAssetIds={agent.selectedAssetIds}
+                    onToggleAsset={toggleReferencedAsset}
+                    onUsePrompt={(value) => {
+                        updatePrompt(value);
+                        window.requestAnimationFrame(() => inputRef.current?.focus());
+                        message.success("已填入提示词");
+                    }}
+                    onClose={() => setAssetsOpen(false)}
+                />
+            </div>
             <input
                 ref={attachmentInputRef}
                 type="file"
@@ -570,41 +705,8 @@ export default function CreatePage() {
                 }}
             />
 
-            <Drawer title="创作历史" placement="right" size="min(92vw, 380px)" open={historyOpen} onClose={() => setHistoryOpen(false)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
-                <CreativeConversationList
-                    items={agent.conversations}
-                    activeId={agent.conversationId}
-                    loading={agent.historyLoading}
-                    hasMore={agent.historyHasMore}
-                    loadingMore={agent.historyLoadingMore}
-                    onLoadMore={() => void agent.loadMoreConversations()}
-                    onNew={() => {
-                        newConversation();
-                        setHistoryOpen(false);
-                    }}
-                    onOpen={(id) => {
-                        openConversation(id);
-                        setHistoryOpen(false);
-                    }}
-                    onRename={async (id, title) => {
-                        try {
-                            await agent.renameConversation(id, title);
-                            message.success("标题已更新");
-                        } catch (error) {
-                            message.error(error instanceof Error ? error.message : "修改标题失败");
-                            throw error;
-                        }
-                    }}
-                    onDelete={async (ids) => {
-                        try {
-                            await agent.deleteConversations(ids);
-                            message.success(ids.length > 1 ? `已删除 ${ids.length} 条对话` : "对话已删除");
-                        } catch (error) {
-                            message.error(error instanceof Error ? error.message : "删除对话失败");
-                            throw error;
-                        }
-                    }}
-                />
+            <Drawer title="创作历史" placement="right" size="min(92vw, 380px)" open={historyOpen && screens.lg !== true} onClose={() => setHistoryOpen(false)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
+                {screens.lg !== true ? historyPanel : null}
             </Drawer>
         </main>
     );

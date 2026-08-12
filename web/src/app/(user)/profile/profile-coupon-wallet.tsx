@@ -12,15 +12,18 @@ import { COUPON_PAGE_SIZE, LoadingBlock, profilePrimaryButtonClass, profileSecon
 type CouponWalletSectionProps = {
     coupons: UserCoupon[];
     templates: CouponTemplate[];
+    templatesTotal: number;
+    templatePage: number;
     total: number;
     page: number;
     loading: boolean;
     onRefresh: () => Promise<void> | void;
+    onTemplatePageChange: (page: number) => Promise<void> | void;
     onPageChange: (page: number) => void;
     onClaimed: () => Promise<void> | void;
 };
 
-export function CouponWalletSection({ coupons, templates, total, page, loading, onRefresh, onPageChange, onClaimed }: CouponWalletSectionProps) {
+export function CouponWalletSection({ coupons, templates, templatesTotal, templatePage, total, page, loading, onRefresh, onTemplatePageChange, onPageChange, onClaimed }: CouponWalletSectionProps) {
     const { message } = App.useApp();
     const [code, setCode] = useState("");
     const [claiming, setClaiming] = useState("");
@@ -69,7 +72,7 @@ export function CouponWalletSection({ coupons, templates, total, page, loading, 
                 <div className="mt-4 sm:mt-5">
                     <div className="mb-2 flex items-center justify-between gap-3">
                         <h3 className="text-sm font-semibold text-stone-950 dark:text-stone-100">可领取</h3>
-                        <span className="text-xs text-stone-400 dark:text-stone-500">{templates.length} 个活动</span>
+                        <span className="text-xs text-stone-400 dark:text-stone-500">共 {templatesTotal} 个活动</span>
                     </div>
                     <div className="grid gap-2 lg:grid-cols-2">
                         {templates.map((template) => (
@@ -89,6 +92,11 @@ export function CouponWalletSection({ coupons, templates, total, page, loading, 
                             </article>
                         ))}
                     </div>
+                    {templatesTotal > COUPON_PAGE_SIZE ? (
+                        <div className="mt-3 flex justify-center sm:justify-end">
+                            <Pagination size="small" current={templatePage} pageSize={COUPON_PAGE_SIZE} total={templatesTotal} showLessItems showSizeChanger={false} disabled={loading} onChange={(nextPage) => void onTemplatePageChange(nextPage)} />
+                        </div>
+                    ) : null}
                 </div>
             ) : null}
 

@@ -30,7 +30,7 @@ export function CanvasToolbar({
     onInteractionModeChange,
     onBackgroundModeChange,
     onShowImageInfoChange,
-    onOpenMyAssets,
+    onOpenAssets,
 }: {
     selectedCount: number;
     canUndo: boolean;
@@ -53,7 +53,7 @@ export function CanvasToolbar({
     onInteractionModeChange: (mode: CanvasInteractionMode) => void;
     onBackgroundModeChange: (mode: CanvasBackgroundMode) => void;
     onShowImageInfoChange: (show: boolean) => void;
-    onOpenMyAssets: () => void;
+    onOpenAssets: () => void;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const colorTheme = useThemeStore((state) => state.theme);
@@ -130,7 +130,7 @@ export function CanvasToolbar({
                     <Upload className="size-4.5" />
                 </ToolbarButton>
                 <Divider theme={theme} />
-                <ToolbarButton id="tool-assets" label="我的素材" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onOpenMyAssets}>
+                <ToolbarButton id="tool-assets" label="资产" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onOpenAssets}>
                     <FolderOpen className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton
@@ -320,7 +320,7 @@ function toolLabel(id: string) {
     if (id === "tool-audio") return "音频";
     if (id === "tool-config") return "生成配置";
     if (id === "tool-upload") return "上传素材";
-    if (id === "tool-assets") return "我的素材";
+    if (id === "tool-assets") return "资产";
     if (id === "tool-style") return "画布外观";
     if (id === "tool-delete") return "删除选中";
     if (id === "tool-clear") return "清空画布";

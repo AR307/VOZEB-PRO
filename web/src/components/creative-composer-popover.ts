@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export type CreativeComposerPopoverPlacement = "topLeft" | "bottomLeft" | "top" | "bottom";
+export type CreativeComposerPopoverPlacement = "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 
 const horizontalViewportOverflow = { adjustX: 1, adjustY: 0 } as const;
 

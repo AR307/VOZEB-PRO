@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { creativeComposerToolButtonClass } from "./creative-composer-styles";
+import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
 
 describe("creativeComposerToolButtonClass", () => {
     it("only keeps the active palette while its popover is open", () => {

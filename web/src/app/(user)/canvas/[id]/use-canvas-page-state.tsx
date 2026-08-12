@@ -1,11 +1,9 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -15,10 +13,6 @@ import { type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-
 import { useCanvasStore } from "../stores/use-canvas-store";
 import { type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type ContextMenuState, type Position, type ViewportTransform } from "../types";
 
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
-
 import { CanvasClipboard, CanvasGenerationRequest, CanvasHistoryEntry, PendingConnectionCreate } from "./canvas-page-elements";
 
 export function useCanvasPageState() {
@@ -26,12 +20,6 @@ export function useCanvasPageState() {
     const params = useParams<{ id: string }>();
     const router = useRouter();
     const projectId = params.id;
-
-    useEffect(() => {
-        return preloadOnIdle(() => {
-            void loadAssetPickerModal();
-        });
-    }, []);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);

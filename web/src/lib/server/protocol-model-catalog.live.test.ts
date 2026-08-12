@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { emptyAdvancedConfig, protocolAuthHeaders, registeredChannelProtocolDefinitions } from "@/lib/channel-protocol-registry";
+import { modelCapabilitiesRecord, parseModelCatalog, parseModelConfigs } from "@/lib/server/admin-model-catalog";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 
 const CATALOG_CASES = registeredChannelProtocolDefinitions.flatMap((definition) => definition.modelCatalogPaths.map((path) => ({ definition, path })));
@@ -23,11 +24,18 @@ describe("registered protocol model catalogs over a local TCP interface", () => 
 
     it.each(CATALOG_CASES)("receives the $definition.id catalog response from $path", async ({ definition, path }) => {
         const advanced = { ...emptyAdvancedConfig(), protocol: definition.id, authMode: definition.authMode };
-        const response = await fetch(`${origin}${path}`, { headers: protocolAuthHeaders("fixture-key", advanced, definition.apiFormat) });
+        const response = await fetch(`${origin}${path}?protocol=${encodeURIComponent(definition.id)}`, { headers: protocolAuthHeaders("fixture-key", advanced, definition.apiFormat) });
         const payload = await response.json();
 
         expect(response.ok).toBe(true);
-        expect(payload).toBeTruthy();
+        const catalog = parseModelCatalog(payload, "provider", definition.id);
+        const configs = parseModelConfigs(payload, definition.id);
+        const expectedIds = (path === "/sdapi/v1/sd-models" ? ["mock-image", "opaque-catalog-model"] : ["mock-audio", "mock-image", "mock-text", "mock-video", "opaque-catalog-model"]).sort((left, right) => left.localeCompare(right));
+        expect(catalog.map((entry) => entry.id)).toEqual(expectedIds);
+        expect(Object.keys(configs).sort()).toEqual(expectedIds.map((id) => id.toLowerCase()).sort());
+        expect(modelCapabilitiesRecord(catalog, configs)).toEqual(
+            Object.fromEntries(expectedIds.map((id) => [id.toLowerCase(), id === "opaque-catalog-model" ? (definition.capabilities.length === 1 ? definition.capabilities[0] : "text") : id.replace("mock-", "")])),
+        );
         const request = fixture.requests.at(-1);
         expect(request?.path).toBe(path);
         if (definition.authMode === "none") expect(request?.headers.authorization).toBeUndefined();

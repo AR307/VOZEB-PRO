@@ -61,6 +61,20 @@ describe("protocol fixture server", () => {
         expect(fixture.requests[0]).toMatchObject({ contentType: "application/json" });
     });
 
+    it("serves the complete Yumeng model-center task path", async () => {
+        const body = { model: "seedream_5.0Pro", prompt: "test", reference_images: [`${origin}/media/fixture.png`] };
+        const created = await fetch(`${origin}/kyyReactApiServer/v2/model-center/tasks`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+        }).then((response) => response.json());
+        const completed = await fetch(`${origin}/kyyReactApiServer/v2/model-center/tasks/${created.task_id}`).then((response) => response.json());
+
+        expect(created).toMatchObject({ task_id: "fixture-yumeng-image-1", status: "queued" });
+        expect(completed).toMatchObject({ status: "completed", result_url: `${origin}/media/fixture.png` });
+        expect(fixture.requests.map((request) => request.path)).toEqual(["/kyyReactApiServer/v2/model-center/tasks", "/kyyReactApiServer/v2/model-center/tasks/fixture-yumeng-image-1"]);
+    });
+
     it("serves synchronous audio bytes", async () => {
         const response = await fetch(`${origin}/v1/audio/speech`, { method: "POST" });
         const bytes = Buffer.from(await response.arrayBuffer());

@@ -1,6 +1,6 @@
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAgentRun } from "@/lib/server/agent-run-store";
-import { getLatestCreativeRunEventId, listCreativeRunEvents } from "@/lib/server/creative-runtime-store";
+import { CREATIVE_RUN_EVENT_BATCH_SIZE, getLatestCreativeRunEventId, listCreativeRunEvents } from "@/lib/server/creative-runtime-store";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { waitForCreativeRunEvent } from "@/lib/server/creative-run-event-signal";
@@ -49,8 +49,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
             request.signal.addEventListener("abort", close, { once: true });
             void (async () => {
                 const deadline = Date.now() + 60 * 60 * 1000;
+                let current: Awaited<ReturnType<typeof getAgentRun>> = run;
                 while (!closed && Date.now() < deadline) {
-                    const current = await getAgentRun(run.id);
                     if (closed) return;
                     if (!current) {
                         controller.enqueue(encoder.encode(`event: run.failed\ndata: ${JSON.stringify({ message: "Agent 任务不存在" })}\n\n`));
@@ -62,6 +62,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
                         controller.enqueue(encoder.encode(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(publicAgentRunEvent(event))}\n\n`));
                         cursor = event.id;
                     }
+                    if (events.length === CREATIVE_RUN_EVENT_BATCH_SIZE) continue;
                     const snapshotVersion = `${current.status}:${current.updatedAt}`;
                     if (snapshotVersion !== lastSnapshotVersion) {
                         controller.enqueue(encoder.encode(`event: run.snapshot\ndata: ${JSON.stringify(publicAgentRunSnapshot(current))}\n\n`));
@@ -73,6 +74,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
                     }
                     if (current.status === "planning" || current.status === "running") wakeRecovery();
                     await waitForCreativeRunEvent(run.id, 2_500, request.signal);
+                    current = await getAgentRun(run.id);
                     if (!closed && Date.now() - lastHeartbeatAt >= 15_000) {
                         controller.enqueue(encoder.encode(`: heartbeat ${Date.now()}\n\n`));
                         lastHeartbeatAt = Date.now();

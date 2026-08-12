@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect } from "react";
 
@@ -11,7 +10,7 @@ import { createAudioGenerationTask } from "@/services/api/audio";
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { createTextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask } from "@/services/api/video";
-import type { InsertAssetPayload } from "../components/asset-picker-modal";
+import type { InsertAssetPayload } from "../components/canvas-asset-insert";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "../components/canvas-agent-panel-motion";
 import { retryCanvasAgentNode } from "../components/canvas-agent-node-retry";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext } from "../components/canvas-node-generation";
@@ -22,10 +21,6 @@ import { applyCameraPrompt } from "../utils/canvas-camera";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { buildPanoramaPrompt } from "../utils/canvas-panorama";
 import { canvasVideoReferenceMetadata, resolveCanvasVideoGenerationReferences, restoreCanvasVideoGenerationReferences } from "../utils/canvas-video-references";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { NODE_STATUS_ERROR, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_NEEDS_REVIEW, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
 import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
@@ -63,7 +58,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         setSelectedNodeIds,
         setSelectedConnectionId,
         setRunningNodeId,
-        setAssetPickerOpen,
         projectLoaded,
         setDialogNodeId,
         assistantCollapsed,
@@ -722,7 +716,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             const meta = storedImage.width === 1 && storedImage.height === 1 ? await readImageMeta(storedImage.url) : storedImage;
             const config = fitNodeSize(meta.width, meta.height);
             const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
-            const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            const id = `image-${nanoid()}`;
             const node: CanvasNodeData = {
                 id,
                 type: CanvasNodeType.Image,
@@ -763,7 +757,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             } else if (payload.kind === "video") {
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                 const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
-                const id = `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                const id = `video-${nanoid()}`;
                 const nextSize = fitNodeSize(payload.width || spec.width, payload.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                 setNodes((prev) => [
                     ...prev,
@@ -781,7 +775,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             } else if (payload.kind === "audio") {
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
                 const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
-                const id = `audio-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                const id = `audio-${nanoid()}`;
                 setNodes((prev) => [
                     ...prev,
                     {
@@ -798,7 +792,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             } else {
                 insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey, remoteUrl: payload.remoteUrl, serverUrl: payload.serverUrl });
             }
-            setAssetPickerOpen(false);
         },
         [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
     );

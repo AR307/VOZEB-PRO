@@ -1,15 +1,10 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { CanvasNodeType, isCanvasImageNodeType } from "../types";
 import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { NODE_STATUS_ERROR, NODE_STATUS_LOADING } from "./canvas-page-elements";
 import { buildGenerationConfig, hydrateAssistantImages, hydrateCanvasImages, isGenerationCanceled, normalizeCanvasConfigNodeLayout } from "./canvas-page-utils";

@@ -246,10 +246,13 @@ export default function ProfilePage() {
                             <CouponWalletSection
                                 coupons={coupons.items}
                                 templates={coupons.templates}
+                                templatesTotal={coupons.templatesTotal}
+                                templatePage={coupons.templatePage}
                                 total={coupons.total}
                                 page={coupons.page}
                                 loading={coupons.loading}
                                 onRefresh={coupons.refresh}
+                                onTemplatePageChange={coupons.setTemplatePage}
                                 onPageChange={coupons.setPage}
                                 onClaimed={coupons.refreshAfterClaim}
                             />

@@ -12,11 +12,13 @@ vi.mock("@/services/api/session-expiration", () => {
 
 class FakeEventSource extends EventTarget {
     static instance: FakeEventSource;
+    static created = 0;
     onopen: (() => void) | null = null;
     onerror: (() => void) | null = null;
     closed = false;
     constructor() {
         super();
+        FakeEventSource.created += 1;
         FakeEventSource.instance = this;
     }
     close() {
@@ -30,6 +32,7 @@ class FakeEventSource extends EventTarget {
 describe("Canvas Agent 事件流", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        FakeEventSource.created = 0;
         mocks.stopIfClientSessionExpired.mockResolvedValue(false);
     });
     afterEach(() => vi.unstubAllGlobals());
@@ -234,5 +237,43 @@ describe("Canvas Agent 事件流", () => {
 
         expect(messages).toEqual(["「视频」执行失败：上游明确失败"]);
         expect(FakeEventSource.instance.closed).toBe(true);
+    });
+
+    it("stops local observation on abort without applying later events", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const controller = new AbortController();
+        const stages: CanvasAgentRunStage[] = [];
+        const messages: string[] = [];
+        const promise = watchCanvasAgentRun(
+            "run",
+            {
+                onPlan: () => undefined,
+                onAssistant: (text) => messages.push(text),
+                onStage: (stage) => stages.push(stage),
+                onPaused: () => undefined,
+                onOps: () => undefined,
+            },
+            { signal: controller.signal },
+        );
+        const source = FakeEventSource.instance;
+
+        controller.abort();
+        await promise;
+        source.emit("run.planning", {});
+        source.emit("run.completed", { data: { reply: "不应显示" } });
+
+        expect(source.closed).toBe(true);
+        expect(stages).toEqual([]);
+        expect(messages).toEqual([]);
+    });
+
+    it("does not open an event stream for an already aborted watcher", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const controller = new AbortController();
+        controller.abort();
+
+        await watchCanvasAgentRun("run", { onPlan: () => undefined, onAssistant: () => undefined, onStage: () => undefined, onPaused: () => undefined, onOps: () => undefined }, { signal: controller.signal });
+
+        expect(FakeEventSource.created).toBe(0);
     });
 });

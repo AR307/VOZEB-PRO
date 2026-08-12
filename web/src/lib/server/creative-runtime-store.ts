@@ -40,6 +40,8 @@ import { notifyCreativeRunEvent } from "./creative-run-event-signal";
 export { CreativeStoreConflict } from "./creative-runtime-repository";
 import { CreativeStoreConflict } from "./creative-runtime-repository";
 
+export const CREATIVE_CONVERSATION_CONTEXT_MESSAGE_LIMIT = 12;
+
 export async function createCreativeConversation(userId: string, input: { surface: CreativeSurface; source?: CreativeConversationSource; projectId?: string; title?: string }) {
     const now = Date.now();
     const conversation: CreativeConversation = {
@@ -96,6 +98,18 @@ export async function getCreativeConversation(id: string) {
         return result.rows[0] ? mapConversation(result.rows[0]) : null;
     }
     return (await readRuntimeFile()).conversations.find((item) => item.id === id) || null;
+}
+
+export async function getCreativeConversationsByIds(userId: string, ids: string[]) {
+    const uniqueIds = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+    if (!uniqueIds.length) return [];
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery("SELECT * FROM creative_conversations WHERE user_id = $1 AND id = ANY($2::text[])", [userId, uniqueIds]);
+        return result.rows.map(mapConversation);
+    }
+    const idSet = new Set(uniqueIds);
+    return (await readRuntimeFile()).conversations.filter((item) => item.userId === userId && idSet.has(item.id));
 }
 
 export async function updateCreativeConversation(id: string, userId: string, patch: { title?: string; status?: CreativeConversation["status"] }) {
@@ -215,34 +229,47 @@ export async function appendCreativeConversationExchange(input: NewConversationE
 export async function getCreativeConversationContext(conversationId: string, userId: string, excludeRunId?: string): Promise<CreativeConversationContext> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        return withPostgresTransaction(async (client) => {
-            const conversationResult = await client.query("SELECT * FROM creative_conversations WHERE id = $1 AND user_id = $2 FOR UPDATE", [conversationId, userId]);
-            if (!conversationResult.rows[0]) throw new CreativeStoreConflict("创作会话不存在", 404);
-            const conversation = mapConversation(conversationResult.rows[0]);
-            const messagesResult = await client.query(
-                `SELECT * FROM creative_messages
-                 WHERE conversation_id = $1 AND ($2::text IS NULL OR run_id IS DISTINCT FROM $2)
-                   AND sequence > $3 AND role IN ('user', 'assistant') AND status <> 'running'
-                 ORDER BY sequence ASC`,
-                [conversationId, excludeRunId || null, conversation.contextSummaryThroughSequence],
-            );
-            const prepared = prepareConversationContext(conversation, messagesResult.rows.map(mapMessage));
-            if (prepared.conversation !== conversation)
-                await client.query("UPDATE creative_conversations SET context_summary = $2, context_summary_through_sequence = $3 WHERE id = $1", [conversationId, prepared.conversation.contextSummary, prepared.conversation.contextSummaryThroughSequence]);
-            return prepared.context;
-        });
+        const result = await postgresQuery<{ context_summary: unknown; context_summary_through_sequence: unknown; recent_messages: unknown }>(
+            `SELECT conversation.context_summary,
+                    conversation.context_summary_through_sequence,
+                    COALESCE((
+                        SELECT jsonb_agg(to_jsonb(recent_message) ORDER BY recent_message.sequence ASC)
+                        FROM (
+                            SELECT message.*
+                            FROM creative_messages message
+                            WHERE message.conversation_id = conversation.id
+                              AND ($3::text IS NULL OR message.run_id IS DISTINCT FROM $3)
+                              AND message.sequence > conversation.context_summary_through_sequence
+                              AND message.role IN ('user', 'assistant')
+                              AND message.status <> 'running'
+                            ORDER BY message.sequence DESC
+                            LIMIT $4
+                        ) recent_message
+                    ), '[]'::jsonb) AS recent_messages
+             FROM creative_conversations conversation
+             WHERE conversation.id = $1 AND conversation.user_id = $2`,
+            [conversationId, userId, excludeRunId || null, CREATIVE_CONVERSATION_CONTEXT_MESSAGE_LIMIT],
+        );
+        const row = result.rows[0];
+        if (!row) throw new CreativeStoreConflict("创作会话不存在", 404);
+        return {
+            summary: typeof row.context_summary === "string" ? row.context_summary : "",
+            summaryThroughSequence: Math.max(0, Number(row.context_summary_through_sequence) || 0),
+            recentMessages: Array.isArray(row.recent_messages) ? row.recent_messages.map(mapMessage) : [],
+        };
     }
     return queueRuntimeFileOperation(async () => {
         const db = await readRuntimeFile();
         const conversation = db.conversations.find((item) => item.id === conversationId && item.userId === userId);
         if (!conversation) throw new CreativeStoreConflict("创作会话不存在", 404);
-        const messages = db.messages.filter(
-            (item) =>
-                item.conversationId === conversationId && item.sequence > conversation.contextSummaryThroughSequence && (!excludeRunId || item.runId !== excludeRunId) && (item.role === "user" || item.role === "assistant") && item.status !== "running",
-        );
-        const prepared = prepareConversationContext(conversation, messages);
-        if (prepared.conversation !== conversation) await writeRuntimeFile({ ...db, conversations: db.conversations.map((item) => (item.id === conversationId ? prepared.conversation : item)) });
-        return prepared.context;
+        const messages = db.messages
+            .filter(
+                (item) =>
+                    item.conversationId === conversationId && item.sequence > conversation.contextSummaryThroughSequence && (!excludeRunId || item.runId !== excludeRunId) && (item.role === "user" || item.role === "assistant") && item.status !== "running",
+            )
+            .sort((left, right) => left.sequence - right.sequence)
+            .slice(-CREATIVE_CONVERSATION_CONTEXT_MESSAGE_LIMIT);
+        return prepareConversationContext(conversation, messages).context;
     });
 }
 
@@ -374,17 +401,19 @@ export async function mutateCreativeRun<T extends AgentRunBase>(id: string, ttlM
     return result;
 }
 
+export const CREATIVE_RUN_EVENT_BATCH_SIZE = 500;
+
 export async function listCreativeRunEvents(runId: string, afterId = "") {
     const cursor = Math.max(0, Number(afterId) || 0);
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery("SELECT * FROM creative_run_events WHERE run_id = $1 AND id > $2 ORDER BY id ASC LIMIT 500", [runId, cursor]);
+        const result = await postgresQuery("SELECT * FROM creative_run_events WHERE run_id = $1 AND id > $2 ORDER BY id ASC LIMIT $3", [runId, cursor, CREATIVE_RUN_EVENT_BATCH_SIZE]);
         return result.rows.map(mapEvent);
     }
     return (await readRuntimeFile()).events
         .filter((item) => item.runId === runId && Number(item.id) > cursor)
         .sort((a, b) => Number(a.id) - Number(b.id))
-        .slice(0, 500);
+        .slice(0, CREATIVE_RUN_EVENT_BATCH_SIZE);
 }
 
 export async function getLatestCreativeRunEventId(runId: string, type: string) {

@@ -16,7 +16,7 @@ vi.mock("@/services/image-storage", async (importOriginal) => ({
     uploadImage: mocks.uploadImage,
 }));
 
-import { applyNodeConfigPatch, hydrateAssistantImages, hydrateCanvasImages, normalizeCanvasConfigNodeLayout } from "./canvas-page-utils";
+import { applyNodeConfigPatch, getGenerationCount, hydrateAssistantImages, hydrateCanvasImages, normalizeCanvasConfigNodeLayout, replaceCanvasNodeMediaMetadata } from "./canvas-page-utils";
 
 describe("Canvas project hydration", () => {
     beforeEach(() => {
@@ -77,6 +77,37 @@ describe("Canvas config node layout", () => {
 
         expect(collapsed).toMatchObject({ height: CANVAS_CONFIG_NODE_HEIGHT.collapsed, metadata: { configDetailsOpen: false } });
         expect(expanded).toMatchObject({ height: CANVAS_CONFIG_NODE_HEIGHT.expanded, metadata: { configDetailsOpen: true } });
+    });
+
+    it("keeps administrator and upstream generation counts above the former platform ceiling", () => {
+        expect(getGenerationCount("16")).toBe(16);
+        expect(getGenerationCount("120")).toBe(120);
+        expect(getGenerationCount("0")).toBe(1);
+        expect(getGenerationCount("-2")).toBe(1);
+    });
+});
+
+describe("Canvas media replacement", () => {
+    it("removes stale generation state while preserving the new panorama contract", () => {
+        const metadata = replaceCanvasNodeMediaMetadata(
+            {
+                prompt: "旧提示词",
+                size: "1:1",
+                videoTask: { id: "video-task", provider: "generation", model: "video-model" },
+                imageTask: { id: "image-task", kind: "generation", model: "image-model" },
+                isBatchRoot: true,
+                batchChildIds: ["child"],
+            },
+            { content: "/api/reference-assets/panorama.webp", storageKey: "panorama.webp", naturalWidth: 2048, naturalHeight: 1024, status: "success" },
+            { size: "2048x1024", panoramaProjection: "equirectangular" },
+        );
+
+        expect(metadata).toMatchObject({ content: "/api/reference-assets/panorama.webp", size: "2048x1024", panoramaProjection: "equirectangular", status: "success" });
+        expect(metadata.prompt).toBeUndefined();
+        expect(metadata.imageTask).toBeUndefined();
+        expect(metadata.videoTask).toBeUndefined();
+        expect(metadata.isBatchRoot).toBeUndefined();
+        expect(metadata.batchChildIds).toBeUndefined();
     });
 });
 

@@ -108,11 +108,13 @@ export function assertVideoReferenceRoles(config: SystemChannelAdvancedConfig | 
         declaredRoles ||
             (protocol === "seedance" || protocol === "volcengine-video" || protocol === "seedance-special"
                 ? ["reference", "first_frame", "last_frame"]
-                : protocol === "openai" || protocol === "newapi" || protocol === "sub2api"
-                  ? ["reference", "first_frame"]
-                  : protocol === "custom" || protocol === "compatible" || protocol === "auto"
-                    ? templateVideoReferenceRoles(config?.requestTemplate)
-                    : ["reference"]),
+                : protocol === "yumeng"
+                  ? templateVideoReferenceRoles(config?.requestTemplate)
+                  : protocol === "openai" || protocol === "newapi" || protocol === "sub2api"
+                    ? ["reference", "first_frame"]
+                    : protocol === "custom" || protocol === "compatible" || protocol === "auto"
+                      ? templateVideoReferenceRoles(config?.requestTemplate)
+                      : ["reference"]),
     );
     const unsupported = requestedRoles.find((role) => !supported.has(role));
     if (unsupported) throw new Error(unsupported === "last_frame" ? "当前视频模型不支持尾帧输入" : "当前视频模型不支持显式首帧输入");
@@ -286,8 +288,10 @@ const REFERENCE_FIELD_KEYS = new Set([
     "referenceimages",
     "firstframeurl",
     "firstframeimage",
+    "firstimage",
     "lastframeurl",
     "lastframeimage",
+    "lastimage",
     "video",
     "videos",
     "inputvideo",
@@ -323,8 +327,10 @@ const VIDEO_REFERENCE_VALUE_KEYS: Record<string, string> = {
     referenceimage: "image",
     firstframeurl: "first_frame",
     firstframeimage: "first_frame",
+    firstimage: "first_frame",
     lastframeurl: "last_frame",
     lastframeimage: "last_frame",
+    lastimage: "last_frame",
     images: "images",
     imageurls: "images",
     inputimages: "images",

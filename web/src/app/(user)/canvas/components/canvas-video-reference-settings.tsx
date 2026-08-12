@@ -19,7 +19,19 @@ const referenceModes: Array<{ value: CreativeVideoReferenceMode; label: string; 
     { value: "first_last", label: "首尾帧", description: "固定开始和结束" },
 ];
 
-export function CanvasVideoReferenceSettings({ metadata, references, theme, onChange }: { metadata?: CanvasNodeMetadata; references: CanvasResourceReference[]; theme: CanvasTheme; onChange: (patch: Partial<CanvasNodeMetadata>) => void }) {
+export function CanvasVideoReferenceSettings({
+    metadata,
+    references,
+    theme,
+    compact = false,
+    onChange,
+}: {
+    metadata?: CanvasNodeMetadata;
+    references: CanvasResourceReference[];
+    theme: CanvasTheme;
+    compact?: boolean;
+    onChange: (patch: Partial<CanvasNodeMetadata>) => void;
+}) {
     const mode = normalizeCanvasVideoReferenceMode(metadata?.videoReferenceMode);
     const [activeRole, setActiveRole] = useState<FrameRole>("first_frame");
     const [feedback, setFeedback] = useState("");
@@ -47,24 +59,26 @@ export function CanvasVideoReferenceSettings({ metadata, references, theme, onCh
             <div className="text-xs font-medium" style={{ color: theme.node.muted }}>
                 参考方式
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className={compact ? "grid grid-cols-3 gap-1" : "grid grid-cols-3 gap-2"}>
                 {referenceModes.map((item) => {
                     const selected = item.value === mode;
                     return (
                         <button
                             key={item.value}
                             type="button"
-                            className="min-w-0 rounded-xl border px-2 py-2 text-left transition hover:opacity-80"
-                            style={{ background: selected ? theme.toolbar.itemHover : "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+                            className={compact ? "h-8 min-w-0 rounded-lg px-1 text-center text-[11px] font-medium transition hover:opacity-80" : "min-w-0 rounded-xl border px-2 py-2 text-left transition hover:opacity-80"}
+                            style={{ background: selected ? theme.toolbar.itemHover : theme.node.fill, borderColor: selected ? theme.node.text : theme.node.stroke, color: selected ? theme.node.action : theme.node.muted }}
                             aria-label={`视频参考模式：${item.label}`}
                             aria-pressed={selected}
                             onMouseDown={(event) => event.stopPropagation()}
                             onClick={() => updateMode(item.value)}
                         >
                             <span className="block truncate text-xs font-medium">{item.label}</span>
-                            <span className="mt-0.5 block truncate text-[10px]" style={{ color: theme.node.faint }}>
-                                {item.description}
-                            </span>
+                            {!compact ? (
+                                <span className="mt-0.5 block truncate text-[10px]" style={{ color: theme.node.faint }}>
+                                    {item.description}
+                                </span>
+                            ) : null}
                         </button>
                     );
                 })}

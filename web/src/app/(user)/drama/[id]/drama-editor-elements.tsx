@@ -14,6 +14,66 @@ const statusToneClass: Record<string, string> = {
     cancelled: "!border-border !bg-muted/60 !text-muted-foreground",
 };
 
+const stageToneClass = {
+    neutral: "border-border bg-muted/55 text-muted-foreground",
+    ready: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/35 dark:text-emerald-300",
+    attention: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/35 dark:text-amber-300",
+    running: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/35 dark:text-sky-300",
+} as const;
+
+export function DramaStageHeader({
+    step,
+    title,
+    description,
+    status,
+    tone = "neutral",
+    metrics = [],
+    action,
+    secondaryAction,
+    className = "",
+}: {
+    step: string;
+    title: string;
+    description: string;
+    status: string;
+    tone?: keyof typeof stageToneClass;
+    metrics?: Array<{ label: string; value: ReactNode }>;
+    action?: ReactNode;
+    secondaryAction?: ReactNode;
+    className?: string;
+}) {
+    return (
+        <header className={`border-b border-border pb-4 sm:pb-5 ${className}`} data-drama-stage-header>
+            <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+                <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
+                        <span className="uppercase tracking-[0.16em] text-muted-foreground">{step}</span>
+                        <span className={`inline-flex h-6 items-center rounded-md border px-2 ${stageToneClass[tone]}`}>{status}</span>
+                    </div>
+                    <h2 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2>
+                    <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
+                    {metrics.length ? (
+                        <dl className="mt-3 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground sm:text-sm">
+                            {metrics.map((item) => (
+                                <div key={item.label} className="flex min-w-0 items-baseline gap-1.5">
+                                    <dt>{item.label}</dt>
+                                    <dd className="font-medium tabular-nums text-foreground">{item.value}</dd>
+                                </div>
+                            ))}
+                        </dl>
+                    ) : null}
+                </div>
+                {action || secondaryAction ? (
+                    <div className="flex w-full shrink-0 flex-col-reverse gap-2 sm:w-auto sm:flex-row lg:pt-1">
+                        {secondaryAction}
+                        {action}
+                    </div>
+                ) : null}
+            </div>
+        </header>
+    );
+}
+
 export function SectionTitle({ title, description, className = "" }: { title: string; description: string; className?: string }) {
     return (
         <div className={`mb-4 sm:mb-8 ${className}`}>

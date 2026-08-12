@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { deleteUserByAdmin, isAuthInputError, updateUserByAdmin, type UserRole, type UserStatus } from "@/lib/auth/store";
+import { isAuthInputError, updateUserByAdmin, type UserRole, type UserStatus } from "@/lib/auth/store";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
-import { deleteGenerationLogsByUserId } from "@/lib/server/generation-log-store";
+import { deleteAdminUserWithMediaCleanup } from "@/lib/server/admin-user-deletion-service";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { hasAnyAdminPermission, normalizeAdminPermissions } from "@/lib/admin-permissions";
 
@@ -61,8 +61,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
     try {
         const { id } = await context.params;
-        await deleteUserByAdmin(currentUser.id, id);
-        await deleteGenerationLogsByUserId(id);
+        await deleteAdminUserWithMediaCleanup(currentUser.id, id);
         await safeRecordAuditLog({
             action: "admin.user.delete",
             actor: auditActorFromRequest(request, currentUser),

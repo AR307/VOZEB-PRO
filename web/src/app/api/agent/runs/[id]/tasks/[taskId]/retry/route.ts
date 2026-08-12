@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 
+import { readJsonBodyResult } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings } from "@/lib/auth/store";
 import { getAgentRun, updateAgentRunById } from "@/lib/server/agent-run-store";
@@ -16,8 +17,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     const { id, taskId } = await params;
+    const parsed = await readJsonBodyResult<{ conversationId?: unknown }>(request);
+    if (!parsed.ok) return NextResponse.json({ code: parsed.status, data: null, msg: parsed.message }, { status: parsed.status });
+    const expectedConversationId = typeof parsed.data?.conversationId === "string" ? parsed.data.conversationId.trim() : "";
+    if (parsed.data?.conversationId !== undefined && !expectedConversationId) return NextResponse.json({ code: 400, data: null, msg: "对话标识无效" }, { status: 400 });
     const run = await getAgentRun(id);
     if (!run || (run.userId !== user.id && user.role !== "admin")) return NextResponse.json({ code: 404, data: null, msg: "Agent 任务不存在" }, { status: 404 });
+    if (expectedConversationId && run.conversationId !== expectedConversationId) return NextResponse.json({ code: 409, data: null, msg: "当前对话与 Agent 任务不匹配" }, { status: 409 });
     const task = run.tasks.find((item) => item.id === taskId);
     if (!task || task.status !== "failed") return NextResponse.json({ code: 409, data: null, msg: "只有失败任务可以单独重试" }, { status: 409 });
     const settings = await getAuthSettings();

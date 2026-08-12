@@ -32,6 +32,7 @@ type PendingCreateSubmission = {
     generation: number;
     conversationId?: string;
     content: string;
+    executionPrompt: string;
     assetIds: string[];
     skillIds: string[];
     modelIds: string[];
@@ -41,6 +42,7 @@ type PendingCreateSubmission = {
 };
 
 type CreateSubmitOptions = {
+    publicPrompt?: string;
     assetIds?: string[];
     skillIds?: string[];
     modelIds?: string[];
@@ -80,7 +82,7 @@ export function useCreateAgent() {
     const removeDraftAttachments = useCreateDraftAttachmentsStore((state) => state.remove);
     const clearDraftAttachments = useCreateDraftAttachmentsStore((state) => state.clear);
     const allAssets = useMemo(() => [...assets, ...draftAttachments.map((item) => item.asset)], [assets, draftAttachments]);
-    const selectedAssetIdsWithDrafts = useMemo(() => Array.from(new Set([...selectedAssetIds, ...draftAttachments.map((item) => item.asset.id)])).slice(-20), [draftAttachments, selectedAssetIds]);
+    const selectedAssetIdsWithDrafts = useMemo(() => Array.from(new Set([...selectedAssetIds, ...draftAttachments.map((item) => item.asset.id)])), [draftAttachments, selectedAssetIds]);
 
     const stopWatching = useCallback(() => {
         streamRef.current?.();
@@ -224,7 +226,7 @@ export function useCreateAgent() {
         const requestedConversationId = createConversationIdFromSearch(window.location.search);
         const conversationsRequest = refreshConversations().catch(() => undefined);
         if (!requestedConversationId) {
-            void Promise.all([conversationsRequest, listCreativeAgentRuns("chat")])
+            void Promise.all([conversationsRequest, listCreativeAgentRuns("chat", { activeOnly: true, limit: 1 })])
                 .then(([, runs]) => {
                     if (!active || activeConversationRef.current) return;
                     const resumable = latestResumableAgentRun(runs);
@@ -305,7 +307,7 @@ export function useCreateAgent() {
                 if (isCurrentConversation(materializedConversationId, generation) && replacements.size) {
                     const uploadedAssets = Array.from(replacements.values());
                     setAssets((current) => [...current, ...uploadedAssets.filter((asset) => !current.some((item) => item.id === asset.id))]);
-                    setSelectedAssetIds((current) => Array.from(new Set([...current, ...uploadedAssets.map((asset) => asset.id)])).slice(-20));
+                    setSelectedAssetIds((current) => Array.from(new Set([...current, ...uploadedAssets.map((asset) => asset.id)])));
                     removeDraftAttachments(replacements.keys());
                 }
                 if (isCurrentConversation(materializedConversationId, generation)) setUploading(false);
@@ -379,7 +381,8 @@ export function useCreateAgent() {
                     clientRequestId: snapshot.clientRequestId,
                     surface: "chat",
                     conversationId: snapshot.conversationId,
-                    prompt: snapshot.content,
+                    prompt: snapshot.executionPrompt,
+                    publicPrompt: snapshot.content,
                     assetIds: snapshot.assetIds,
                     skillIds: snapshot.skillIds,
                     modelIds: snapshot.modelIds,
@@ -417,14 +420,15 @@ export function useCreateAgent() {
 
     const submit = useCallback(
         async (prompt: string, options?: CreateSubmitOptions) => {
-            const content = prompt.trim();
-            if (!content || sending || submittingRef.current) return false;
+            const executionPrompt = prompt.trim();
+            const content = (options?.publicPrompt || prompt).trim();
+            if (!executionPrompt || !content || sending || submittingRef.current) return false;
             submittingRef.current = true;
             const generation = conversationGenerationRef.current;
             const submissionConversationId = activeConversationRef.current;
             stopWatching();
             setSending(true);
-            const selectedIds = (options?.assetIds || selectedAssetIdsWithDrafts).slice(-20);
+            const selectedIds = options?.assetIds || selectedAssetIdsWithDrafts;
             let prepared: Awaited<ReturnType<typeof materializeDraftAttachments>>;
             try {
                 prepared = await materializeDraftAttachments(selectedIds, generation, submissionConversationId);
@@ -448,6 +452,7 @@ export function useCreateAgent() {
                 generation,
                 conversationId: submittedConversationId,
                 content,
+                executionPrompt,
                 assetIds,
                 skillIds: options?.skillIds || [],
                 modelIds: options?.modelIds || [],
@@ -596,14 +601,15 @@ export function useCreateAgent() {
         materializeProject,
         selectedAssetIds: selectedAssetIdsWithDrafts,
         selectedAssets: allAssets.filter((asset) => selectedAssetIdsWithDrafts.includes(asset.id)),
-        toggleAsset: (id: string) => setSelectedAssetIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id].slice(-20))),
+        toggleAsset: (id: string) => setSelectedAssetIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id])),
+        selectAsset: (id: string) => setSelectedAssetIds((current) => (current.includes(id) ? current : [...current, id])),
         uploading,
         uploadAttachments,
         removeAttachment: (id: string) => {
             if (getCreateDraftAttachment(id)) removeDraftAttachments([id]);
             setSelectedAssetIds((current) => current.filter((item) => item !== id));
         },
-        restoreAttachments: (ids: string[]) => setSelectedAssetIds(Array.from(new Set(ids.filter((id) => allAssets.some((asset) => asset.id === id)))).slice(-20)),
+        restoreAttachments: (ids: string[]) => setSelectedAssetIds(Array.from(new Set(ids.filter((id) => allAssets.some((asset) => asset.id === id))))),
     };
 }
 

@@ -14,7 +14,7 @@ export function creativeRunReplayPreferences(run?: CreativeAgentRun): CreativeGe
     if (!imageCounts.length && !videoCounts.length) return preferences;
     return {
         ...preferences,
-        ...(imageCounts.length ? { image: { ...preferences?.image, count: Math.min(10, Math.max(...imageCounts)) } } : {}),
-        ...(videoCounts.length ? { video: { ...preferences?.video, count: Math.min(10, Math.max(...videoCounts)) } } : {}),
+        ...(imageCounts.length ? { image: { ...preferences?.image, count: Math.max(...imageCounts) } } : {}),
+        ...(videoCounts.length ? { video: { ...preferences?.video, count: Math.max(...videoCounts) } } : {}),
     };
 }

@@ -299,8 +299,8 @@ export function assertVideoConfig(config: AiConfig, model: string) {
 }
 
 export function normalizeVideoSeconds(value: string) {
-    const seconds = Math.floor(Number(value) || 5);
-    return String(Math.max(1, Math.min(20, seconds)));
+    const seconds = Number(value);
+    return String(Number.isSafeInteger(seconds) && (seconds > 0 || seconds === -1) ? seconds : 5);
 }
 
 export function normalizeVideoSize(value: string) {

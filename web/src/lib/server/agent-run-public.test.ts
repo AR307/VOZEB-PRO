@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { publicAgentRun, publicAgentRunEvent } from "./agent-run-public";
+import { AGENT_PLAN_SCHEMA_VERSION } from "./agent-run-audit";
 
 describe("publicAgentRun", () => {
     it("exposes only user-facing Run and task fields", () => {
@@ -12,7 +13,8 @@ describe("publicAgentRun", () => {
             surface: "chat",
             inputMessageId: "input",
             assistantMessageId: "assistant",
-            prompt: "用户原始需求",
+            prompt: "@图片1 用户原始需求",
+            publicPrompt: "图片1 用户原始需求",
             snapshot: { private: true },
             referencedAssetIds: ["asset-one"],
             selectedSkillIds: ["skill-one"],
@@ -26,7 +28,7 @@ describe("publicAgentRun", () => {
                     title: "视频",
                     type: "video",
                     model: "video-pro",
-                    prompt: "内部执行提示词-secret",
+                    prompt: "电影感海边日落运镜，人物动作自然流畅\n\n统一创作约束：\n内部执行提示词-secret",
                     count: 1,
                     ratio: "16:9",
                     quality: "2160",
@@ -44,14 +46,29 @@ describe("publicAgentRun", () => {
             ],
             foundation: { complexity: "simple", brief: { objective: "secret" }, direction: { summary: "secret" } },
             plannerAudit: {
-                schemaVersion: 1,
+                schemaVersion: AGENT_PLAN_SCHEMA_VERSION,
                 mode: "model",
                 logicalModelId: "planner-secret",
                 channelId: "channel-secret",
                 upstreamModel: "upstream-secret",
                 protocol: "chat",
                 pointsCost: 2,
-                skills: [{ id: "skill-one", name: "Skill", sourceCommit: "commit-secret" }],
+                skills: [
+                    {
+                        id: "skill-one",
+                        name: "Skill",
+                        description: "secret-skill-description",
+                        plannerSummary: "secret-skill-summary",
+                        instructions: "secret-skill-instructions",
+                        enabled: true,
+                        keywords: ["secret-keyword"],
+                        workspaces: ["image"],
+                        action: "generate",
+                        requiresReference: false,
+                        defaultConfig: { quality: "secret-quality" },
+                        sourceCommit: "commit-secret",
+                    },
+                ],
             },
             review: { mode: "visual", status: "needs_revision", summary: "secret", issues: [], retryTaskIds: [] },
             reviewed: true,
@@ -61,8 +78,13 @@ describe("publicAgentRun", () => {
         });
         const serialized = JSON.stringify(publicRun);
 
-        expect(publicRun).toMatchObject({ prompt: "用户原始需求", cancellation: { pendingCount: 1 }, tasks: [{ id: "video", model: "video-pro", seconds: 60, generateAudio: false, watermark: true, status: "failed" }] });
+        expect(publicRun).toMatchObject({
+            prompt: "图片1 用户原始需求",
+            cancellation: { pendingCount: 1 },
+            tasks: [{ id: "video", model: "video-pro", optimizedPrompt: "电影感海边日落运镜，人物动作自然流畅", seconds: 60, generateAudio: false, watermark: true, status: "failed" }],
+        });
         expect(serialized).not.toContain("内部执行提示词-secret");
+        expect(serialized).not.toContain("@图片1");
         expect(serialized).not.toContain("execution-secret");
         expect(serialized).not.toContain("child-secret");
         expect(serialized).not.toContain("user-secret");
@@ -70,6 +92,7 @@ describe("publicAgentRun", () => {
         expect(serialized).not.toContain('"foundation"');
         expect(serialized).not.toContain("planner-secret");
         expect(serialized).not.toContain("commit-secret");
+        expect(serialized).not.toContain("secret-skill-instructions");
         expect(serialized).not.toContain('"review"');
         expect(serialized).not.toContain('"result"');
     });

@@ -9,12 +9,7 @@ import type { Asset } from "@/lib/library-asset-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { listLibraryAssetPage } from "@/services/api/library-assets";
 import { useUserStore } from "@/stores/use-user-store";
-
-export type InsertAssetPayload =
-    | { kind: "text"; content: string; title: string }
-    | { kind: "image"; dataUrl: string; title: string; storageKey?: string; remoteUrl?: string; serverUrl?: string }
-    | { kind: "video"; url: string; title: string; storageKey?: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number }
-    | { kind: "audio"; url: string; title: string; storageKey?: string; remoteUrl?: string; serverUrl?: string; durationMs?: number };
+import { libraryAssetToInsertPayload, type InsertAssetPayload } from "./canvas-asset-insert";
 
 type Props = {
     open: boolean;
@@ -113,14 +108,7 @@ function MyAssetsTab({ open, onInsert }: { open: boolean; onInsert: (payload: In
     }, [kindFilter, keyword, open, page, reloadKey, userId]);
 
     const handleInsert = (asset: Asset) => {
-        if (asset.kind === "text") {
-            onInsert({ kind: "text", content: asset.data.content, title: asset.title });
-        } else {
-            if (asset.kind === "video")
-                onInsert({ kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, remoteUrl: asset.data.remoteUrl, serverUrl: asset.data.serverUrl, title: asset.title, width: asset.data.width, height: asset.data.height });
-            else if (asset.kind === "audio") onInsert({ kind: "audio", url: asset.data.url, storageKey: asset.data.storageKey, remoteUrl: asset.data.remoteUrl, serverUrl: asset.data.serverUrl, title: asset.title, durationMs: asset.data.durationMs });
-            else onInsert({ kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, remoteUrl: asset.data.remoteUrl, serverUrl: asset.data.serverUrl, title: asset.title });
-        }
+        onInsert(libraryAssetToInsertPayload(asset));
     };
 
     return (

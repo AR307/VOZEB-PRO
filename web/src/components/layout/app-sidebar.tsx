@@ -16,7 +16,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
     const helpActive = pathname.startsWith("/help");
 
     return (
-        <aside className={cn("hidden h-full shrink-0 flex-col border-r border-[#eaecf0] bg-white text-[#111827] transition-[width] duration-200 lg:flex dark:border-[#292d33] dark:bg-[#111316] dark:text-[#f3f5f7]", expanded ? "w-[236px]" : "w-[72px]")}>
+        <aside className={cn("hidden h-full shrink-0 flex-col border-r border-[#eaecf0] bg-white text-[#111827] transition-[width] duration-200 lg:flex dark:border-[#292d33] dark:bg-[#111316] dark:text-[#f3f5f7]", expanded ? "w-44" : "w-[72px]")}>
             <Link href="/create" className={cn("flex h-16 shrink-0 items-center border-b border-[#eaecf0] px-3 dark:border-[#292d33]", expanded ? "justify-start px-5" : "justify-center")} aria-label={site.title || "VOZEB PRO"}>
                 <SiteLogo logoUrl={site.logoUrl} className="size-8" />
                 {expanded ? <span className="ml-3 min-w-0 truncate text-[15px] font-semibold">{site.title || "VOZEB PRO"}</span> : null}
@@ -68,7 +68,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                 <Link
                     href="/help"
                     prefetch
-                    title="帮助中心"
+                    title="帮助"
                     onMouseEnter={() => router.prefetch("/help")}
                     onFocus={() => router.prefetch("/help")}
                     className={cn(
@@ -82,7 +82,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                     {expanded ? (
                         <>
                             <span className="min-w-0 flex-1">
-                                <span className="block truncate">帮助中心</span>
+                                <span className="block truncate">帮助</span>
                             </span>
                             <ChevronRight className="size-4 shrink-0 text-[#7f8995]" />
                         </>

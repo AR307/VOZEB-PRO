@@ -5,9 +5,9 @@ import { landingNavigationTools, navigationGroups, navigationTools } from "./nav
 describe("user navigation order", () => {
     it("keeps the landing page entries in their dedicated order", () => {
         expect(landingNavigationTools).toEqual([
-            { slug: "create", label: "Agent 创作" },
-            { slug: "drama", label: "短剧项目" },
-            { slug: "gallery", label: "作品广场" },
+            { slug: "create", label: "Agent" },
+            { slug: "drama", label: "短剧" },
+            { slug: "gallery", label: "广场" },
         ]);
     });
 
@@ -18,8 +18,8 @@ describe("user navigation order", () => {
     });
 
     it("keeps published works and personal assets in the requested asset order", () => {
-        expect(navigationTools.filter((tool) => tool.group === "assets").map((tool) => tool.label)).toEqual(["作品管理", "我的素材", "我的提示词", "提示词库"]);
-        expect(navigationTools.filter((tool) => tool.group === "community").map((tool) => tool.label)).toEqual(["作品广场", "个人主页"]);
+        expect(navigationTools.filter((tool) => tool.group === "assets").map((tool) => tool.label)).toEqual(["作品", "素材", "提示词", "词库"]);
+        expect(navigationTools.filter((tool) => tool.group === "community").map((tool) => tool.label)).toEqual(["广场", "主页"]);
         expect(navigationTools.find((tool) => tool.group === "community")?.slug).toBe("community");
     });
 });

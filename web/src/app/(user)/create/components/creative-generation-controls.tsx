@@ -7,9 +7,9 @@ import { useState } from "react";
 import type { CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { cn } from "@/lib/utils";
 
-import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement } from "./creative-composer-popover";
-import { creativeComposerToolButtonClass } from "./creative-composer-styles";
-import { CreativeGenerationPreferences as GenerationPreferencesControl, mediaCapabilityLabel, type MediaCapability } from "./creative-generation-preferences";
+import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
+import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
+import { CreativeGenerationPreferences as GenerationPreferencesControl, mediaCapabilityLabel, type MediaCapability } from "@/components/creative-generation-preferences";
 
 export type CreativeModelOption = { id: string; name: string; capability: MediaCapability };
 

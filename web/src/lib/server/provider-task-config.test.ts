@@ -43,6 +43,31 @@ describe("provider task config", () => {
         });
     });
 
+    it("renders the documented Yumeng stable media and frame fields without empty placeholders", () => {
+        const template = '{"reference_images":"{{images}}","reference_videos":"{{videos}}","reference_audios":"{{audios}}","first_image":"{{first_frame}}","last_image":"{{last_frame}}"}';
+
+        expect(
+            buildVideoProviderRequest(
+                template,
+                {},
+                {
+                    images: ["https://cdn.example.com/reference.png"],
+                    videos: ["https://cdn.example.com/reference.mp4"],
+                    audios: ["https://cdn.example.com/reference.mp3"],
+                    first_frame: "https://cdn.example.com/first.png",
+                    last_frame: "https://cdn.example.com/last.png",
+                },
+            ),
+        ).toEqual({
+            reference_images: ["https://cdn.example.com/reference.png"],
+            reference_videos: ["https://cdn.example.com/reference.mp4"],
+            reference_audios: ["https://cdn.example.com/reference.mp3"],
+            first_image: "https://cdn.example.com/first.png",
+            last_image: "https://cdn.example.com/last.png",
+        });
+        expect(buildVideoProviderRequest(template, {}, { images: [], videos: [], audios: [], first_frame: "", last_frame: "" })).toEqual({});
+    });
+
     it("resolves configured query and nested result fields", () => {
         expect(providerQueryPaths({ queryPath: "/tasks/{{taskId}}" } as never, "task 1", [])).toEqual(["/tasks/task%201"]);
         expect(providerQueryPaths({ queryPath: "/result/:task_id" } as never, "video_123", [])).toEqual(["/result/video_123"]);
@@ -81,6 +106,7 @@ describe("provider task config", () => {
         ];
 
         expect(() => assertVideoReferenceRoles({ protocol: "seedance" } as never, frames)).not.toThrow();
+        expect(() => assertVideoReferenceRoles({ protocol: "yumeng", requestTemplate: '{"first_image":"{{first_frame}}","last_image":"{{last_frame}}"}' } as never, frames)).not.toThrow();
         expect(() => assertVideoReferenceRoles({ protocol: "openai" } as never, frames)).toThrow("当前视频模型不支持尾帧输入");
         expect(() => assertVideoReferenceRoles({ protocol: "custom", requestTemplate: '{"first":"{{first_frame_url}}","last":"{{last_frame_url}}"}' } as never, frames)).not.toThrow();
         expect(() => assertVideoReferenceRoles({ protocol: "custom", requestTemplate: '{"first":"{{first_frame_url}}"}' } as never, frames)).toThrow("当前视频模型不支持尾帧输入");

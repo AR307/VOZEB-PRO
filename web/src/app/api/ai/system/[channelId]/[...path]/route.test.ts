@@ -604,13 +604,13 @@ describe("Yumeng v2 model-center proxy", () => {
                 {
                     id: "channel-one",
                     enabled: true,
-                    baseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer",
+                    baseUrl: "http://token.myairealm.com/",
                     apiKey: "yumeng-secret",
                     apiFormat: "openai",
                     models: ["seedream_5.0Pro"],
                     advancedConfig: {
                         protocol: "yumeng",
-                        modelConfigs: { "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id" } },
+                        modelConfigs: { "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id" } },
                     },
                 },
             ],
@@ -620,38 +620,88 @@ describe("Yumeng v2 model-center proxy", () => {
     it("keeps the v2 path literal instead of inserting v1", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
         const response = await POST(
-            new Request("http://localhost/api/ai/system/channel-one/v2/model-center/tasks", {
+            new Request("http://localhost/api/ai/system/channel-one/kyyReactApiServer/v2/model-center/tasks", {
                 method: "POST",
                 headers: { "content-type": "application/json", ...systemModelHeaders("yumeng-image", "seedream_5.0Pro") },
                 body: JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" }),
             }),
-            { params: Promise.resolve({ channelId: "channel-one", path: ["v2", "model-center", "tasks"] }) },
+            { params: Promise.resolve({ channelId: "channel-one", path: ["kyyReactApiServer", "v2", "model-center", "tasks"] }) },
         );
 
         expect(response.status).toBe(200);
-        expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
+        expect(fetchMock.mock.calls[0][0]).toBe("http://token.myairealm.com/kyyReactApiServer/v2/model-center/tasks");
         expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer yumeng-secret");
     });
 
-    it("does not duplicate a version segment already present in the channel base URL", async () => {
+    it("does not duplicate a path prefix already present in the channel Base URL", async () => {
         const settings = await mocks.getAuthSettings();
         mocks.getAuthSettings.mockResolvedValue({
             ...settings,
-            systemChannels: settings.systemChannels.map((channel: { baseUrl: string }) => ({ ...channel, baseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer/v2" })),
+            systemChannels: settings.systemChannels.map((channel: { baseUrl: string }) => ({ ...channel, baseUrl: "http://token.myairealm.com/kyyReactApiServer" })),
         });
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
 
         const response = await POST(
-            new Request("http://localhost/api/ai/system/channel-one/v2/model-center/tasks", {
+            new Request("http://localhost/api/ai/system/channel-one/kyyReactApiServer/v2/model-center/tasks", {
                 method: "POST",
                 headers: { "content-type": "application/json", ...systemModelHeaders("yumeng-image", "seedream_5.0Pro") },
                 body: JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" }),
             }),
-            { params: Promise.resolve({ channelId: "channel-one", path: ["v2", "model-center", "tasks"] }) },
+            { params: Promise.resolve({ channelId: "channel-one", path: ["kyyReactApiServer", "v2", "model-center", "tasks"] }) },
         );
 
         expect(response.status).toBe(200);
-        expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
+        expect(fetchMock.mock.calls[0][0]).toBe("http://token.myairealm.com/kyyReactApiServer/v2/model-center/tasks");
+    });
+});
+
+describe("configured versioned protocol billing", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("seedance-special-video", "video", "sd_2.0_fast_special_720p")],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://provider.example/kyyReactApiServer",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: ["sd_2.0_fast_special_720p"],
+                    advancedConfig: {
+                        protocol: "seedance-special",
+                        modelConfigs: {
+                            "sd_2.0_fast_special_720p": {
+                                capability: "video",
+                                protocol: "seedance-special",
+                                createPath: "/v1/seedance-special/videos",
+                                queryPath: "/v1/result/:task_id",
+                            },
+                        },
+                    },
+                },
+            ],
+        });
+    });
+
+    it("classifies a configured v1 create path from the trusted model header", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ task_id: "seedance-task", status: "queued" }));
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/v1/seedance-special/videos", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...systemModelHeaders("seedance-special-video", "sd_2.0_fast_special_720p") },
+                body: JSON.stringify({ content: [{ type: "text", text: "test" }], duration: 5, ratio: "16:9" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "seedance-special", "videos"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0]?.[0]).toBe("https://provider.example/kyyReactApiServer/v1/seedance-special/videos");
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "seedance-special-video", 1, "video", expect.any(String), expect.any(String));
     });
 });
 

@@ -88,7 +88,7 @@ describe("image task runtime submission safety", () => {
     });
 
     it("routes Yumeng image tasks through the declarative async runtime", async () => {
-        state.config = { ...state.config, advancedConfig: { ...state.config.advancedConfig!, protocol: "yumeng", createPath: "/v2/model-center/tasks", queryPath: "/v2/model-center/tasks/:task_id" } };
+        state.config = { ...state.config, advancedConfig: { ...state.config.advancedConfig!, protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id" } };
         state.candidateConfigs = [];
         mocks.runCustom.mockResolvedValueOnce({ dataUrl: "", pending: { id: "yumeng-task", mediaBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer", pollBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer" } });
 

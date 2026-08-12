@@ -67,7 +67,8 @@ describe("parseChannelExampleConfig", () => {
         const result = parseChannelExampleConfig(`curl https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks -d '${body}'`, channel, advanced);
 
         expect(result?.patch.advancedConfig?.protocol).toBe("yumeng");
-        expect(result?.patch.advancedConfig?.createPath).toBe("/v2/model-center/tasks");
+        expect(result?.patch.baseUrl).toBeUndefined();
+        expect(result?.patch.advancedConfig?.createPath).toBe("/kyyReactApiServer/v2/model-center/tasks");
         expect(result?.patch.models).toContain(model);
     });
 });

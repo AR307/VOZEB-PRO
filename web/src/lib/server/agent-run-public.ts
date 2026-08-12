@@ -11,7 +11,7 @@ export function publicAgentRun(run: AgentRun) {
         surface: run.surface,
         projectId: run.projectId,
         status: run.status,
-        prompt: run.prompt,
+        prompt: run.publicPrompt || run.prompt,
         referencedAssetIds: run.referencedAssetIds || [],
         selectedSkillIds: run.selectedSkillIds,
         requestedModelIds: run.requestedModelIds,
@@ -41,11 +41,13 @@ export function publicAgentRunEvent(event: CreativeRunEvent): CreativeRunEvent {
 }
 
 function publicAgentRunTask(task: AgentRunTask) {
+    const optimizedPrompt = task.optimizedPrompt?.trim() || publicPromptFromExecutionPrompt(task.prompt);
     return {
         id: task.id,
         title: task.title,
         type: task.type,
         model: task.model,
+        optimizedPrompt: optimizedPrompt || undefined,
         ratio: task.ratio,
         quality: task.quality,
         seconds: task.seconds,
@@ -58,6 +60,16 @@ function publicAgentRunTask(task: AgentRunTask) {
         status: task.status,
         error: task.error ? toSafeGenerationErrorMessage(task.error, "生成任务失败") : undefined,
     };
+}
+
+function publicPromptFromExecutionPrompt(prompt: string | undefined) {
+    if (!prompt) return "";
+    const markers = ["\n\n统一创作约束：", "\n\n执行以下已选 Skill 约束：", "\n\n严格输出要求：", "\n\n基于画布已有节点进行局部修改：", "\n\n使用已引用创作资产：", "\n\n请保持与以下已完成产物一致，并将依赖媒体作为真实生成参考："];
+    const boundary = markers.reduce((earliest, marker) => {
+        const index = prompt.indexOf(marker);
+        return index >= 0 && (earliest < 0 || index < earliest) ? index : earliest;
+    }, -1);
+    return boundary >= 0 ? prompt.slice(0, boundary).trim() : "";
 }
 
 function publicCanvasOps(value: unknown[]) {

@@ -659,6 +659,36 @@ describe("video generation candidate failover", () => {
         expect(JSON.parse(String(init.body))).toEqual({ model: "videos_stable", prompt: "A test video", duration: 5, ratio: "16:9", resolution: "720p" });
     });
 
+    it("submits the documented Yumeng stable fields to the v2 model-center path", async () => {
+        mocks.getAuthSettings.mockResolvedValue(yumengStableSettings());
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "yumeng-task", status: "queued" }));
+        const references = [
+            { type: "image", url: "https://cdn.example.com/reference.png" },
+            { type: "video", url: "https://cdn.example.com/reference.mp4" },
+            { type: "audio", url: "https://cdn.example.com/reference.mp3" },
+            { type: "image", role: "first_frame", url: "https://cdn.example.com/first.png" },
+            { type: "image", role: "last_frame", url: "https://cdn.example.com/last.png" },
+        ];
+
+        const response = await POST(request({ model: "videos_stable", videoSeconds: "60", size: "16:9", vquality: "720" }, references));
+        const [url, init] = mocks.fetchInternalApi.mock.calls[0] as [string, RequestInit];
+        const body = JSON.parse(String(init.body));
+
+        expect(response.status).toBe(200);
+        expect(url).toBe("http://localhost/api/ai/system/yumeng/kyyReactApiServer/v2/model-center/tasks");
+        expect(body).toMatchObject({
+            model: "videos_stable",
+            duration: 15,
+            aspect_ratio: "16:9",
+            resolution: "720p",
+            reference_images: ["https://cdn.example.com/reference.png"],
+            reference_videos: ["https://cdn.example.com/reference.mp4"],
+            reference_audios: ["https://cdn.example.com/reference.mp3"],
+            first_image: "https://cdn.example.com/first.png",
+            last_image: "https://cdn.example.com/last.png",
+        });
+    });
+
     it("rejects local reference URLs before creating a public-URL provider task", async () => {
         mocks.getAuthSettings.mockResolvedValue(publicUrlCompatibleSettings());
 
@@ -740,6 +770,52 @@ function publicUrlCompatibleSettings() {
             },
         ],
         logicalModels: [{ ...settings.logicalModels[0], bindings: [settings.logicalModels[0].bindings[0]] }],
+    };
+}
+
+function yumengStableSettings() {
+    const model = "videos_stable";
+    const operation = {
+        capability: "video" as const,
+        source: "manual" as const,
+        protocol: "yumeng" as const,
+        apiFormat: "openai" as const,
+        createPath: "/kyyReactApiServer/v2/model-center/tasks",
+        imageToVideoPath: "/kyyReactApiServer/v2/model-center/tasks",
+        queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id",
+        requestTemplate:
+            '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_videos":"{{videos}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","first_image":"{{first_frame}}","last_image":"{{last_frame}}"}',
+        resultField: "result_url / video_url",
+        statusField: "status",
+        durationRange: "4-15 秒",
+        referenceRule: "参考素材必须是上游可访问的 URL。",
+        supportsReferenceImage: true,
+        supportsReferenceVideo: true,
+        supportsReferenceAudio: true,
+    };
+    return {
+        ...settings,
+        systemChannels: [
+            {
+                id: "yumeng",
+                name: "昱梦",
+                baseUrl: "http://token.myairealm.com/",
+                apiKey: "yumeng-secret",
+                apiFormat: "openai" as const,
+                models: [model],
+                enabled: true,
+                advancedConfig: { protocol: "yumeng" as const, modelCapabilities: { [model]: "video" as const }, modelConfigs: { [model]: operation } },
+            },
+        ],
+        logicalModels: [
+            {
+                id: model,
+                name: model,
+                capability: "video" as const,
+                enabled: true,
+                bindings: [{ id: "yumeng-stable", channelId: "yumeng", upstreamModel: model, enabled: true, priority: 1 }],
+            },
+        ],
     };
 }
 

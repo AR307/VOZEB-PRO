@@ -139,6 +139,10 @@ export async function deleteUserLocalMediaAssets(userId: string, storageKeys: st
     return deleteRegisteredMediaAssets(registrations.filter((item) => item.ownerUserId === userId));
 }
 
+export async function deleteRegisteredLocalMediaSnapshots(registrations: LocalMediaRegistration[]) {
+    return deleteRegisteredMediaAssets(registrations);
+}
+
 export async function deleteLocalMediaAssetsByStorageKeys(storageKeys: string[], scope?: "generation" | "reference") {
     const normalizedKeys = Array.from(new Set(storageKeys.map((key) => key.trim()).filter(Boolean)));
     const registrations = await getLocalMediaRegistrations(normalizedKeys);

@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useCallback, useMemo } from "react";
 
 import { nanoid } from "nanoid";
@@ -9,10 +8,6 @@ import { CanvasNodeType, type ConnectionHandle } from "../types";
 import { useCanvasLocalAgentBridge } from "../use-canvas-local-agent-bridge";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "../utils/canvas-resource-references";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { PendingConnectionCreate, type CanvasCreatableNodeType, createCanvasNode } from "./canvas-page-elements";
 import { getGenerationCount, normalizeConnection } from "./canvas-page-utils";

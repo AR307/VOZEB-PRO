@@ -99,7 +99,50 @@ export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
 }
 
 export function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
-    return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs };
+    return { content: audio.url, storageKey: audio.storageKey, remoteUrl: audio.remoteUrl, serverUrl: audio.serverUrl, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs };
+}
+
+export function replaceCanvasNodeMediaMetadata(current: CanvasNodeMetadata | undefined, media: CanvasNodeMetadata, patch: CanvasNodeMetadata = {}): CanvasNodeMetadata {
+    return {
+        ...current,
+        prompt: undefined,
+        sourcePrompt: undefined,
+        panoramaSourcePrompt: undefined,
+        generationType: undefined,
+        model: undefined,
+        size: undefined,
+        quality: undefined,
+        count: undefined,
+        seconds: undefined,
+        vquality: undefined,
+        generateAudio: undefined,
+        watermark: undefined,
+        videoReferenceMode: undefined,
+        videoFirstFrame: undefined,
+        videoLastFrame: undefined,
+        videoReferences: undefined,
+        audioVoice: undefined,
+        audioFormat: undefined,
+        audioSpeed: undefined,
+        audioInstructions: undefined,
+        cameraControl: undefined,
+        panoramaProjection: undefined,
+        references: undefined,
+        isBatchRoot: undefined,
+        batchRootId: undefined,
+        batchChildIds: undefined,
+        batchUsesReferenceImages: undefined,
+        primaryImageId: undefined,
+        imageBatchExpanded: undefined,
+        imageTask: undefined,
+        videoTask: undefined,
+        textTask: undefined,
+        audioTask: undefined,
+        errorDetails: undefined,
+        freeResize: false,
+        ...media,
+        ...patch,
+    };
 }
 
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
@@ -208,7 +251,8 @@ export async function hydrateAssistantImages(sessions: CanvasAssistantSession[])
 }
 
 export function getGenerationCount(count: string) {
-    return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
+    const value = Math.floor(Number(count));
+    return Number.isSafeInteger(value) && value > 0 ? value : 1;
 }
 
 export function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {

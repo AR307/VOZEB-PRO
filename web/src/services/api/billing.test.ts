@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { listBillingCoupons } from "./billing";
+import { listBillingCoupons, subscribeBillingOrder } from "./billing";
 
 describe("billing API client", () => {
     afterEach(() => vi.unstubAllGlobals());
@@ -28,5 +28,32 @@ describe("billing API client", () => {
         await listBillingCoupons({ productId: "product-one", quantity: 2, pageSize: 50, includeTemplates: false });
 
         expect(fetchMock).toHaveBeenCalledWith("/api/billing/coupons?pageSize=50&productId=product-one&quantity=2&includeTemplates=false", { cache: "no-store" });
+    });
+
+    it("subscribes to one order and closes after a terminal status", () => {
+        class FakeEventSource {
+            static instance: FakeEventSource;
+            onmessage: ((event: MessageEvent<string>) => void) | null = null;
+            onerror: (() => void) | null = null;
+            close = vi.fn();
+
+            constructor(readonly url: string) {
+                FakeEventSource.instance = this;
+            }
+        }
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const onOrder = vi.fn();
+        const onError = vi.fn();
+
+        const unsubscribe = subscribeBillingOrder("order one", onOrder, onError);
+        const source = FakeEventSource.instance;
+        source.onmessage?.({ data: JSON.stringify({ code: 0, data: { order: { id: "order one", status: "paid" } }, msg: "" }) } as MessageEvent<string>);
+
+        expect(source.url).toBe("/api/billing/orders/order%20one/events");
+        expect(onOrder).toHaveBeenCalledWith(expect.objectContaining({ id: "order one", status: "paid" }));
+        expect(source.close).toHaveBeenCalledTimes(1);
+        expect(onError).not.toHaveBeenCalled();
+        unsubscribe();
+        expect(source.close).toHaveBeenCalledTimes(2);
     });
 });

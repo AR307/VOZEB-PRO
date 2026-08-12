@@ -11,7 +11,8 @@ type RunHandlers = {
     onOps: (ops: CanvasAgentOp[]) => void;
 };
 
-export function watchCanvasAgentRun(runId: string, handlers: RunHandlers) {
+export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, options: { signal?: AbortSignal } = {}) {
+    if (options.signal?.aborted) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
         const stream = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
         let appliedPlan = false;
@@ -27,9 +28,16 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers) {
             if (settled) return;
             settled = true;
             stream.close();
+            options.signal?.removeEventListener("abort", abort);
             if (error) reject(error);
             else resolve();
         };
+        const abort = () => finish();
+        options.signal?.addEventListener("abort", abort, { once: true });
+        const listen = (type: string, listener: (event: Event) => void) =>
+            stream.addEventListener(type, (event) => {
+                if (!settled) listener(event);
+            });
         const read = <T>(event: Event) => JSON.parse((event as MessageEvent<string>).data) as T;
         const setPaused = (value: boolean) => {
             if (paused === value) return;
@@ -79,9 +87,9 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers) {
             }
         };
 
-        stream.addEventListener("run.planning", () => reportStage({ key: "planning", text: "正在理解需求并分析当前画布" }));
-        stream.addEventListener("skills.selected", () => reportStage({ key: "skills", text: "正在匹配合适的创作技能" }));
-        stream.addEventListener("canvas.ops", (event) => {
+        listen("run.planning", () => reportStage({ key: "planning", text: "正在理解需求并分析当前画布" }));
+        listen("skills.selected", () => reportStage({ key: "skills", text: "正在匹配合适的创作技能" }));
+        listen("canvas.ops", (event) => {
             const payload = read<{ data?: { ops?: CanvasAgentOp[]; reply?: string } }>(event);
             if (!appliedPlan && payload.data?.ops?.length) {
                 appliedPlan = true;
@@ -89,16 +97,16 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers) {
             }
             reportStage({ key: "plan", text: "文本执行计划已生成，正在准备任务" });
         });
-        stream.addEventListener("task.running", (event) => {
+        listen("task.running", (event) => {
             const payload = read<{ data?: { title?: string; attempts?: number; ops?: CanvasAgentOp[] } }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
             reportStage({ key: "executing", text: `正在执行「${payload.data?.title || "创作任务"}」${payload.data?.attempts ? `（第 ${payload.data.attempts} 次）` : ""}` });
         });
-        stream.addEventListener("task.created", (event) => {
+        listen("task.created", (event) => {
             const payload = read<{ data?: { ops?: CanvasAgentOp[] } }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
         });
-        stream.addEventListener("task.child.completed", (event) => {
+        listen("task.child.completed", (event) => {
             const payload = read<{ data?: ChildTaskEventData }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
             for (const nodeId of payload.data?.outputNodeIds || []) completedOutputNodeIds.add(nodeId);
@@ -107,58 +115,58 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers) {
             reportStage({ key: "executing", text: progress });
             handlers.onAssistant(progress, latestOutput);
         });
-        stream.addEventListener("task.child.failed", (event) => {
+        listen("task.child.failed", (event) => {
             const payload = read<{ data?: ChildTaskEventData }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
             const progress = childProgressText(payload.data);
             reportStage({ key: "executing", text: progress });
             handlers.onAssistant(progress, latestOutput);
         });
-        stream.addEventListener("task.completed", (event) => {
+        listen("task.completed", (event) => {
             const payload = read<{ data?: { message?: string; title?: string; outputNodeIds?: string[]; type?: "text" | "image" | "video" | "audio"; ops?: CanvasAgentOp[] } }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
             latestOutput = { nodeIds: payload.data?.outputNodeIds, taskType: payload.data?.type };
             handlers.onAssistant(payload.data?.message || `「${payload.data?.title || "创作任务"}」已完成，正在继续处理。`, latestOutput);
         });
-        stream.addEventListener("task.failed", (event) => {
+        listen("task.failed", (event) => {
             const payload = read<{ data?: { taskId?: string; title?: string; error?: string; ops?: CanvasAgentOp[] } }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
             if (!payload.data?.taskId) return;
             latestFailedTask = { taskId: payload.data.taskId, title: payload.data.title };
             handlers.onAssistant(`「${payload.data.title || "创作任务"}」执行失败：${payload.data.error || "生成服务暂时不可用"}`, { taskType: undefined, nodeIds: [], ...latestFailedTask, runId });
         });
-        stream.addEventListener("task.retry.requested", (event) => {
+        listen("task.retry.requested", (event) => {
             const payload = read<{ data?: { ops?: CanvasAgentOp[] } }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
         });
-        stream.addEventListener("run.review.retry", () => reportStage({ key: "reviewing", text: "发现可优化内容，正在重新生成" }));
-        stream.addEventListener("run.review.passed", () => reportStage({ key: "finalizing", text: "检查完成，正在整理结果" }));
-        stream.addEventListener("run.review.unavailable", () => reportStage({ key: "finalizing", text: "正在整理已完成结果" }));
-        stream.addEventListener("run.completed", (event) => {
+        listen("run.review.retry", () => reportStage({ key: "reviewing", text: "发现可优化内容，正在重新生成" }));
+        listen("run.review.passed", () => reportStage({ key: "finalizing", text: "检查完成，正在整理结果" }));
+        listen("run.review.unavailable", () => reportStage({ key: "finalizing", text: "正在整理已完成结果" }));
+        listen("run.completed", (event) => {
             const payload = read<{ data?: { reply?: string } }>(event);
             handlers.onAssistant(payload.data?.reply || "创作计划与后台生成任务已全部完成。", latestOutput);
             finish();
         });
-        stream.addEventListener("run.failed", (event) => {
+        listen("run.failed", (event) => {
             const payload = read<{ data?: { message?: string } }>(event);
             if (!latestFailedTask) handlers.onAssistant(payload.data?.message || "Agent 执行失败", { runId, title: "Agent 执行失败" });
             finish();
         });
-        stream.addEventListener("run.cancelled", (event) => {
+        listen("run.cancelled", (event) => {
             const payload = read<{ data?: { ops?: CanvasAgentOp[] } }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
             handlers.onAssistant("Agent 任务已取消。");
             finish();
         });
-        stream.addEventListener("run.paused", () => {
+        listen("run.paused", () => {
             setPaused(true);
             reportStage({ key: "paused", text: "任务已暂停" });
         });
-        stream.addEventListener("run.resumed", () => {
+        listen("run.resumed", () => {
             setPaused(false);
             reportStage({ key: "executing", text: "任务已恢复，正在继续执行" });
         });
-        stream.addEventListener("run.snapshot", (event) => {
+        listen("run.snapshot", (event) => {
             const payload = read<{ status?: string; tasks?: Array<{ id?: string; title?: string; status?: string; error?: string }> }>(event);
             if (payload.status === "cancelled") {
                 handlers.onAssistant("Agent 任务已取消。");

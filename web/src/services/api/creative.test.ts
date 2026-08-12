@@ -14,7 +14,7 @@ vi.mock("@/services/api/session-expiration", () => {
     };
 });
 
-import { controlCreativeAgentRun, createCreativeAgentRun, listCreativeConversationPage, listCreativeMessages, watchCreativeAgentRun } from "./creative";
+import { controlCreativeAgentRun, createCreativeAgentRun, listCreativeAgentRuns, listCreativeConversationPage, listCreativeMessages, retryCreativeAgentTask, watchCreativeAgentRun } from "./creative";
 import type { CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
 
 class FakeEventSource extends EventTarget {
@@ -248,6 +248,21 @@ describe("创作会话来源", () => {
                 body: JSON.stringify({ conversationId: "conversation-one" }),
             }),
         );
+    });
+
+    it("scopes Canvas run recovery and failed task retries to stable identities", async () => {
+        const run = { id: "run-one", conversationId: "conversation-one", inputMessageId: "input-one", assistantMessageId: "assistant-one", status: "running", assetIds: [], tasks: [] };
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ code: 0, data: { runs: [run], run }, msg: "OK" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await listCreativeAgentRuns("canvas", { activeOnly: true, projectId: "project-one" });
+        await retryCreativeAgentTask("run-one", "task-one", "conversation-one");
+
+        expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/agent/runs?surface=canvas&status=active&projectId=project-one");
+        expect(fetchMock.mock.calls[1]).toEqual([
+            "/api/agent/runs/run-one/tasks/task-one/retry",
+            expect.objectContaining({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: "conversation-one" }), cache: "no-store" }),
+        ]);
     });
 
     it.each([

@@ -108,6 +108,64 @@ describe("drama project service updates", () => {
         await expect(updateDramaProjectForUser("user-one", current.id, { ...project("2026-07-19T08:00:02.000Z", "新标题"), ratio: "5000x5000" })).resolves.toMatchObject({ ratio: "5000x5000" });
     });
 
+    it("keeps projects beyond the former collection and text thresholds", async () => {
+        const current = project("2026-07-19T08:00:01.000Z", "旧标题");
+        mocks.getDramaProject.mockResolvedValue(current);
+        const longDescription = "完整镜头说明".repeat(1_000);
+        const shots = Array.from({ length: 501 }, (_, index) => ({
+            id: `shot-${index}`,
+            order: index + 1,
+            title: `镜头 ${index}`,
+            description: index === 500 ? longDescription : "描述",
+            sourceText: "原文",
+            duration: index === 500 ? 21 : 5,
+            utterances: index === 500 ? Array.from({ length: 101 }, (__, utteranceIndex) => ({ id: `utterance-${utteranceIndex}`, order: utteranceIndex + 1, type: "dialogue", speaker: "角色", text: `台词 ${utteranceIndex}` })) : [],
+            characterIds: Array.from({ length: 51 }, (__, relationIndex) => `character-${relationIndex}`),
+            propIds: Array.from({ length: 51 }, (__, relationIndex) => `prop-${relationIndex}`),
+            clueIds: Array.from({ length: 51 }, (__, relationIndex) => `clue-${relationIndex}`),
+        }));
+        const characters = Array.from({ length: 201 }, (_, index) => ({
+            id: `character-${index}`,
+            name: `角色 ${index}`,
+            references: index === 200 ? Array.from({ length: 13 }, (__, referenceIndex) => ({ id: `reference-${referenceIndex}`, url: `/api/reference-assets/reference-${referenceIndex}.png`, source: "upload", label: `参考 ${referenceIndex}` })) : [],
+        }));
+        const episodes = Array.from({ length: 101 }, (_, index) => ({
+            id: `episode-${index}`,
+            title: `第 ${index + 1} 集`,
+            script: "剧本",
+            shots: index === 100 ? shots : [],
+            visualReview:
+                index === 100 ? { mode: "text", status: "needs_revision", summary: "需要调整", issues: Array.from({ length: 9 }, (__, issueIndex) => ({ category: `问题 ${issueIndex}`, severity: "low", message: `说明 ${issueIndex}` })) } : undefined,
+        }));
+        const input = {
+            ...project("2026-07-19T08:00:02.000Z", "新标题"),
+            activeEpisodeId: "episode-100",
+            episodes,
+            characters,
+            scenes: Array.from({ length: 201 }, (_, index) => ({ id: `scene-${index}`, name: `场景 ${index}` })),
+            props: Array.from({ length: 201 }, (_, index) => ({ id: `prop-${index}`, name: `道具 ${index}` })),
+            clues: Array.from({ length: 201 }, (_, index) => ({ id: `clue-${index}`, name: `线索 ${index}` })),
+            sourceAssets: Array.from({ length: 101 }, (_, index) => ({ id: `source-${index}`, type: "text", title: `素材 ${index}`, textContent: `内容 ${index}` })),
+        };
+
+        const saved = await updateDramaProjectForUser("user-one", current.id, input);
+
+        expect(saved.episodes).toHaveLength(101);
+        expect(saved.characters).toHaveLength(201);
+        expect(saved.scenes).toHaveLength(201);
+        expect(saved.props).toHaveLength(201);
+        expect(saved.clues).toHaveLength(201);
+        expect(saved.sourceAssets).toHaveLength(101);
+        expect(saved.episodes[100].shots).toHaveLength(501);
+        expect(saved.episodes[100].shots[500]).toMatchObject({ duration: 21, description: longDescription });
+        expect(saved.episodes[100].shots[500].utterances).toHaveLength(101);
+        expect(saved.episodes[100].shots[500].characterIds).toHaveLength(51);
+        expect(saved.episodes[100].shots[500].propIds).toHaveLength(51);
+        expect(saved.episodes[100].shots[500].clueIds).toHaveLength(51);
+        expect(saved.episodes[100].visualReview?.issues).toHaveLength(9);
+        expect(saved.characters[200].references).toHaveLength(13);
+    });
+
     it("archives the new conversation when project creation fails", async () => {
         const error = new Error("write failed");
         mocks.createDramaProject.mockRejectedValue(error);

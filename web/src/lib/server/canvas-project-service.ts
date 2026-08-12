@@ -4,7 +4,7 @@ import type { CanvasProject, CanvasProjectMutation, CanvasProjectSaveAck, Create
 import { createCanvasProject, CanvasProjectStoreError, getCanvasProject, listCanvasProjectSummaries, updateCanvasProject, updateCanvasProjectMutationPatch } from "@/lib/server/canvas-project-store";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 import { createCreativeConversation } from "@/lib/server/creative-runtime-store";
-import { deleteCanvasProjectAggregates } from "@/lib/server/creative-entity-deletion-store";
+import { CreativeEntityDeletionConflict, deleteCanvasAssistantConversationAggregates, deleteCanvasProjectAggregates } from "@/lib/server/creative-entity-deletion-store";
 
 const MAX_PROJECT_BYTES = 5 * 1024 * 1024;
 
@@ -86,22 +86,32 @@ async function updateCanvasProjectMutationForUser(userId: string, id: string, in
 }
 
 export async function deleteCanvasProjectsForUser(userId: string, value: unknown) {
-    const ids = Array.isArray(value)
-        ? value
-              .map((id) => text(id, 160))
-              .filter(Boolean)
-              .slice(0, 100)
-        : [];
+    const ids = Array.isArray(value) ? value.map((id) => text(id, 160)).filter(Boolean) : [];
     const result = await deleteCanvasProjectAggregates(userId, ids);
     await deleteUserLocalMediaAssets(userId, result.mediaStorageKeys);
     return result.deletedProjects;
 }
 
+export async function deleteCanvasAssistantConversationsForUser(userId: string, projectId: string, value: unknown) {
+    const ids = normalizeEntityDeletes(Array.isArray(value) ? value : []);
+    const project = await getCanvasProjectForUser(userId, projectId);
+    if (!ids.length) return { deleted: 0, chatSessions: project.chatSessions, activeChatId: project.activeChatId };
+    let result: Awaited<ReturnType<typeof deleteCanvasAssistantConversationAggregates>>;
+    try {
+        result = await deleteCanvasAssistantConversationAggregates(userId, projectId, ids);
+    } catch (error) {
+        if (error instanceof CreativeEntityDeletionConflict) throw new CanvasProjectServiceError(error.message, 409);
+        throw error;
+    }
+    await deleteUserLocalMediaAssets(userId, result.mediaStorageKeys);
+    return { deleted: result.deletedConversations, chatSessions: result.canvasAssistantState?.chatSessions || [], activeChatId: result.canvasAssistantState?.activeChatId || null };
+}
+
 function normalizeProject(value: Record<string, unknown>, current: CanvasProject): CanvasProject {
     const sanitized = sanitizeProjectPayload(value);
-    const nodes = Array.isArray(sanitized.nodes) ? sanitized.nodes.slice(0, 2000) : current.nodes;
-    const connections = Array.isArray(sanitized.connections) ? sanitized.connections.slice(0, 5000) : current.connections;
-    const chatSessions = Array.isArray(sanitized.chatSessions) ? sanitized.chatSessions.slice(0, 100) : current.chatSessions;
+    const nodes = Array.isArray(sanitized.nodes) ? sanitized.nodes : current.nodes;
+    const connections = Array.isArray(sanitized.connections) ? sanitized.connections : current.connections;
+    const chatSessions = Array.isArray(sanitized.chatSessions) ? sanitized.chatSessions : current.chatSessions;
     return {
         ...current,
         title: text(sanitized.title, 120) || current.title,
@@ -132,12 +142,12 @@ function normalizeMutation(input: Record<string, unknown>, mutationId: string, b
     if (typeof sanitized.showImageInfo === "boolean") mutation.showImageInfo = sanitized.showImageInfo;
     const viewport = normalizeMutationViewport(sanitized.viewport);
     if (viewport) mutation.viewport = viewport;
-    if (Array.isArray(sanitized.nodeUpserts)) mutation.nodeUpserts = normalizeEntityUpserts<CanvasProject["nodes"][number]>(sanitized.nodeUpserts, 2000);
-    if (Array.isArray(sanitized.nodeDeletes)) mutation.nodeDeletes = normalizeEntityDeletes(sanitized.nodeDeletes, 2000);
-    if (Array.isArray(sanitized.connectionUpserts)) mutation.connectionUpserts = normalizeEntityUpserts<CanvasProject["connections"][number]>(sanitized.connectionUpserts, 5000);
-    if (Array.isArray(sanitized.connectionDeletes)) mutation.connectionDeletes = normalizeEntityDeletes(sanitized.connectionDeletes, 5000);
-    if (Array.isArray(sanitized.chatSessionUpserts)) mutation.chatSessionUpserts = normalizeEntityUpserts<CanvasProject["chatSessions"][number]>(sanitized.chatSessionUpserts, 100);
-    if (Array.isArray(sanitized.chatSessionDeletes)) mutation.chatSessionDeletes = normalizeEntityDeletes(sanitized.chatSessionDeletes, 100);
+    if (Array.isArray(sanitized.nodeUpserts)) mutation.nodeUpserts = normalizeEntityUpserts<CanvasProject["nodes"][number]>(sanitized.nodeUpserts);
+    if (Array.isArray(sanitized.nodeDeletes)) mutation.nodeDeletes = normalizeEntityDeletes(sanitized.nodeDeletes);
+    if (Array.isArray(sanitized.connectionUpserts)) mutation.connectionUpserts = normalizeEntityUpserts<CanvasProject["connections"][number]>(sanitized.connectionUpserts);
+    if (Array.isArray(sanitized.connectionDeletes)) mutation.connectionDeletes = normalizeEntityDeletes(sanitized.connectionDeletes);
+    if (Array.isArray(sanitized.chatSessionUpserts)) mutation.chatSessionUpserts = normalizeEntityUpserts<CanvasProject["chatSessions"][number]>(sanitized.chatSessionUpserts);
+    if (Array.isArray(sanitized.chatSessionDeletes)) mutation.chatSessionDeletes = normalizeEntityDeletes(sanitized.chatSessionDeletes);
     return mutation;
 }
 
@@ -171,18 +181,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function normalizeEntityUpserts<T extends { id: string }>(value: unknown[], max: number): T[] {
+function normalizeEntityUpserts<T extends { id: string }>(value: unknown[]): T[] {
     const byId = new Map<string, T>();
     value.forEach((item) => {
         if (!isRecord(item) || typeof item.id !== "string" || !item.id.trim()) return;
         const id = text(item.id, 160);
         if (id) byId.set(id, { ...item, id } as T);
     });
-    return Array.from(byId.values()).slice(0, max);
+    return Array.from(byId.values());
 }
 
-function normalizeEntityDeletes(value: unknown[], max: number) {
-    return Array.from(new Set(value.map((item) => text(item, 160)).filter(Boolean))).slice(0, max);
+function normalizeEntityDeletes(value: unknown[]) {
+    return Array.from(new Set(value.map((item) => text(item, 160)).filter(Boolean)));
 }
 
 function text(value: unknown, max: number) {

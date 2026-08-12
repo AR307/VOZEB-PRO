@@ -102,6 +102,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "billing_orders_created_idx",
     "billing_orders_pending_expires_idx",
     "billing_orders_provider_idx",
+    "billing_orders_provider_payment_idx",
     "billing_orders_product_idx",
     "user_coupons_user_status_idx",
     "user_coupons_template_user_idx",

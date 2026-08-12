@@ -52,7 +52,7 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         const composerPatchCount = patchRequests.length;
         await composer.fill("单击即可输入并保存");
         await expect.poll(() => patchRequests.length).toBeGreaterThan(composerPatchCount);
-        await expect(page.getByLabel("画布已保存")).toBeVisible();
+        await expectCanvasSaved(page);
 
         await page.reload({ waitUntil: "domcontentloaded" });
         const restoredConfigNode = page.locator('[data-node-id="config-target"]');
@@ -128,7 +128,7 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         await expect(page.locator("[data-connection-id]")).toHaveCount(2);
         await expect(page.locator("[data-node-id]")).toHaveCount(4);
         await page.waitForTimeout(500);
-        await expect(page.getByLabel("画布已保存")).toBeVisible();
+        await expectCanvasSaved(page);
 
         patchRequests.length = 0;
         const beforeDrag = await sourceNode.boundingBox();
@@ -141,7 +141,7 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         expect(patchRequests).toHaveLength(0);
         await page.mouse.up();
         await expect.poll(() => patchRequests.length).toBe(1);
-        await expect(page.getByLabel("画布已保存")).toBeVisible();
+        await expectCanvasSaved(page);
         const afterDrag = await sourceNode.boundingBox();
         expect(afterDrag!.x).toBeGreaterThan(beforeDrag!.x + 70);
 
@@ -155,7 +155,7 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         await page.mouse.up();
         await expect.poll(async () => (await sourceNode.boundingBox())!.width).toBeGreaterThan(beforeResize!.width + 40);
         await expect.poll(() => patchRequests.length).toBeGreaterThan(1);
-        await expect(page.getByLabel("画布已保存")).toBeVisible();
+        await expectCanvasSaved(page);
 
         await page.keyboard.down("Control");
         await imageNode.click({ position: { x: 36, y: 36 } });
@@ -168,7 +168,7 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         await page.keyboard.press("Control+c");
         await page.keyboard.press("Control+v");
         await expect.poll(() => patchRequests.length).toBeGreaterThan(copyPatchCount);
-        await expect(page.getByLabel("画布已保存")).toBeVisible();
+        await expectCanvasSaved(page);
         await expect.poll(() => readCanvasNodeCount(request, projectPath)).toBe(6);
     } finally {
         await deleteCanvasProject(request, project.id);
@@ -311,6 +311,7 @@ test("canvas opens the Agent rail at the intended width and keeps a fresh chat a
             },
             {
                 id: "agent-session-two",
+                conversationId: "conversation-agent-two",
                 title: "第二条对话",
                 messages: [{ id: "agent-message-two", role: "user", text: "用于批量删除" }],
                 createdAt: "2026-08-05T00:00:00.000Z",
@@ -318,6 +319,7 @@ test("canvas opens the Agent rail at the intended width and keeps a fresh chat a
             },
             {
                 id: "agent-session-three",
+                conversationId: "conversation-agent-three",
                 title: "第三条对话",
                 messages: [{ id: "agent-message-three", role: "user", text: "用于批量删除" }],
                 createdAt: "2026-08-04T00:00:00.000Z",
@@ -326,9 +328,25 @@ test("canvas opens the Agent rail at the intended width and keeps a fresh chat a
         ],
         activeChatId: "agent-session",
     });
+    const deletedConversationIds: string[][] = [];
+    let persistedAssistantSessions = project.chatSessions;
 
     try {
         const projectPath = `/api/canvas/projects/${project.id}`;
+        await page.route(`**${projectPath}/assistant-conversations`, async (route) => {
+            const body = route.request().postDataJSON() as { conversationIds: string[] };
+            deletedConversationIds.push(body.conversationIds);
+            const removed = new Set(body.conversationIds);
+            persistedAssistantSessions = persistedAssistantSessions.filter((session) => !session.conversationId || !removed.has(session.conversationId));
+            if (!persistedAssistantSessions.length) {
+                persistedAssistantSessions = [{ id: "server-empty-session", title: "新对话", messages: [], createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z" }];
+            }
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ code: 0, data: { deleted: body.conversationIds.length, chatSessions: persistedAssistantSessions, activeChatId: persistedAssistantSessions[0].id }, msg: "OK" }),
+            });
+        });
         await page.setViewportSize({ width: 1474, height: 900 });
         await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
 
@@ -351,6 +369,7 @@ test("canvas opens the Agent rail at the intended width and keeps a fresh chat a
         await deleteDialog.getByRole("button", { name: /删\s*除/ }).click();
         await expect(page.getByText("第二条对话", { exact: true })).toHaveCount(0);
         await expect(page.getByText("第三条对话", { exact: true })).toHaveCount(0);
+        expect(deletedConversationIds).toEqual([["conversation-agent-two", "conversation-agent-three"]]);
         await expect.poll(() => readCanvasChatState(request, projectPath)).toEqual({ sessions: 1, messages: 1 });
 
         await page.getByRole("button", { name: "删除对话：已修改标题" }).click();
@@ -363,8 +382,267 @@ test("canvas opens the Agent rail at the intended width and keeps a fresh chat a
         await expect.poll(() => page.locator("[data-canvas-agent-scroll]").evaluate((element) => element.scrollTop)).toBe(0);
         await expect.poll(() => readCanvasChatState(request, projectPath)).toEqual({ sessions: 1, messages: 0 });
 
+        const generationPreferencesTrigger = panel.getByRole("button", { name: /生成参数：/ });
+        await expect
+            .poll(() => panel.locator("[data-canvas-agent-toolbar] button").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label") || "")))
+            .toEqual([expect.stringMatching(/^(选择创作 Skill|当前 Skill：)/), expect.stringMatching(/^智能规划.*点击/), expect.stringMatching(/^(选择生成模型|已选择 \d+ 个模型)$/), expect.stringMatching(/^生成参数：/), "发送"]);
+        await expect.poll(async () => Math.round((await generationPreferencesTrigger.boundingBox())?.width || 0)).toBeLessThanOrEqual(116);
+        await generationPreferencesTrigger.click();
+        const generationPreferencesPanel = page.locator("[data-creative-generation-preferences]");
+        await expect(generationPreferencesPanel).toBeVisible();
+        await expect.poll(async () => Math.round((await generationPreferencesPanel.boundingBox())?.width || 0)).toBe(280);
+        await expect
+            .poll(async () => {
+                const bounds = await generationPreferencesPanel.boundingBox();
+                return bounds ? bounds.x >= 0 && bounds.x + bounds.width <= 1475 : false;
+            })
+            .toBe(true);
+        await generationPreferencesTrigger.click();
+
         await page.getByRole("button", { name: "收起 Agent 面板" }).click();
         await expect(page.getByRole("button", { name: "打开 Agent", exact: true })).toBeVisible();
+    } finally {
+        await deleteCanvasProject(request, project.id);
+    }
+});
+
+test("canvas Agent toolbar stays ordered and its generation settings fit narrow viewports", async ({ page, request }) => {
+    const project = await createCanvasProject(request, { title: `Canvas 参数布局 ${randomUUID().slice(0, 8)}`, nodes: [], connections: [] });
+
+    try {
+        await page.addInitScript(() => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: "light" }, version: 0 })));
+
+        for (const width of [390, 430]) {
+            await page.setViewportSize({ width, height: width === 390 ? 844 : 932 });
+            await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+            await page.getByRole("button", { name: "打开 Agent", exact: true }).click();
+            const panel = page.getByLabel("Canvas Agent 对话面板");
+            const textarea = panel.getByRole("textbox", { name: "描述你想让 Agent 如何操作画布" });
+            const trigger = panel.getByRole("button", { name: /生成参数：/ });
+            await expect(panel).toBeVisible({ timeout: 20_000 });
+            await expect.poll(async () => Math.round((await textarea.boundingBox())?.height || 0)).toBeGreaterThanOrEqual(80);
+            await expect.poll(async () => Math.round((await trigger.boundingBox())?.width || 0)).toBeLessThanOrEqual(116);
+            await expect
+                .poll(() => panel.locator("[data-canvas-agent-toolbar] button").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label") || "")))
+                .toEqual([expect.stringMatching(/^(选择创作 Skill|当前 Skill：)/), expect.stringMatching(/^智能规划.*点击/), expect.stringMatching(/^(选择生成模型|已选择 \d+ 个模型)$/), expect.stringMatching(/^生成参数：/), "发送"]);
+            await expect
+                .poll(async () => {
+                    const controls = panel.locator("[data-creative-agent-controls='compact']");
+                    const toolBoxes = await controls.locator(":scope > button, :scope > * > button").evaluateAll((buttons) =>
+                        buttons.slice(0, 4).map((button) => {
+                            const bounds = button.getBoundingClientRect();
+                            return { left: bounds.left, right: bounds.right };
+                        }),
+                    );
+                    const triggerBox = await trigger.boundingBox();
+                    return {
+                        leftToolGaps: toolBoxes.slice(1).map((box, index) => Math.round(box.left - toolBoxes[index].right)),
+                        parameterAfterModel: toolBoxes[3] && toolBoxes[2] ? Math.round(toolBoxes[3].left - toolBoxes[2].right) : null,
+                        parameterX: triggerBox ? Math.round(triggerBox.x) : null,
+                    };
+                })
+                .toMatchObject({ leftToolGaps: [4, 4, 8], parameterAfterModel: 8 });
+            await expect
+                .poll(() =>
+                    trigger.locator("span").first().evaluate((element) => ({
+                        text: element.textContent || "",
+                        clipped: element.scrollWidth > element.clientWidth,
+                        overflow: getComputedStyle(element).overflow,
+                        textOverflow: getComputedStyle(element).textOverflow,
+                    })),
+                )
+                .toMatchObject({ clipped: false, overflow: "visible", textOverflow: "clip" });
+
+            await trigger.click();
+            const visiblePreferencesPanel = page.locator("[data-creative-generation-preferences]:visible");
+            await expect(visiblePreferencesPanel).toBeVisible();
+            await expect.poll(async () => Math.round((await visiblePreferencesPanel.boundingBox())?.width || 0)).toBe(280);
+            await expect
+                .poll(async () => {
+                    const bounds = await visiblePreferencesPanel.boundingBox();
+                    return bounds ? bounds.x >= 0 && bounds.x + bounds.width <= width + 1 : false;
+                })
+                .toBe(true);
+            await expectNoHorizontalOverflow(page, `Canvas Agent 参数 ${width}px`);
+            await trigger.click();
+            await expect(trigger).toHaveAttribute("aria-expanded", "false");
+            await expect(page.locator("[data-creative-generation-preferences]:visible")).toHaveCount(0);
+        }
+
+        await page.getByRole("button", { name: "收起 Agent 面板" }).click();
+        await page.getByRole("button", { name: "切换到深色主题" }).click();
+        await expect(page.locator("html")).toHaveClass(/dark/);
+        await page.getByRole("button", { name: "打开 Agent", exact: true }).click();
+        const darkTrigger = page.getByLabel("Canvas Agent 对话面板").getByRole("button", { name: /生成参数：/ });
+        await darkTrigger.click();
+        const darkPanel = page.locator("[data-creative-generation-preferences]:visible");
+        await expect(darkPanel).toBeVisible();
+        await expect.poll(async () => Math.round((await darkPanel.boundingBox())?.width || 0)).toBe(280);
+        await expectNoHorizontalOverflow(page, "Canvas Agent 参数深色主题");
+    } finally {
+        await deleteCanvasProject(request, project.id);
+    }
+});
+
+test("canvas keeps project chat state isolated during client-side project navigation", async ({ page, request }) => {
+    const project = await createCanvasProject(request, {
+        title: `Canvas 会话隔离 ${randomUUID().slice(0, 8)}`,
+        nodes: [],
+        connections: [],
+        chatSessions: [
+            {
+                id: "source-session",
+                title: "只属于原画布",
+                messages: [{ id: "source-message", role: "user", text: "这条消息不能进入新画布" }],
+                createdAt: "2026-08-11T00:00:00.000Z",
+                updatedAt: "2026-08-11T00:00:00.000Z",
+            },
+        ],
+        activeChatId: "source-session",
+    });
+    let createdProjectId = "";
+
+    try {
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        await expect(page.getByText("这条消息不能进入新画布", { exact: true })).toBeVisible({ timeout: 20_000 });
+        await page.getByRole("button", { name: "打开资产面板" }).click();
+        await page.getByRole("button", { name: "新建画布" }).click();
+        await expect.poll(() => new URL(page.url()).pathname.split("/").pop()).not.toBe(project.id);
+        createdProjectId = new URL(page.url()).pathname.split("/").pop() || "";
+
+        await expect(page.getByText("你好，我是你的画布助手", { exact: true })).toBeVisible({ timeout: 20_000 });
+        await expect(page.getByText("这条消息不能进入新画布", { exact: true })).toHaveCount(0);
+        await expect.poll(async () => (await readCanvasProject(request, `/api/canvas/projects/${createdProjectId}`)).chatSessions).toEqual([]);
+    } finally {
+        await deleteCanvasProject(request, project.id);
+        if (createdProjectId) await deleteCanvasProject(request, createdProjectId);
+    }
+});
+
+test("canvas separates project management from the command menu and keeps assets in a four-column rail", async ({ page, request }) => {
+    const targetTitle = `Canvas 切换目标 ${randomUUID().slice(0, 8)}`;
+    const target = await createCanvasProject(request, { title: targetTitle, nodes: [], connections: [] });
+    const project = await createCanvasProject(request, {
+        title: `Canvas 资产侧栏 ${randomUUID().slice(0, 8)}`,
+        nodes: Array.from({ length: 5 }, (_, index) => node(`asset-${index + 1}`, "image", index * 180, 120, 160, 120, { content: "/logo.svg", naturalWidth: 160, naturalHeight: 120 })),
+        connections: [],
+    });
+
+    try {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        const surface = page.locator("[data-canvas-surface]");
+        await expect(surface).toBeVisible({ timeout: 20_000 });
+        await expectCanvasSaved(page);
+        await expect(page.getByLabel("画布已保存")).toHaveCount(0);
+
+        await page.getByRole("button", { name: "打开画布菜单" }).click();
+        await expect(page.getByRole("menuitem", { name: "导入素材" })).toBeVisible();
+        await expect(page.getByRole("menuitem", { name: "删除画布" })).toBeVisible();
+        await expect(page.getByRole("menuitem", { name: "新建画布" })).toHaveCount(0);
+        await expect(page.getByRole("menuitem", { name: "我的画布" })).toHaveCount(0);
+        await page.getByRole("button", { name: "打开画布菜单" }).click();
+
+        const closedWidth = (await surface.boundingBox())?.width || 0;
+        await page.getByRole("button", { name: "打开资产面板" }).click();
+        const panel = page.getByLabel("Canvas 资产面板");
+        await expect(panel).toBeVisible();
+        await expect.poll(async () => closedWidth - ((await surface.boundingBox())?.width || 0)).toBeGreaterThan(300);
+
+        const cards = panel.locator('[data-testid="canvas-current-assets-grid"] > article');
+        await expect(cards).toHaveCount(5);
+        const cardBoxes = await cards.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect()).map(({ left, top, width }) => ({ left, top, width })));
+        expect(new Set(cardBoxes.slice(0, 4).map((box) => Math.round(box.top))).size).toBe(1);
+        expect(cardBoxes.slice(0, 4).map((box) => Math.round(box.left))).toEqual([...cardBoxes.slice(0, 4).map((box) => Math.round(box.left))].sort((a, b) => a - b));
+        expect(cardBoxes[4].top).toBeGreaterThan(cardBoxes[0].top + cardBoxes[0].width);
+        await expect(panel.getByText("asset-1", { exact: true })).toHaveCount(0);
+        await expect(panel.getByRole("button", { name: "定位asset-1" })).toBeVisible();
+
+        await panel.getByRole("button", { name: "切换画布" }).click();
+        await page.getByRole("menuitem").filter({ hasText: targetTitle }).click();
+        await expect.poll(() => new URL(page.url()).pathname).toBe(`/canvas/${target.id}`);
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        await expect(surface).toBeVisible({ timeout: 20_000 });
+        await page.getByRole("button", { name: "打开资产面板" }).click();
+        const mobilePanel = page.getByLabel("Canvas 资产面板");
+        await expect(mobilePanel).toBeVisible();
+        const mobileBounds = await mobilePanel.boundingBox();
+        expect(mobileBounds).not.toBeNull();
+        expect(mobileBounds!.x).toBeGreaterThanOrEqual(0);
+        expect(mobileBounds!.x + mobileBounds!.width).toBeLessThanOrEqual(390 + 1);
+        await expectNoHorizontalOverflow(page, "Canvas 资产侧栏 390px");
+    } finally {
+        await deleteCanvasProject(request, project.id);
+        await deleteCanvasProject(request, target.id);
+    }
+});
+
+test("canvas Agent keeps simultaneous runs bound to separate chats", async ({ page, request }) => {
+    const project = await createCanvasProject(request, { title: `Canvas Agent 运行隔离 ${randomUUID().slice(0, 8)}`, nodes: [], connections: [] });
+    const createBodies: Array<Record<string, unknown>> = [];
+    const runs = new Map<string, Record<string, unknown>>();
+
+    await page.route("**/api/agent/runs?**", async (route) => {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { runs: [] }, msg: "OK" }) });
+    });
+    await page.route("**/api/agent/runs", async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        const body = route.request().postDataJSON() as Record<string, unknown>;
+        createBodies.push(body);
+        const index = createBodies.length;
+        const run = {
+            id: `run-${index}`,
+            conversationId: `conversation-${index}`,
+            inputMessageId: `input-${index}`,
+            assistantMessageId: `assistant-${index}`,
+            status: "running",
+            surface: "canvas",
+            projectId: project.id,
+            assetIds: [],
+            tasks: [],
+        };
+        runs.set(run.id, run);
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { run, created: true }, msg: "OK" }) });
+    });
+    await page.route(/\/api\/agent\/runs\/run-\d+$/, async (route) => {
+        const runId = new URL(route.request().url()).pathname.split("/").pop() || "";
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { run: runs.get(runId) }, msg: "OK" }) });
+    });
+    await page.route(/\/api\/agent\/runs\/run-\d+\/events$/, async (route) => {
+        await route.fulfill({ status: 200, contentType: "text/event-stream", body: 'event: run.planning\ndata: {"data":{}}\n\n' });
+    });
+
+    try {
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        const composer = page.getByPlaceholder("描述你想让 Agent 如何操作画布");
+        await expect(composer).toBeVisible({ timeout: 20_000 });
+        await composer.fill("第一条后台任务");
+        await page.getByRole("button", { name: "发送" }).click();
+        await expect.poll(() => createBodies.length).toBe(1);
+
+        await page.getByRole("button", { name: "新建对话" }).click();
+        await expect(composer).toBeEnabled();
+        await composer.fill("第二条后台任务");
+        await page.getByRole("button", { name: "发送" }).click();
+        await expect.poll(() => createBodies.length).toBe(2);
+
+        expect(createBodies.map((body) => body.conversationId)).toEqual([undefined, undefined]);
+        await expect
+            .poll(async () => {
+                const sessions = (await readCanvasProject(request, `/api/canvas/projects/${project.id}`)).chatSessions;
+                return sessions
+                    .map((session) => session.conversationId)
+                    .filter(Boolean)
+                    .sort();
+            })
+            .toEqual(["conversation-1", "conversation-2"]);
+
+        await page.getByRole("tab", { name: /历史/ }).click();
+        await page.getByRole("button", { name: "进入对话：第一条后台任务" }).click();
+        await expect(page.getByText(/正在理解需求并分析当前画布|任务仍在后台运行/)).toBeVisible();
+        await expect(page.getByText("第一条后台任务", { exact: true })).toBeVisible();
     } finally {
         await deleteCanvasProject(request, project.id);
     }
@@ -402,7 +680,7 @@ test("canvas remains operable with 2000 nodes and 5000 connections", async ({ pa
         await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
         const navigationMs = Date.now() - navigationStartedAt;
         await page.waitForTimeout(500);
-        await expect(page.getByLabel("画布已保存")).toBeVisible();
+        await expectCanvasSaved(page);
 
         const saveStartedAt = Date.now();
         const firstNode = page.locator('[data-node-id="perf-node-0"]');
@@ -414,7 +692,7 @@ test("canvas remains operable with 2000 nodes and 5000 connections", async ({ pa
         await page.mouse.move(firstBounds!.x + 125, firstBounds!.y + 41, { steps: 6 });
         await page.mouse.up();
         await patchRequest;
-        await expect(page.getByLabel("画布已保存")).toBeVisible({ timeout: 10_000 });
+        await expectCanvasSaved(page, 10_000);
         const saveMs = Date.now() - saveStartedAt;
 
         const metrics = { nodes: nodes.length, connections: connections.length, interactiveMs, navigationMs, saveMs, renderedNodeCount };
@@ -438,14 +716,46 @@ test("canvas restores all nine node types and opens text editing on a single cli
             node("matrix-config", "config", 1020, 80, 300, 180, { generationMode: "image", model: "" }),
             node("matrix-video", "video", 40, 360, 260, 170, { content: "/logo.svg", mimeType: "video/mp4" }),
             node("matrix-audio", "audio", 340, 360, 260, 150, { content: "/logo.svg", mimeType: "audio/mpeg" }),
-            node("matrix-brief", "brief", 700, 340, 320, 210, { agentBrief: { objective: "节点矩阵目标" } }),
+            node("matrix-brief", "brief", 700, 340, 320, 210, { agentBrief: { objective: "节点矩阵目标", deliverables: [{ type: "image", title: "主视觉", count: 1 }] } }),
             node("matrix-task", "task", 40, 640, 300, 180, { prompt: "任务恢复内容", agentTaskStatus: "completed", agentTaskAttempts: 1 }),
-            node("matrix-brand", "brand-kit", 420, 620, 320, 200, { brandKit: { summary: "品牌方向恢复" } }),
+            node("matrix-brand", "brand-kit", 420, 620, 320, 200, { brandKit: { summary: "品牌方向恢复", keywords: ["电影感"] } }),
         ],
         connections: [],
     });
+    const nodeTypes = new Map([
+        ["matrix-image", "image"],
+        ["matrix-panorama", "panorama"],
+        ["matrix-text", "text"],
+        ["matrix-config", "config"],
+        ["matrix-video", "video"],
+        ["matrix-audio", "audio"],
+        ["matrix-brief", "brief"],
+        ["matrix-task", "task"],
+        ["matrix-brand", "brand-kit"],
+    ]);
+    const expectNodeTheme = async (theme: "light" | "dark") => {
+        const colors =
+            theme === "light"
+                ? { fill: "rgb(238, 246, 251)", panel: "rgb(255, 255, 255)", stroke: "rgb(217, 231, 238)", text: "rgb(30, 41, 59)", subtle: "rgb(248, 250, 252)", subtleText: "rgb(71, 85, 105)" }
+                : { fill: "rgb(17, 19, 24)", panel: "rgb(15, 17, 21)", stroke: "rgb(48, 54, 66)", text: "rgb(248, 250, 252)", subtle: "rgb(26, 31, 39)", subtleText: "rgb(203, 213, 225)" };
+
+        for (const [id, type] of nodeTypes) {
+            const frame = page.locator(`[data-node-id="${id}"] > div`).first();
+            const expectedBackground = type === "image" || type === "panorama" || type === "video" ? "rgba(0, 0, 0, 0)" : type === "config" ? colors.panel : colors.fill;
+            await expect(frame, `${type} ${theme} border`).toHaveCSS("border-color", colors.stroke);
+            await expect(frame, `${type} ${theme} background`).toHaveCSS("background-color", expectedBackground);
+            await expect(frame, `${type} ${theme} text`).toHaveCSS("color", colors.text);
+        }
+
+        for (const chip of [page.locator('[data-node-id="matrix-brief"]').getByText("主视觉", { exact: true }), page.locator('[data-node-id="matrix-brand"]').getByText("电影感", { exact: true })]) {
+            await expect(chip).toHaveCSS("background-color", colors.subtle);
+            await expect(chip).toHaveCSS("border-color", colors.stroke);
+            await expect(chip).toHaveCSS("color", colors.subtleText);
+        }
+    };
 
     try {
+        await page.addInitScript(() => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: "light" }, version: 0 })));
         await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
         await expect(page.locator("[data-canvas-surface]")).toBeVisible({ timeout: 20_000 });
         await expect.poll(async () => readCanvasViewport(request, `/api/canvas/projects/${project.id}`)).toEqual({ x: 90, y: 80, k: 0.75 });
@@ -456,6 +766,7 @@ test("canvas restores all nine node types and opens text editing on a single cli
         await expect(page.locator('[data-node-id="matrix-brand"]').getByText("灵感与视觉方向")).toBeVisible();
         await expect(page.locator('[data-node-id="matrix-video"] video')).toBeVisible();
         await expect(page.locator('[data-node-id="matrix-audio"] audio')).toBeVisible();
+        await expectNodeTheme("light");
 
         const textNode = page.locator('[data-node-id="matrix-text"]');
         await textNode.click({ position: { x: 50, y: 80 } });
@@ -466,6 +777,88 @@ test("canvas restores all nine node types and opens text editing on a single cli
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await expect(page.locator('[data-node-id="matrix-text"]').getByText("单击后立即可编辑")).toBeVisible();
+        await page.getByRole("button", { name: "切换到深色主题" }).click();
+        await expect(page.locator("html")).toHaveClass(/dark/);
+        await expectNodeTheme("dark");
+    } finally {
+        await deleteCanvasProject(request, project.id);
+    }
+});
+
+test("canvas Agent attachment remove badge stays compact and theme readable", async ({ page, request }) => {
+    const project = await createCanvasProject(request, { title: `Canvas 删除角标 ${randomUUID().slice(0, 8)}`, nodes: [], connections: [] });
+
+    try {
+        await page.addInitScript(() => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: "light" }, version: 0 })));
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        const panel = page.getByRole("complementary", { name: "Canvas Agent 对话面板" });
+        await expect(panel).toBeVisible({ timeout: 20_000 });
+        await panel.locator('input[type="file"][multiple]').setInputFiles({
+            name: "reference.png",
+            mimeType: "image/png",
+            buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl3kgAAAABJRU5ErkJggg==", "base64"),
+        });
+
+        const removeButton = panel.getByRole("button", { name: "移除参考素材：reference.png" });
+        const badge = removeButton.locator(":scope > span");
+        await expect(removeButton).toBeVisible();
+        await expect.poll(async () => (await removeButton.boundingBox())?.width).toBe(28);
+        await expect.poll(async () => (await removeButton.boundingBox())?.height).toBe(28);
+        await expect.poll(async () => (await badge.boundingBox())?.width).toBe(16);
+        await expect.poll(async () => (await badge.boundingBox())?.height).toBe(16);
+        const badgeGeometry = await removeButton.evaluate((button) => {
+            const badgeElement = button.firstElementChild;
+            const preview = button.parentElement;
+            if (!badgeElement || !preview) return null;
+            const badgeBounds = badgeElement.getBoundingClientRect();
+            const previewBounds = preview.getBoundingClientRect();
+            return {
+                left: badgeBounds.left,
+                top: badgeBounds.top,
+                right: badgeBounds.right,
+                bottom: badgeBounds.bottom,
+                previewLeft: previewBounds.left,
+                previewTop: previewBounds.top,
+                previewRight: previewBounds.right,
+                previewBottom: previewBounds.bottom,
+            };
+        });
+        expect(badgeGeometry).not.toBeNull();
+        expect(badgeGeometry!.left).toBeGreaterThanOrEqual(badgeGeometry!.previewLeft);
+        expect(badgeGeometry!.top).toBeGreaterThanOrEqual(badgeGeometry!.previewTop);
+        expect(badgeGeometry!.right).toBeLessThanOrEqual(badgeGeometry!.previewRight);
+        expect(badgeGeometry!.bottom).toBeLessThanOrEqual(badgeGeometry!.previewBottom);
+        await expect(badge).toHaveCSS("background-color", "rgba(255, 255, 255, 0.94)");
+        await expect(badge).toHaveCSS("border-color", "rgba(15, 23, 42, 0.16)");
+        await expect(badge).toHaveCSS("color", "rgb(71, 85, 105)");
+        await expect.poll(() => badge.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderRadius))).toBeGreaterThanOrEqual(10);
+
+        await removeButton.hover();
+        await expect(badge).toHaveCSS("background-color", "rgb(255, 241, 242)");
+        await expect(badge).toHaveCSS("color", "rgb(220, 38, 38)");
+        await panel.getByRole("textbox", { name: "描述你想让 Agent 如何操作画布" }).click();
+        await page.getByRole("button", { name: "切换到深色主题" }).click();
+        await expect(page.locator("html")).toHaveClass(/dark/);
+        await expect(badge).toHaveCSS("background-color", "rgba(15, 23, 42, 0.88)");
+        await expect(badge).toHaveCSS("border-color", "rgba(255, 255, 255, 0.2)");
+        await removeButton.press("ArrowDown");
+        await expect.poll(() => removeButton.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+        await expect(badge).toHaveCSS("background-color", "rgb(42, 18, 21)");
+        await expect(badge).toHaveCSS("border-color", "rgb(127, 29, 29)");
+        await expect(badge).toHaveCSS("color", "rgb(248, 113, 113)");
+
+        for (const width of [390, 430]) {
+            await page.setViewportSize({ width, height: width === 390 ? 844 : 932 });
+            await removeButton.scrollIntoViewIfNeeded();
+            const bounds = await removeButton.boundingBox();
+            expect(bounds).not.toBeNull();
+            expect(bounds!.x).toBeGreaterThanOrEqual(0);
+            expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width + 1);
+            await expectNoHorizontalOverflow(page, `Canvas 删除角标 ${width}px`);
+        }
+
+        await removeButton.click();
+        await expect(removeButton).toHaveCount(0);
     } finally {
         await deleteCanvasProject(request, project.id);
     }
@@ -562,6 +955,10 @@ async function dragSelectionBox(page: Page, nodes: Locator) {
 
 async function expectSelectedNodeCount(page: Page, count: number) {
     await expect.poll(() => page.locator("[data-node-id] > div").evaluateAll((elements) => elements.filter((element) => getComputedStyle(element).borderColor === "rgb(47, 128, 255)").length)).toBe(count);
+}
+
+async function expectCanvasSaved(page: Page, timeout = 5_000) {
+    await expect(page.locator(".canvas-topbar")).toHaveAttribute("data-save-status", "saved", { timeout });
 }
 
 async function expectNoHorizontalOverflow(page: Page, label: string) {

@@ -14,8 +14,6 @@ type ModelOption = {
 
 export type AgentPlanningProfile = {
     complexity: "ordinary" | "multi" | "complex";
-    maxInputChars: number;
-    maxOutputTokens: number;
     capabilities: Set<string>;
     skillWorkspaces: Set<AgentSkillWorkspace>;
 };
@@ -37,8 +35,6 @@ export function resolveAgentPlanningProfile(run: PlanningRun): AgentPlanningProf
     const complexity = complex ? "complex" : multi ? "multi" : "ordinary";
     return {
         complexity,
-        maxInputChars: complex ? 32_000 : multi ? 22_000 : 12_000,
-        maxOutputTokens: complex ? 2400 : multi ? 1600 : 1200,
         capabilities,
         skillWorkspaces: skillWorkspaces(run.surface, capabilities),
     };

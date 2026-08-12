@@ -223,8 +223,7 @@ export async function createUpstreamVideoGenerationTask(
     assertVideoConfig(requestConfig, requestConfig.model);
     const protocol = requestConfig.advancedConfig?.protocol === "sub2api" ? "auto" : requestConfig.advancedConfig?.protocol || "auto";
     if (protocol === "yumeng") {
-        if (videoReferences.length) throw new Error("昱梦新版模型中心暂不支持参考视频，请移除参考视频后重试");
-        return createCompatibleVideoTask(requestConfig, selectedModel, prompt, references, options, [], audioReferences);
+        return createCompatibleVideoTask(requestConfig, selectedModel, prompt, references, options, videoReferences, audioReferences);
     }
     if (protocol === "seedance-special") {
         return createSeedanceSpecialTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);

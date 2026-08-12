@@ -25,7 +25,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
     withJsonDataFileLocks: vi.fn(async (_names: string[], callback: () => Promise<unknown>) => callback()),
 }));
 
-import { deleteCanvasProjectAggregates, deleteCreativeConversationAggregates } from "./creative-entity-deletion-store";
+import { CreativeEntityDeletionConflict, deleteCanvasAssistantConversationAggregates, deleteCanvasProjectAggregates, deleteCreativeConversationAggregates } from "./creative-entity-deletion-store";
 
 describe("creative entity deletion file provider", () => {
     beforeEach(() => {
@@ -61,9 +61,55 @@ describe("creative entity deletion file provider", () => {
         expect(file<Array<{ id: string }>>("generation-tasks.json").map((item) => item.id)).toEqual(["run-two"]);
     });
 
+    it("deletes a directly requested Canvas assistant conversation without deleting its project", async () => {
+        const runtime = file<{ conversations: Array<Record<string, unknown>> }>("creative-runtime.json");
+        runtime.conversations[0] = { ...runtime.conversations[0], surface: "canvas", projectId: "canvas-one" };
+
+        const result = await deleteCreativeConversationAggregates("user-one", ["conversation-one"]);
+
+        expect(result).toMatchObject({ deletedConversations: 1, deletedProjects: 0 });
+        expect(file<{ projects: Array<{ project: { id: string } }> }>("canvas-projects.json").projects.map((item) => item.project.id)).toEqual(["canvas-one", "canvas-two"]);
+    });
+
+    it("atomically removes a Canvas assistant conversation reference and creates a stable empty session", async () => {
+        const runtime = file<{ conversations: Array<Record<string, unknown>> }>("creative-runtime.json");
+        runtime.conversations.push({ ...runtime.conversations[0], id: "conversation-agent", surface: "canvas", projectId: "canvas-one" });
+        const canvas = file<{ projects: Array<{ project: Record<string, unknown> }> }>("canvas-projects.json");
+        canvas.projects[0].project = {
+            ...canvas.projects[0].project,
+            chatSessions: [{ id: "session-agent", conversationId: "conversation-agent", title: "Agent", messages: [], createdAt: "now", updatedAt: "now" }],
+            activeChatId: "session-agent",
+        };
+
+        const first = await deleteCanvasAssistantConversationAggregates("user-one", "canvas-one", ["conversation-agent"]);
+        const second = await deleteCanvasAssistantConversationAggregates("user-one", "canvas-one", ["conversation-agent"]);
+        const project = file<{ projects: Array<{ project: { chatSessions: Array<{ id: string; conversationId?: string; messages: unknown[] }>; activeChatId: string | null } }> }>("canvas-projects.json").projects[0].project;
+
+        expect(first).toMatchObject({ deletedConversations: 1, deletedProjects: 0, canvasAssistantState: { activeChatId: expect.any(String) } });
+        expect(project.chatSessions).toEqual([{ id: project.activeChatId, title: "新对话", messages: [], createdAt: expect.any(String), updatedAt: expect.any(String) }]);
+        expect(runtime.conversations.map((item) => item.id)).toContain("conversation-agent");
+        expect(file<{ conversations: Array<{ id: string }> }>("creative-runtime.json").conversations.map((item) => item.id)).not.toContain("conversation-agent");
+        expect(second).toMatchObject({ deletedConversations: 0, canvasAssistantState: { activeChatId: project.activeChatId } });
+    });
+
+    it("rejects the Canvas primary conversation and owned conversations from another project", async () => {
+        const runtime = file<{ conversations: Array<Record<string, unknown>> }>("creative-runtime.json");
+        runtime.conversations[0] = { ...runtime.conversations[0], surface: "canvas", projectId: "canvas-one" };
+        runtime.conversations[1] = { ...runtime.conversations[1], surface: "canvas", projectId: "canvas-two" };
+        const canvas = file<{ projects: Array<{ project: Record<string, unknown> }> }>("canvas-projects.json");
+        canvas.projects[0].project = {
+            ...canvas.projects[0].project,
+            chatSessions: [{ id: "session-other", conversationId: "conversation-two", title: "Invalid", messages: [], createdAt: "now", updatedAt: "now" }],
+            activeChatId: "session-other",
+        };
+
+        await expect(deleteCanvasAssistantConversationAggregates("user-one", "canvas-one", ["conversation-one"])).rejects.toBeInstanceOf(CreativeEntityDeletionConflict);
+        await expect(deleteCanvasAssistantConversationAggregates("user-one", "canvas-one", ["conversation-two"])).rejects.toBeInstanceOf(CreativeEntityDeletionConflict);
+    });
+
     it("uses one PostgreSQL transaction with owner-scoped entity deletes", async () => {
         mocks.provider = "postgres";
-        const query = vi.fn(async (sql: string) => {
+        const query = vi.fn(async (sql: string, _params?: unknown[]) => {
             if (sql.includes("FROM canvas_projects") && sql.includes("SELECT")) return { rows: [] };
             if (sql.includes("FROM creative_conversations") && sql.includes("SELECT")) return { rows: [{ id: "conversation-one" }] };
             if (sql.includes("FROM creative_messages")) return { rows: [{ run_id: "run-one" }] };
@@ -84,6 +130,37 @@ describe("creative entity deletion file provider", () => {
         const statements = query.mock.calls.map(([sql]) => String(sql)).join("\n");
         for (const table of ["creative_run_events", "generation_logs", "generation_tasks", "creative_conversations"]) expect(statements).toContain(`DELETE FROM ${table}`);
         expect(statements).not.toContain("SELECT *");
+    });
+
+    it("updates the Canvas assistant session list inside the PostgreSQL deletion transaction", async () => {
+        mocks.provider = "postgres";
+        const project = {
+            id: "canvas-one",
+            creativeConversationId: "conversation-primary",
+            chatSessions: [{ id: "session-agent", conversationId: "conversation-agent", title: "Agent", messages: [], createdAt: "now", updatedAt: "now" }],
+            activeChatId: "session-agent",
+        };
+        const query = vi.fn(async (sql: string, _params?: unknown[]) => {
+            if (sql.includes("SELECT id, project_json")) return { rows: [] };
+            if (sql.includes("SELECT project_json FROM canvas_projects")) return { rows: [{ project_json: project }] };
+            if (sql.includes("FROM creative_conversations") && sql.includes("SELECT")) return { rows: [{ id: "conversation-agent", surface: "canvas", project_id: "canvas-one" }] };
+            if (sql.includes("FROM creative_messages")) return { rows: [] };
+            if (sql.includes("FROM generation_tasks") && sql.includes("SELECT")) return { rows: [] };
+            if (sql.includes("FROM generation_logs") && sql.includes("SELECT")) return { rows: [] };
+            if (sql.includes("FROM creative_assets")) return { rows: [] };
+            if (sql.includes("FROM generation_log_assets")) return { rows: [] };
+            if (sql.includes("FROM local_media_assets")) return { rows: [] };
+            return { rows: [], rowCount: 1 };
+        });
+        mocks.transaction.mockImplementation(async (callback: (client: { query: typeof query }) => Promise<unknown>) => callback({ query }));
+
+        const result = await deleteCanvasAssistantConversationAggregates("user-one", "canvas-one", ["conversation-agent"]);
+
+        expect(result).toMatchObject({ deletedConversations: 1, canvasAssistantState: { activeChatId: expect.any(String), chatSessions: [{ messages: [] }] } });
+        expect(result.canvasAssistantState?.chatSessions[0]).not.toHaveProperty("conversationId");
+        const update = query.mock.calls.find(([sql]) => String(sql).includes("UPDATE canvas_projects"));
+        expect(update?.[1]?.slice(0, 2)).toEqual(["user-one", "canvas-one"]);
+        expect(JSON.parse(String(update?.[1]?.[2]))).toMatchObject({ chatSessions: [{ title: "新对话", messages: [] }], activeChatId: expect.any(String) });
     });
 
     it("rolls back every file when one aggregate write fails", async () => {

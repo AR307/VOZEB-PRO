@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Dropdown, Modal } from "antd";
-import { BookOpen, Bot, Check, Images, LoaderCircle, Menu, Plus, Redo2, RefreshCw, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Bot, LibraryBig, Menu, Redo2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -18,16 +18,15 @@ export function CanvasTopBar({
     onFinishTitleEditing,
     onCancelTitleEditing,
     saveState,
-    onRetrySave,
     canUndo,
     canRedo,
     onWorkbench,
-    onProjects,
-    onCreateProject,
     onDeleteProject,
     onImportImage,
     onUndo,
     onRedo,
+    assetsOpen,
+    onToggleAssets,
     agentOpen,
     compactAgentStatus,
     onToggleAgent,
@@ -40,16 +39,15 @@ export function CanvasTopBar({
     onFinishTitleEditing: () => void;
     onCancelTitleEditing: () => void;
     saveState?: CanvasProjectSaveState;
-    onRetrySave: () => void;
     canUndo: boolean;
     canRedo: boolean;
     onWorkbench: () => void;
-    onProjects: () => void;
-    onCreateProject: () => void;
     onDeleteProject: () => void;
     onImportImage: () => void;
     onUndo: () => void;
     onRedo: () => void;
+    assetsOpen: boolean;
+    onToggleAssets: () => void;
     agentOpen: boolean;
     compactAgentStatus?: { connected: boolean; enabled: boolean; activity: string };
     onToggleAgent: () => void;
@@ -85,8 +83,8 @@ export function CanvasTopBar({
 
     return (
         <>
-            <div className="canvas-topbar pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-20 items-center justify-between gap-2 px-6">
-                <div className="canvas-topbar-left pointer-events-auto flex min-w-0 items-center gap-3">
+            <div className="canvas-topbar pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between gap-2 px-3 sm:h-20 sm:px-6" data-save-status={saveState?.status || "saved"}>
+                <div className="canvas-topbar-left pointer-events-auto flex min-w-0 items-center gap-2 sm:gap-3">
                     <Dropdown
                         open={menuOpen}
                         onOpenChange={setMenuOpen}
@@ -96,15 +94,13 @@ export function CanvasTopBar({
                             items: [
                                 { key: "workbench", icon: <Sparkles className="size-4" />, label: "工作台", onClick: onWorkbench },
                                 { key: "docs", icon: <BookOpen className="size-4" />, label: "使用帮助", onClick: () => window.location.assign("/help?section=canvas") },
-                                { key: "projects", icon: <Images className="size-4" />, label: "我的画布", onClick: onProjects },
-                                { type: "divider" },
-                                { key: "new", icon: <Plus className="size-4" />, label: "新建画布", onClick: onCreateProject },
-                                { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
                                 { type: "divider" },
                                 { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
                                 { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text="重做" shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },
+                                { type: "divider" },
+                                { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除画布", onClick: onDeleteProject },
                             ],
                         }}
                     >
@@ -130,15 +126,26 @@ export function CanvasTopBar({
                         ) : (
                             <button
                                 type="button"
-                                className="canvas-topbar-title-button max-w-[280px] truncate border-b border-dashed border-transparent text-left text-base font-semibold tracking-normal transition hover:border-current"
+                                className="canvas-topbar-title-button max-w-[min(34vw,280px)] truncate border-b border-dashed border-transparent text-left text-sm font-semibold tracking-normal transition hover:border-current sm:text-base"
                                 onDoubleClick={onStartTitleEditing}
                                 title="双击修改画布名称"
                             >
                                 {title}
                             </button>
                         )}
-                        <CanvasSaveStatus state={saveState} onRetry={onRetrySave} />
                     </div>
+                    <span className="h-4 w-px shrink-0" style={{ background: theme.toolbar.border }} aria-hidden="true" />
+                    <button
+                        type="button"
+                        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium transition hover:opacity-70 focus-visible:outline-none focus-visible:ring-2"
+                        style={{ background: assetsOpen ? theme.toolbar.itemHover : "transparent", color: theme.node.text }}
+                        onClick={onToggleAssets}
+                        aria-label={assetsOpen ? "关闭资产面板" : "打开资产面板"}
+                        aria-expanded={assetsOpen}
+                    >
+                        <LibraryBig className="size-4" aria-hidden="true" />
+                        <span className="hidden sm:inline">资产</span>
+                    </button>
                 </div>
 
                 <div className="canvas-topbar-actions pointer-events-auto flex min-w-0 items-center gap-1.5">
@@ -176,47 +183,6 @@ export function CanvasTopBar({
                 </div>
             </Modal>
         </>
-    );
-}
-
-function CanvasSaveStatus({ state, onRetry }: { state?: CanvasProjectSaveState; onRetry: () => void }) {
-    const theme = canvasThemes[useThemeStore((current) => current.theme)];
-    if (state?.status === "saving") {
-        return (
-            <span className="inline-flex shrink-0 items-center gap-1 text-xs" style={{ color: theme.node.muted }} aria-label="正在保存画布">
-                <LoaderCircle className="size-3.5 motion-safe:animate-spin" />
-                <span className="hidden sm:inline">保存中</span>
-            </span>
-        );
-    }
-    if (state?.status === "error") {
-        return (
-            <button type="button" className="inline-flex shrink-0 items-center gap-1 text-xs transition hover:opacity-70" style={{ color: theme.node.danger }} onClick={onRetry} title={state.message || "保存失败，点击重试"} aria-label="保存失败，点击重试">
-                <RefreshCw className="size-3.5" />
-                <span className="hidden sm:inline">保存失败</span>
-            </button>
-        );
-    }
-    if (state?.status === "conflict") {
-        return (
-            <button
-                type="button"
-                className="inline-flex shrink-0 items-center gap-1 text-xs transition hover:opacity-70"
-                style={{ color: theme.node.danger }}
-                onClick={onRetry}
-                title={state.message || "版本冲突，点击刷新"}
-                aria-label="画布版本冲突，点击刷新"
-            >
-                <RefreshCw className="size-3.5" />
-                <span className="hidden sm:inline">版本冲突</span>
-            </button>
-        );
-    }
-    return (
-        <span className="inline-flex shrink-0 items-center gap-1 text-xs" style={{ color: theme.node.muted }} aria-label="画布已保存">
-            <Check className="size-3.5" />
-            <span className="hidden sm:inline">已保存</span>
-        </span>
     );
 }
 

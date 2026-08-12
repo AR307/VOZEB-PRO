@@ -71,11 +71,21 @@ export type ReferralCenter = {
     link: string;
     stats: { clicks: number; registrations: number; qualified: number; pending: number; settled: number; revoked: number };
     referrals: Array<{ id: string; inviteeName: string; riskStatus: ReferralRiskStatus; registeredAt: string }>;
+    referralsTotal: number;
+    referralsPage: number;
+    referralsPageSize: number;
     rewards: ReferralReward[];
+    rewardsTotal: number;
+    rewardsPage: number;
+    rewardsPageSize: number;
 };
 
-export async function getReferralCenter() {
-    return requestReferral<ReferralCenter>("/api/referrals");
+export async function getReferralCenter(input: { referralsPage?: number; rewardsPage?: number; pageSize?: number } = {}) {
+    const query = new URLSearchParams();
+    if (input.referralsPage) query.set("referralsPage", String(input.referralsPage));
+    if (input.rewardsPage) query.set("rewardsPage", String(input.rewardsPage));
+    if (input.pageSize) query.set("pageSize", String(input.pageSize));
+    return requestReferral<ReferralCenter>(`/api/referrals${query.size ? `?${query}` : ""}`);
 }
 
 export async function getAdminReferralOverview() {

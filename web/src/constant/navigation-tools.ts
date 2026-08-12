@@ -8,15 +8,15 @@ export const navigationGroups = [
 ] as const;
 
 export const landingNavigationTools = [
-    { slug: "create", label: "Agent 创作" },
-    { slug: "drama", label: "短剧项目" },
-    { slug: "gallery", label: "作品广场" },
+    { slug: "create", label: "Agent" },
+    { slug: "drama", label: "短剧" },
+    { slug: "gallery", label: "广场" },
 ] as const;
 
 export const navigationTools = [
     {
         slug: "create",
-        label: "创作 Agent",
+        label: "Agent",
         description: "统一创作入口",
         group: "create",
         icon: Sparkles,
@@ -24,56 +24,56 @@ export const navigationTools = [
     },
     {
         slug: "canvas",
-        label: "我的画布",
+        label: "画布",
         description: "节点式多媒体创作",
         group: "projects",
         icon: Maximize2,
     },
     {
         slug: "drama",
-        label: "短剧项目",
+        label: "短剧",
         description: "剧本、分镜与成片",
         group: "projects",
         icon: Clapperboard,
     },
     {
         slug: "works",
-        label: "作品管理",
+        label: "作品",
         description: "发布、审核与分享",
         group: "assets",
         icon: GalleryVerticalEnd,
     },
     {
         slug: "assets",
-        label: "我的素材",
+        label: "素材",
         description: "图片、视频与音频",
         group: "assets",
         icon: Images,
     },
     {
         slug: "my-prompts",
-        label: "我的提示词",
+        label: "提示词",
         description: "个人提示词",
         group: "assets",
         icon: BookMarked,
     },
     {
         slug: "prompts",
-        label: "提示词库",
+        label: "词库",
         description: "公共提示词",
         group: "assets",
         icon: FileText,
     },
     {
         slug: "community",
-        label: "作品广场",
+        label: "广场",
         description: "发现公开作品",
         group: "community",
         icon: Compass,
     },
     {
         slug: "me",
-        label: "个人主页",
+        label: "主页",
         description: "已发布与我的喜欢",
         group: "community",
         icon: UserRound,

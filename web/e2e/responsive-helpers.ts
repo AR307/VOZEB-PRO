@@ -128,12 +128,13 @@ export async function expectNoHorizontalOverflow(page: Page, label: string) {
 }
 
 export async function expectDialogWithinViewport(dialog: Locator) {
-    const bounds = await dialog.boundingBox();
-    expect(bounds).not.toBeNull();
-    const viewport = dialog.page().viewportSize();
-    expect(viewport).not.toBeNull();
-    expect(bounds!.x).toBeGreaterThanOrEqual(0);
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width + 1);
+    await expect
+        .poll(async () => {
+            const bounds = await dialog.boundingBox();
+            const viewport = dialog.page().viewportSize();
+            return Boolean(bounds && viewport && bounds.x >= -1 && bounds.x + bounds.width <= viewport.width + 1);
+        })
+        .toBe(true);
 }
 
 export async function openCreativeHistory(page: Page) {

@@ -8,20 +8,48 @@ import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/
 type CanvasProjectRecord = { userId: string; project: CanvasProject };
 type CanvasProjectDatabase = { version: 1; projects: CanvasProjectRecord[] };
 type StoredCanvasProject = CanvasProject & { __canvasLastMutationId?: string };
+export type CanvasProjectPage = { items: CanvasProject[]; total: number; page: number; pageSize: number };
 
 const FILE_NAME = "canvas-projects.json";
 let mutationQueue = Promise.resolve();
 
 export async function listCanvasProjects(userId: string) {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        const result = await postgresQuery<{ project_json: CanvasProject }>("SELECT project_json FROM canvas_projects WHERE user_id = $1 ORDER BY updated_at DESC", [userId]);
-        return result.rows.map((row) => toPublicProject(row.project_json as StoredCanvasProject));
-    }
+    if (getDatabaseProvider() === "postgres") throw new Error("PostgreSQL Canvas reads must use a paginated project query");
     return (await readDatabase()).projects
         .filter((record) => record.userId === userId)
         .map((record) => toPublicProject(record.project as StoredCanvasProject))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+}
+
+export async function listCanvasProjectPage(userId: string, input: { page: number; pageSize: number }): Promise<CanvasProjectPage> {
+    const offset = (input.page - 1) * input.pageSize;
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ project_json?: StoredCanvasProject; total_count: unknown }>(
+            `WITH filtered AS (
+                 SELECT id, updated_at, project_json
+                 FROM canvas_projects
+                 WHERE user_id = $1
+             ), page_items AS (
+                 SELECT id, updated_at, project_json
+                 FROM filtered
+                 ORDER BY updated_at DESC, id ASC
+                 LIMIT $2 OFFSET $3
+             )
+             SELECT page_items.project_json, totals.total_count
+             FROM (SELECT count(*)::integer AS total_count FROM filtered) totals
+             LEFT JOIN page_items ON TRUE
+             ORDER BY page_items.updated_at DESC NULLS LAST, page_items.id ASC`,
+            [userId, input.pageSize, offset],
+        );
+        return {
+            ...input,
+            items: result.rows.flatMap((row) => (row.project_json ? [toPublicProject(row.project_json)] : [])),
+            total: Math.max(0, Number(result.rows[0]?.total_count) || 0),
+        };
+    }
+    const projects = await listCanvasProjects(userId);
+    return { ...input, items: projects.slice(offset, offset + input.pageSize), total: projects.length };
 }
 
 export async function listCanvasProjectSummaries(userId: string, input: { page: number; pageSize: number }): Promise<CanvasProjectSummaryPage> {

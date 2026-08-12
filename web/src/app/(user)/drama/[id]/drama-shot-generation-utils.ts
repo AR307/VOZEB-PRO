@@ -14,7 +14,7 @@ export function shotReferenceImages(project: DramaProject, shot: DramaShot) {
         const url = item.serverUrl || item.remoteUrl;
         return url ? [referenceImage(item.id, item.title, url, item.mimeType, item.width, item.height)] : [];
     });
-    return [...assetUrls, ...sourceUrls].slice(0, 4);
+    return [...assetUrls, ...sourceUrls];
 }
 
 export function storyboardReferenceImages(shot: DramaShot) {

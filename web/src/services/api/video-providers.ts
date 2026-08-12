@@ -124,7 +124,7 @@ export async function createOpenAIVideoTask(config: AiConfig, model: string, pro
         if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
         body.append("resolution_name", normalizeVideoResolution(config.vquality));
         body.append("preset", "normal");
-        const files = await Promise.all(references.slice(0, 7).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
         files.forEach((file) => {
             body.append("input_reference[]", file);
             body.append("input_reference", file);
@@ -387,7 +387,7 @@ export async function buildCompatibleVideoPayloadVariants(config: AiConfig, mode
     const legacyGlobalAiOpc = !globalPreset && path === GLOBAL_AIOPC_VIDEO_CREATE_PATH;
     const publicUrlReferenceMode = Boolean(globalPreset) || shouldUsePublicVideoReferenceUrls(config, path);
     const imageSources = await Promise.all(
-        references.slice(0, 9).map((reference) => (globalPreset || legacyGlobalAiOpc ? Promise.resolve(resolveGlobalAiOpcImageSources(reference)) : publicUrlReferenceMode ? resolvePublicImageSources(reference) : resolveCompatibleImageSources(reference))),
+        references.map((reference) => (globalPreset || legacyGlobalAiOpc ? Promise.resolve(resolveGlobalAiOpcImageSources(reference)) : publicUrlReferenceMode ? resolvePublicImageSources(reference) : resolveCompatibleImageSources(reference))),
     );
     const images = uniqueStrings(imageSources.flat());
     if ((globalPreset || legacyGlobalAiOpc) && references.length && !images.length) {
@@ -396,8 +396,8 @@ export async function buildCompatibleVideoPayloadVariants(config: AiConfig, mode
     if (!globalPreset && !legacyGlobalAiOpc && publicUrlReferenceMode && references.length && !images.length) {
         throw new Error("\u53c2\u8003\u56fe\u9700\u8981\u516c\u7f51\u56fe\u7247 URL\uff1b\u672c\u5730\u5f00\u53d1 localhost \u4e0d\u80fd\u76f4\u63a5\u63d0\u4ea4\u7ed9\u4e0a\u6e38\uff0c\u8bf7\u90e8\u7f72\u540e\u914d\u7f6e NEXT_PUBLIC_SITE_URL");
     }
-    const publicReferenceVideos = uniqueStrings(videoReferences.slice(0, 3).flatMap(resolveGlobalAiOpcMediaReferenceSources));
-    const publicReferenceAudios = uniqueStrings(audioReferences.slice(0, 3).flatMap(resolveGlobalAiOpcMediaReferenceSources));
+    const publicReferenceVideos = uniqueStrings(videoReferences.flatMap(resolveGlobalAiOpcMediaReferenceSources));
+    const publicReferenceAudios = uniqueStrings(audioReferences.flatMap(resolveGlobalAiOpcMediaReferenceSources));
     const referenceVideos = globalPreset || legacyGlobalAiOpc ? publicReferenceVideos : [];
     const referenceAudios = globalPreset || legacyGlobalAiOpc ? publicReferenceAudios : [];
     if ((globalPreset || legacyGlobalAiOpc) && videoReferences.length && !referenceVideos.length) {
@@ -481,7 +481,7 @@ export async function buildCompatibleVideoPayloadVariants(config: AiConfig, mode
 
 function normalizeYumengVideoDuration(value: string) {
     const seconds = Math.floor(Number(value) || 4);
-    return Math.max(4, Math.min(30, seconds));
+    return Math.max(4, Math.min(15, seconds));
 }
 
 function globalAiOpcVideoPreset(config: AiConfig, model: string) {

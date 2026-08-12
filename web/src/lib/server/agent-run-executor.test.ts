@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreativeConversationContext } from "@/lib/creative-runtime-contract";
+import { AGENT_PLAN_SCHEMA_VERSION } from "./agent-run-audit";
 import type { AgentRun, AgentRunTask } from "./agent-run-store";
 import { canvasPlan, canvasSettings, conversationPlan, creativeImageAsset, disabledSettings, imageTask, plannerFailoverSettings, planningRun, runFixture, runWithTasks, settings } from "./agent-run-executor.test-fixtures";
 
@@ -141,13 +142,13 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "agent-run", expect.objectContaining({ executionPhase: "review_pending", lastUpstreamStatus: "review_pending" }));
     });
 
-    it("settles a persistent review as unavailable after the third failed attempt", async () => {
-        mocks.run = { ...runWithTasks([imageTask("image-one")]), status: "completed", reviewed: false, reviewStatus: "review_pending", reviewAttempts: 2 };
+    it("settles a failed persistent review without unconfigured paid retries", async () => {
+        mocks.run = { ...runWithTasks([imageTask("image-one")]), status: "completed", reviewed: false, reviewStatus: "review_pending" };
         mocks.reviewCreativeOutputs.mockRejectedValue(new Error("review offline"));
 
-        await expect(processAgentRunReview(mocks.run, "http://localhost", "session=test")).resolves.toEqual({ status: "unavailable", attempts: 3 });
+        await expect(processAgentRunReview(mocks.run, "http://localhost", "session=test")).resolves.toEqual({ status: "unavailable", attempts: 1 });
 
-        expect(mocks.run).toMatchObject({ status: "completed", reviewed: true, reviewStatus: "review_unavailable", reviewAttempts: 3, review: { mode: "unavailable", status: "unavailable" } });
+        expect(mocks.run).toMatchObject({ status: "completed", reviewed: true, reviewStatus: "review_unavailable", reviewAttempts: 1, review: { mode: "unavailable", status: "unavailable" } });
         expect(mocks.events.map((event) => event.type)).toEqual(["run.review.started", "run.review.background"]);
     });
 
@@ -502,9 +503,14 @@ describe("executeAgentRun backend settings", () => {
         const planningBody = JSON.parse(String(planningCall?.[1]?.body)) as { messages: Array<{ content: string }> };
         const planningInput = JSON.parse(planningBody.messages[1].content) as { availableModels: Array<{ id: string; capability: string }> };
         expect(planningInput.availableModels).toEqual(expect.arrayContaining([expect.objectContaining({ id: "image-default", capability: "image" }), expect.objectContaining({ id: "image-creative", capability: "image" })]));
-        expect(mocks.run?.plannerContext).toMatchObject({ maxInputChars: expect.any(Number), serializedChars: expect.any(Number), kept: { modelIds: expect.arrayContaining(["image-default", "image-creative"]) } });
+        expect(mocks.run?.plannerContext).toMatchObject({
+            serializedChars: expect.any(Number),
+            kept: { modelIds: expect.arrayContaining(["image-default", "image-creative"]) },
+            omitted: { modelIds: [], skillIds: [], assetIds: [], recentMessageSequences: [] },
+        });
+        expect(mocks.run?.plannerContext).not.toHaveProperty("maxInputChars");
         expect(mocks.run?.plannerAudit).toMatchObject({
-            schemaVersion: 1,
+            schemaVersion: AGENT_PLAN_SCHEMA_VERSION,
             mode: "model",
             logicalModelId: "planner",
             channelId: "planner-channel",
@@ -513,7 +519,24 @@ describe("executeAgentRun backend settings", () => {
             elapsedMs: expect.any(Number),
             pointsCost: 1.25,
             pointsRecordId: "points-plan",
-            skills: [{ id: "skill-one", name: "商品视觉", sourceVersion: "1.2.0", sourceCommit: "abcdef", sourceContentHash: "hash" }],
+            skills: [
+                {
+                    id: "skill-one",
+                    name: "商品视觉",
+                    description: "商品视觉规划",
+                    plannerSummary: "商品视觉规划",
+                    instructions: "保持商品一致",
+                    enabled: true,
+                    keywords: ["商品"],
+                    workspaces: ["canvas"],
+                    action: "generate",
+                    requiresReference: false,
+                    defaultConfig: {},
+                    sourceVersion: "1.2.0",
+                    sourceCommit: "abcdef",
+                    sourceContentHash: "hash",
+                },
+            ],
         });
         const createCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"));
         const createBody = JSON.parse(String(createCall?.[1]?.body)) as { config: { model: string } };
@@ -571,8 +594,8 @@ describe("executeAgentRun backend settings", () => {
     });
 
     it("keeps current-turn attachments exclusive and does not mix conversation memory", async () => {
-        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "按这张图继续", referencedAssetIds: ["asset-current"] });
-        mocks.getCreativeAssetsByIds.mockResolvedValue([creativeImageAsset("asset-current", "本轮附件", "https://cdn.example.com/current.png")]);
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "@图片1 保持人物，@图片2 改成夜景", referencedAssetIds: ["asset-first", "asset-second"] });
+        mocks.getCreativeAssetsByIds.mockResolvedValue([creativeImageAsset("asset-second", "第二张附件", "https://cdn.example.com/second.png"), creativeImageAsset("asset-first", "第一张附件", "https://cdn.example.com/first.png")]);
         mocks.listRecentCreativeMediaAssets.mockResolvedValue([creativeImageAsset("asset-memory", "历史图片", "https://cdn.example.com/memory.png")]);
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockResolvedValue(Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify({ ...canvasPlan("image-default"), intent: "conversation", decisions: [], deliverables: [] }) }] }));
@@ -583,7 +606,10 @@ describe("executeAgentRun backend settings", () => {
         const planningBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls[0][1]?.body)) as { messages: Array<{ content: string }> };
         expect(JSON.parse(planningBody.messages[1].content)).toMatchObject({
             referenceContext: { source: "current-turn-explicit" },
-            referencedAssets: [{ id: "asset-current", title: "本轮附件" }],
+            referencedAssets: [
+                { id: "asset-first", alias: "@图片1", title: "第一张附件" },
+                { id: "asset-second", alias: "@图片2", title: "第二张附件" },
+            ],
         });
     });
 

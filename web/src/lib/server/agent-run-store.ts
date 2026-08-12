@@ -14,6 +14,7 @@ export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "
 export type AgentRunReviewStatus = "review_pending" | "reviewing" | "review_completed" | "review_unavailable";
 export type AgentRunReference = {
     assetId?: string;
+    nodeId?: string;
     sourceTaskId?: string;
     url: string;
     type: "image" | "video" | "audio";
@@ -36,6 +37,7 @@ export type AgentRunTask = {
     title: string;
     type: "text" | "image" | "video" | "audio";
     model?: string;
+    optimizedPrompt?: string;
     prompt: string;
     count: number;
     ratio?: string;
@@ -66,6 +68,7 @@ export type AgentRun = {
     inputMessageId: string;
     assistantMessageId: string;
     prompt: string;
+    publicPrompt?: string;
     snapshot?: unknown;
     referencedAssetIds: string[];
     selectedSkillIds?: string[];
@@ -96,7 +99,6 @@ export type AgentRunCancellation = {
     lastError?: string;
 };
 export type AgentRunPlannerContextSummary = {
-    maxInputChars: number;
     serializedChars: number;
     kept: { modelIds: string[]; skillIds: string[]; assetIds: string[]; recentMessageSequences: number[] };
     omitted: { modelIds: string[]; skillIds: string[]; assetIds: string[]; recentMessageSequences: number[] };
@@ -127,6 +129,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         inputMessageId: `message-${nanoid()}`,
         assistantMessageId: `message-${nanoid()}`,
         prompt: input.prompt,
+        ...(input.publicPrompt ? { publicPrompt: input.publicPrompt } : {}),
         snapshot: input.snapshot,
         referencedAssetIds: input.assetIds,
         selectedSkillIds: input.skillIds,
@@ -141,13 +144,14 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         createdAt: now,
         updatedAt: now,
     };
+    const publicPrompt = input.publicPrompt || input.prompt;
     return createCreativeRunBundle(userId, {
         run,
         conversationId: input.conversationId,
-        prompt: input.prompt,
-        title: input.prompt.slice(0, 48),
+        prompt: publicPrompt,
+        title: publicPrompt.slice(0, 48),
         assetIds: input.assetIds,
-        acknowledgement: agentRequirementAcknowledgement(input.prompt, input.surface, input.assetIds.length > 0 || selectedCanvasNodeIds(input.snapshot).length > 0),
+        acknowledgement: agentRequirementAcknowledgement(publicPrompt, input.surface, input.assetIds.length > 0 || selectedCanvasNodeIds(input.snapshot).length > 0),
         ttlMs: TTL,
     });
 }
@@ -170,7 +174,7 @@ function selectedCanvasNodeIds(snapshot: unknown) {
 }
 
 export const getAgentRun = (id: string) => getStoredGenerationTask<AgentRun>("agent", id);
-export const listAgentRuns = (options: { userId: string; conversationId?: string; projectId?: string; surface?: CreativeSurface; limit?: number }) => queryStoredGenerationTasks<AgentRun>("agent", options);
+export const listAgentRuns = (options: { userId: string; conversationId?: string; projectId?: string; surface?: CreativeSurface; statuses?: AgentRunStatus[]; limit?: number }) => queryStoredGenerationTasks<AgentRun>("agent", options);
 export async function getAgentRunByClientRequestId(userId: string, clientRequestId: string) {
     return getCreativeRunByClientRequestId<AgentRun>(userId, clientRequestId);
 }
@@ -282,7 +286,7 @@ export async function updateAgentRunTaskById(id: string, taskId: string, patch: 
 
 function resolveAgentTaskCountForEvent(task: AgentRunTask) {
     const count = Number(task.count);
-    return Number.isFinite(count) && count > 0 ? Math.min(10, Math.floor(count)) : 1;
+    return Number.isSafeInteger(count) && count > 0 ? Math.floor(count) : 1;
 }
 
 function mergeAgentTaskPatch(task: AgentRunTask, patch: Partial<AgentRunTask>): AgentRunTask {
@@ -302,7 +306,7 @@ function mergeChildTasks(current: AgentRunChildTask[], incoming: AgentRunChildTa
         const existing = merged.get(child.id);
         if (!existing || existing.status === "pending" || child.status !== "pending") merged.set(child.id, child);
     }
-    return Array.from(merged.values()).slice(0, 10);
+    return Array.from(merged.values());
 }
 
 function assistantUpdate(run: AgentRun, event?: { type: string; data?: unknown }) {

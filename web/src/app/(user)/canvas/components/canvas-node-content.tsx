@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Clock3, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
 
@@ -10,7 +10,7 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasPanoramaViewer } from "./canvas-panorama-viewer";
-import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
+import { CanvasNodeType, type CanvasNodeData } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 
 export type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -85,7 +85,7 @@ export function BriefNodeContent({ node, theme }: NodeContentRendererProps) {
             ) : null}
             <div className="flex flex-wrap gap-2">
                 {brief?.deliverables?.map((item, index) => (
-                    <span key={`${item.title}-${index}`} className="rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: theme.node.stroke, background: theme.toolbar.activeBg }}>
+                    <span key={`${item.title}-${index}`} className="rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: theme.node.subtleBorder, background: theme.node.subtleSurface, color: theme.node.subtleText }}>
                         {item.title}
                         {item.count && item.count > 1 ? ` ×${item.count}` : ""}
                     </span>
@@ -97,14 +97,15 @@ export function BriefNodeContent({ node, theme }: NodeContentRendererProps) {
 
 export function TaskNodeContent({ node, theme }: NodeContentRendererProps) {
     const status = node.metadata?.agentTaskStatus || "pending";
-    const labels = { ready: "等待执行", pending: "等待执行", running: "执行中", paused: "已暂停", waiting_user: "等待确认", completed: "已完成", failed: "失败", cancelled: "已取消" };
+    const statusTheme = taskStatusTheme(status, theme);
     return (
         <div className="flex h-full min-h-0 flex-col p-5" style={{ color: theme.node.text }}>
             <div className="flex min-h-0 flex-1 flex-col">
                 <div className="mb-4 flex items-center justify-between">
                     <ListChecks className="size-5" style={{ color: theme.node.activeStroke }} />
-                    <span className="rounded-full px-2.5 py-1 text-xs" style={{ background: theme.toolbar.activeBg }}>
-                        {labels[status]}
+                    <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium" style={{ background: statusTheme.surface, borderColor: statusTheme.border, color: statusTheme.text }}>
+                        <span className="size-1.5 rounded-full" style={{ background: statusTheme.text }} aria-hidden="true" />
+                        {TASK_STATUS_LABELS[status]}
                     </span>
                 </div>
                 <p className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pr-1 text-sm leading-6" onWheel={(event) => event.stopPropagation()}>
@@ -148,7 +149,7 @@ export function BrandKitNodeContent({ node, theme }: NodeContentRendererProps) {
             </div>
             <div className="flex flex-wrap gap-2">
                 {(kit?.keywords || kit?.visualKeywords)?.map((word) => (
-                    <span key={word} className="rounded-md px-2 py-1 text-xs" style={{ background: theme.toolbar.activeBg }}>
+                    <span key={word} className="rounded-md border px-2 py-1 text-xs" style={{ background: theme.node.subtleSurface, borderColor: theme.node.subtleBorder, color: theme.node.subtleText }}>
                         {word}
                     </span>
                 ))}
@@ -197,14 +198,14 @@ export function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererP
 export function ReviewContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 overflow-hidden px-5 py-4 text-center">
-            <Clock3 className="size-6 shrink-0" style={{ color: theme.node.activeStroke }} />
+            <Clock3 className="size-6 shrink-0" style={{ color: theme.node.warningText }} />
             <div className="max-h-[55%] max-w-[280px] overflow-y-auto text-xs leading-5" style={{ color: theme.node.text }}>
                 {node.metadata?.errorDetails || "任务创建结果待管理员确认，系统未重复提交。"}
             </div>
             <button
                 type="button"
                 className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition hover:brightness-95"
-                style={{ background: theme.toolbar.activeBg, borderColor: theme.node.stroke, color: theme.node.activeStroke }}
+                style={{ background: theme.node.warningSurface, borderColor: theme.node.warningBorder, color: theme.node.warningText }}
                 onClick={(event) => {
                     event.stopPropagation();
                     onRetry?.(node);
@@ -329,7 +330,7 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
 export function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batchOpening, batchRecovering, onToggleBatch }: NodeContentRendererProps) {
     const content = (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
-            <div className="flex size-14 items-center justify-center rounded-2xl" style={{ background: theme.toolbar.activeBg }}>
+            <div className="flex size-14 items-center justify-center rounded-2xl border" style={{ background: theme.node.subtleSurface, borderColor: theme.node.subtleBorder, color: theme.node.subtleText }}>
                 <ImageIcon className="size-6 opacity-30" />
             </div>
             <span className="text-[10px] tracking-[0.18em] opacity-50">空图片节点</span>
@@ -568,4 +569,23 @@ export function ConnectionHandleDot({ side, visible, onConnectStart }: { side: "
             <div className="size-3 rounded-full border-2 transition-all hover:scale-125" style={{ background: theme.node.panel, borderColor: theme.node.muted }} />
         </div>
     );
+}
+
+const TASK_STATUS_LABELS = {
+    ready: "等待执行",
+    pending: "等待执行",
+    running: "执行中",
+    paused: "已暂停",
+    waiting_user: "等待确认",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+} as const;
+
+function taskStatusTheme(status: keyof typeof TASK_STATUS_LABELS, theme: NodeContentRendererProps["theme"]) {
+    if (status === "running") return { surface: theme.node.infoSurface, border: theme.node.infoBorder, text: theme.node.infoText };
+    if (status === "completed") return { surface: theme.node.successSurface, border: theme.node.successBorder, text: theme.node.successText };
+    if (status === "paused" || status === "waiting_user") return { surface: theme.node.warningSurface, border: theme.node.warningBorder, text: theme.node.warningText };
+    if (status === "failed") return { surface: theme.node.dangerSurface, border: theme.node.dangerBorder, text: theme.node.danger };
+    return { surface: theme.node.subtleSurface, border: theme.node.subtleBorder, text: theme.node.subtleText };
 }

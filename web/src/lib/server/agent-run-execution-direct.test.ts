@@ -47,6 +47,7 @@ describe("directAgentPlan", () => {
         const [task] = normalizeTasks(plan as never, [], generationSettings() as never, snapshot, "换成黑人", "canvas", []);
 
         expect(task).toMatchObject({ targetNodeId: "current-person", referenceUrl: "/api/reference-assets/current.webp", referenceType: "image", ratio: "9:16" });
+        expect(task.optimizedPrompt).toBe("换成黑人");
         expect(task.prompt).toContain("本轮上传人物");
         expect(task.prompt).not.toContain("上一轮泰迪犬");
         const ops = planToOps(plan as never, [task], "run", snapshot);
@@ -129,6 +130,27 @@ describe("directAgentPlan", () => {
         const [task] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, "产品海报", "chat", [], undefined, { mode: "image", image: { size: "16:9", quality: "high", count: 4 } });
 
         expect(task).toMatchObject({ type: "image", ratio: "16:9", quality: "high", count: 4 });
+    });
+
+    it("将逐图引用别名和稳定资产 ID 一起写入真实上游提示词", () => {
+        const plan = {
+            intent: "generation",
+            objective: "合成双图",
+            reply: "开始生成",
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: "合成双图" }, direction: { summary: "保持主体清晰" } },
+            deliverables: [{ id: "composite", title: "合成图", type: "image", model: "image-pro", prompt: "@图片1 保持人物，@图片2 改成夜景", count: 1, assetIds: ["first", "second"], dependencies: [] }],
+        };
+        const assets = [
+            { id: "first", type: "image", title: "人物", serverUrl: "/api/reference-assets/first.webp", metadata: {} },
+            { id: "second", type: "image", title: "夜景", serverUrl: "/api/reference-assets/second.webp", metadata: {} },
+        ];
+
+        const [task] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, plan.deliverables[0].prompt, "chat", assets as never);
+
+        expect(task.prompt).toContain("引用别名：@图片1；资产 ID：first");
+        expect(task.prompt).toContain("引用别名：@图片2；资产 ID：second");
+        expect(task.references?.map((reference) => reference.assetId)).toEqual(["first", "second"]);
     });
 
     it("统一 Agent 将视频声音水印与音频语速写入真实任务快照", () => {
