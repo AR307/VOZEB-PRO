@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
 import { appStorageKey } from "@/lib/storage-keys";
-import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
+import { absoluteSiteUrl, browserIconHref, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { buildWebsiteStructuredData, serializeStructuredData } from "@/lib/structured-data";
 import "antd/dist/reset.css";
 import "./globals.css";
@@ -60,6 +60,7 @@ export default async function RootLayout({
     const [site, requestHeaders] = await Promise.all([getPublicSiteSettings(), headers()]);
     const nonce = requestHeaders.get("x-nonce") || undefined;
     const base = siteMetadataBase();
+    const iconHref = browserIconHref(site);
     const websiteUrl = absoluteSiteUrl("/", base);
     const websiteStructuredData = buildWebsiteStructuredData({
         name: site.title,
@@ -72,9 +73,9 @@ export default async function RootLayout({
         <html lang="zh-CN" suppressHydrationWarning className="font-sans">
             <head>
                 <script id="theme-bootstrap" nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
-                <link rel="icon" href="/api/site-icon" />
-                <link rel="shortcut icon" href="/api/site-icon" />
-                <link rel="apple-touch-icon" href="/api/site-icon" />
+                <link rel="icon" href={iconHref} />
+                <link rel="shortcut icon" href={iconHref} />
+                <link rel="apple-touch-icon" href={iconHref} />
             </head>
             <body
                 className="bg-background text-foreground antialiased"

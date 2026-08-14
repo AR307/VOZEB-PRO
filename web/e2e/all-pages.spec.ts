@@ -153,6 +153,9 @@ async function verifyRoute(page: Page, route: RouteCase, label: string) {
         else if (route.path.startsWith("/share/")) expect(response?.status()).toBe(404);
         else expect(response?.status() || 200, `${label} ${route.path} document status`).toBeLessThan(500);
         await expect(page.locator("main").first()).toBeVisible();
+        const browserIconHref = await page.locator('link[rel="icon"]').getAttribute("href");
+        expect(browserIconHref, `${label} ${route.path} browser icon href`).toBeTruthy();
+        expect(browserIconHref, `${label} ${route.path} browser icon must not depend on a redirect`).not.toContain("/api/site-icon");
         if (route.expectedPath) await expect(page).toHaveURL(route.expectedPath);
         if (route.readyHeading) await expect(page.getByRole("heading", { name: route.readyHeading, exact: true })).toBeVisible();
         if (route.readyText) await expect(page.getByText(route.readyText, { exact: true }).first()).toBeVisible();
