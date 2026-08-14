@@ -541,6 +541,7 @@ test("canvas separates project management from the command menu and keeps assets
 
         await page.getByRole("button", { name: "打开画布菜单" }).click();
         await expect(page.getByRole("menuitem", { name: "导入素材" })).toBeVisible();
+        await expect(page.getByRole("menuitem", { name: "资产面板" })).toHaveCount(0);
         await expect(page.getByRole("menuitem", { name: "删除画布" })).toBeVisible();
         await expect(page.getByRole("menuitem", { name: "新建画布" })).toHaveCount(0);
         await expect(page.getByRole("menuitem", { name: "我的画布" })).toHaveCount(0);
@@ -565,17 +566,51 @@ test("canvas separates project management from the command menu and keeps assets
         await page.getByRole("menuitem").filter({ hasText: targetTitle }).click();
         await expect.poll(() => new URL(page.url()).pathname).toBe(`/canvas/${target.id}`);
 
-        await page.setViewportSize({ width: 390, height: 844 });
-        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
-        await expect(surface).toBeVisible({ timeout: 20_000 });
-        await page.getByRole("button", { name: "打开资产面板" }).click();
-        const mobilePanel = page.getByLabel("Canvas 资产面板");
-        await expect(mobilePanel).toBeVisible();
-        const mobileBounds = await mobilePanel.boundingBox();
-        expect(mobileBounds).not.toBeNull();
-        expect(mobileBounds!.x).toBeGreaterThanOrEqual(0);
-        expect(mobileBounds!.x + mobileBounds!.width).toBeLessThanOrEqual(390 + 1);
-        await expectNoHorizontalOverflow(page, "Canvas 资产侧栏 390px");
+        for (const width of [390, 430]) {
+            await page.setViewportSize({ width, height: width === 390 ? 844 : 932 });
+            await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+            await expect(surface).toBeVisible({ timeout: 20_000 });
+            const topbarGeometry = await page.locator(".canvas-topbar").evaluate((topbar) => {
+                const title = topbar.querySelector<HTMLElement>(".canvas-topbar-title");
+                const assets = topbar.querySelector<HTMLElement>('[aria-label="打开资产面板"], [aria-label="关闭资产面板"]');
+                const actions = topbar.querySelector<HTMLElement>(".canvas-topbar-actions");
+                const controls = actions ? Array.from(actions.querySelectorAll<HTMLElement>("button, a")).filter((control) => getComputedStyle(control).display !== "none") : [];
+                const bounds = (element: Element | null) => {
+                    if (!element) return null;
+                    const rect = element.getBoundingClientRect();
+                    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
+                };
+                return {
+                    viewportWidth: window.innerWidth,
+                    documentWidth: document.documentElement.scrollWidth,
+                    title: bounds(title),
+                    assets: bounds(assets),
+                    actions: bounds(actions),
+                    controls: controls.map((control) => bounds(control)),
+                };
+            });
+            expect(topbarGeometry.documentWidth).toBeLessThanOrEqual(width + 1);
+            expect(topbarGeometry.title).not.toBeNull();
+            expect(topbarGeometry.assets).not.toBeNull();
+            expect(topbarGeometry.actions).not.toBeNull();
+            expect(topbarGeometry.title!.width).toBeGreaterThanOrEqual(80);
+            expect(topbarGeometry.assets!.width).toBeGreaterThanOrEqual(30);
+            expect(topbarGeometry.title!.right).toBeLessThanOrEqual(topbarGeometry.assets!.left + 1);
+            expect(topbarGeometry.title!.right).toBeLessThanOrEqual(topbarGeometry.actions!.left + 1);
+            expect(topbarGeometry.controls.every((control) => control && control.left >= -1 && control.right <= topbarGeometry.viewportWidth + 1)).toBe(true);
+
+            if (width === 390) {
+                await page.getByRole("button", { name: "打开资产面板" }).click();
+                const mobilePanel = page.getByLabel("Canvas 资产面板");
+                await expect(mobilePanel).toBeVisible();
+                await expect.poll(async () => (await mobilePanel.boundingBox())?.x ?? Number.NEGATIVE_INFINITY, { timeout: 3_000 }).toBeGreaterThanOrEqual(-1);
+                const mobileBounds = await mobilePanel.boundingBox();
+                expect(mobileBounds).not.toBeNull();
+                expect(mobileBounds!.x).toBeGreaterThanOrEqual(0);
+                expect(mobileBounds!.x + mobileBounds!.width).toBeLessThanOrEqual(width + 1);
+                await expectNoHorizontalOverflow(page, "Canvas 资产侧栏 390px");
+            }
+        }
     } finally {
         await deleteCanvasProject(request, project.id);
         await deleteCanvasProject(request, target.id);

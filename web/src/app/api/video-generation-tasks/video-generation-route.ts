@@ -318,21 +318,21 @@ export async function createUpstream(
                     firstFrame: firstFrameUrl || undefined,
                     lastFrame: lastFrameUrl || undefined,
                 })
-            : globalPreset
-              ? buildGlobalAiOpcVideoRequest(globalPreset, {
-                    model: channel.model,
-                    prompt,
-                    duration: values.duration as number,
-                    ratio: values.ratio as string,
-                    resolution: values.resolution as string,
-                    images: requestImages.length ? requestImages : requestImage ? [requestImage] : [],
-                    videos,
-                    audios,
-                    generateAudio,
-                    firstFrame: firstFrameUrl || undefined,
-                    lastFrame: lastFrameUrl || undefined,
-                })
-              : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
+              : globalPreset
+                ? buildGlobalAiOpcVideoRequest(globalPreset, {
+                      model: channel.model,
+                      prompt,
+                      duration: values.duration as number,
+                      ratio: values.ratio as string,
+                      resolution: values.resolution as string,
+                      images: requestImages.length ? requestImages : requestImage ? [requestImage] : [],
+                      videos,
+                      audios,
+                      generateAudio,
+                      firstFrame: firstFrameUrl || undefined,
+                      lastFrame: lastFrameUrl || undefined,
+                  })
+                : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
     const requestBody = multipart
         ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: firstFrameUrl ? [firstFrameUrl] : images, origin, cookie })
         : JSON.stringify(payload);

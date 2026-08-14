@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-    assertYumengVideoReferences,
-    buildYumengImageRequest,
-    buildYumengVideoRequest,
-    resolveYumengImageResolution,
-    YUMENG_MODEL_CENTER_MODELS,
-} from "./yumeng-model-center";
+import { assertYumengVideoReferences, buildYumengImageRequest, buildYumengVideoRequest, resolveYumengImageResolution, YUMENG_MODEL_CENTER_MODELS } from "./yumeng-model-center";
 
 describe("Yumeng model center contracts", () => {
     it("uses only the model IDs published by the current documentation navigation", () => {
@@ -95,10 +89,7 @@ describe("Yumeng model center contracts", () => {
     });
 });
 
-function buildVideo(
-    model: string,
-    references: Partial<Pick<Parameters<typeof buildYumengVideoRequest>[0], "images" | "videos" | "audios" | "firstFrame" | "lastFrame">> = {},
-) {
+function buildVideo(model: string, references: Partial<Pick<Parameters<typeof buildYumengVideoRequest>[0], "images" | "videos" | "audios" | "firstFrame" | "lastFrame">> = {}) {
     return buildYumengVideoRequest({
         model,
         prompt: "电影感产品镜头",

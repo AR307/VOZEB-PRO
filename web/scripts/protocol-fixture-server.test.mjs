@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import sharp from "sharp";
 
@@ -5,6 +9,7 @@ import { createProtocolFixtureServer } from "./protocol-fixture-server.mjs";
 
 let fixture;
 let origin;
+let temporaryDirectory;
 
 beforeEach(async () => {
     fixture = createProtocolFixtureServer();
@@ -15,6 +20,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
     await new Promise((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
+    if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
+    temporaryDirectory = undefined;
 });
 
 describe("protocol fixture server", () => {
@@ -36,6 +43,27 @@ describe("protocol fixture server", () => {
         expect(openAi.data[0].b64_json).toMatch(/^iVBOR/);
         expect(stableDiffusion.images[0]).toBe(openAi.data[0].b64_json);
         await expect(sharp(Buffer.from(openAi.data[0].b64_json, "base64")).metadata()).resolves.toMatchObject({ format: "png", width: 2, height: 2 });
+    });
+
+    it("serves a configured fixture image without changing the default contract", async () => {
+        await new Promise((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
+        temporaryDirectory = await mkdtemp(path.join(tmpdir(), "vozeb-pro-protocol-image-"));
+        const imagePath = path.join(temporaryDirectory, "fixture.png");
+        const expected = await sharp({ create: { width: 7, height: 5, channels: 4, background: "#7c8cff" } })
+            .png()
+            .toBuffer();
+        await writeFile(imagePath, expected);
+        fixture = createProtocolFixtureServer({ imagePath });
+        await new Promise((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        origin = `http://127.0.0.1:${address.port}`;
+
+        const openAi = await fetch(`${origin}/v1/images/generations`, { method: "POST" }).then((response) => response.json());
+        const media = Buffer.from(await fetch(`${origin}/media/fixture.png`).then((response) => response.arrayBuffer()));
+
+        expect(Buffer.from(openAi.data[0].b64_json, "base64")).toEqual(expected);
+        expect(media).toEqual(expected);
+        await expect(sharp(media).metadata()).resolves.toMatchObject({ format: "png", width: 7, height: 5 });
     });
 
     it.each([

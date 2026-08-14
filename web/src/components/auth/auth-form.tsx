@@ -133,7 +133,7 @@ export function AuthForm({
             <form onSubmit={submit} className={cn("auth-form-body w-full", variant === "embedded" ? "space-y-4" : "space-y-6")}>
                 {headerSlot}
                 <div className="auth-form-header">
-                    <p className="auth-form-kicker text-sm font-medium text-cyan-600 dark:text-cyan-300">{firstUser ? "首次初始化" : isRegister ? "创建创作账号" : "欢迎回来"}</p>
+                    <p className="auth-form-kicker text-sm font-medium">{firstUser ? "首次初始化" : isRegister ? "创建创作账号" : "欢迎回来"}</p>
                     <h2 className={cn("mt-2 font-semibold tracking-normal text-stone-950 dark:text-white", variant === "embedded" ? "text-2xl" : "text-3xl")}>{firstUser ? "创建首个管理员" : isRegister ? `注册 ${siteTitle}` : `登录 ${siteTitle}`}</h2>
                     <p className="auth-form-description mt-3 text-sm leading-6 text-stone-500 dark:text-stone-400">{isRegister ? "保存创作项目、提示词和常用风格，从同一个入口继续。" : "继续你的电商、短剧、美颜与画布创作。"}</p>
                 </div>
@@ -330,8 +330,8 @@ export function AuthForm({
 
     return (
         <main className="auth-page-bg app-scroll-page flex items-center justify-center px-4 py-6 text-foreground sm:px-6 sm:py-10">
-            <div className="auth-page-card grid w-full max-w-5xl overflow-hidden border border-stone-200 bg-white/86 shadow-2xl shadow-cyan-950/10 backdrop-blur md:grid-cols-[0.9fr_1fr] dark:border-white/10 dark:bg-black/50 dark:shadow-cyan-950/20">
-                <section className="auth-page-brand-panel flex min-h-[220px] flex-col justify-between gap-5 border-b border-stone-200 p-5 text-stone-950 sm:min-h-[360px] sm:gap-8 sm:p-8 md:border-b-0 md:border-r dark:border-white/10 dark:text-white">
+            <div className="auth-page-card grid w-full max-w-5xl overflow-hidden border backdrop-blur md:grid-cols-[0.9fr_1fr]">
+                <section className="auth-page-brand-panel flex min-h-[220px] flex-col justify-between gap-5 border-b p-5 text-stone-950 sm:min-h-[360px] sm:gap-8 sm:p-8 md:border-b-0 md:border-r dark:text-white">
                     <div className="flex items-start justify-between gap-4">
                         <Link href="/" className="inline-flex items-center gap-4 text-base font-semibold">
                             <SiteLogo logoUrl={site.logoUrl} className="size-16 sm:size-20" />
@@ -351,7 +351,7 @@ export function AuthForm({
                     <div className="auth-page-feature-list grid gap-2 text-sm text-stone-600 dark:text-stone-300">
                         {["电商、短剧与美颜创作", "画布项目与提示词复用", "图片、视频与音频统一创作"].map((item) => (
                             <div key={item} className="flex items-center gap-2">
-                                <span className="size-1.5 rounded-full bg-cyan-400" />
+                                <span className="auth-feature-dot size-1.5 rounded-full" />
                                 <span>{item}</span>
                             </div>
                         ))}

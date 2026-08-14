@@ -288,7 +288,15 @@ export function CanvasAssetsPanel({
                     {panel}
                 </aside>
             ) : null}
-            <Drawer placement="left" size={336} open={open && screens.lg !== true} closable={false} onClose={onClose} styles={{ wrapper: { maxWidth: "100vw" }, body: { height: "100%", padding: 0, overflow: "hidden" } }}>
+            <Drawer
+                rootClassName="canvas-assets-drawer"
+                placement="left"
+                size={336}
+                open={open && screens.lg !== true}
+                closable={false}
+                onClose={onClose}
+                styles={{ wrapper: { maxWidth: "100vw" }, body: { height: "100%", padding: 0, overflow: "hidden" } }}
+            >
                 {screens.lg !== true ? panel : null}
             </Drawer>
             <MediaPreviewModal preview={preview} onClose={() => setPreview(undefined)} />

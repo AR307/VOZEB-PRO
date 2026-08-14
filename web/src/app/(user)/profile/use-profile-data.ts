@@ -56,6 +56,8 @@ export function useProfileData(activeSection: ProfileSectionKey) {
             setProducts(payload.products || []);
             setProductsLoaded(true);
         } catch (error) {
+            setProducts([]);
+            setProductsLoaded(true);
             message.error(error instanceof Error ? error.message : "充值套餐加载失败");
         } finally {
             productsRequest.current = false;
@@ -74,6 +76,9 @@ export function useProfileData(activeSection: ProfileSectionKey) {
                 setOrdersTotal(payload.total || 0);
                 setOrdersLoadedPage(page);
             } catch (error) {
+                setOrders([]);
+                setOrdersTotal(0);
+                setOrdersLoadedPage(page);
                 message.error(error instanceof Error ? error.message : "订单记录加载失败");
             } finally {
                 if (ordersRequestPage.current === page) ordersRequestPage.current = null;

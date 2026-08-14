@@ -1,4 +1,6 @@
 import type { SiteFriendLink, SiteSocialSettings } from "@/lib/auth/store-types";
+import type { CreateAgentMode } from "@/lib/create-agent-prompt";
+import { WORK_CATEGORIES } from "@/lib/work-publication-options";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
 
 export type HomeSiteSettings = {
@@ -12,24 +14,47 @@ export type HomeSiteSettings = {
     socials: SiteSocialSettings;
 };
 
-export const HOME_NAVIGATION = [
-    { label: "创作 Agent", href: "/create", protected: true },
-    { label: "短剧制作", href: "/drama", protected: true },
-    { label: "作品广场", href: "/gallery", protected: false },
-    { label: "价格方案", href: "/billing", protected: true },
-] as const;
+export type HomeNavigationItem = {
+    label: string;
+    href: string;
+    action: "link" | "protected" | "billing";
+};
 
-export const HOME_PROMPT_EXAMPLES = ["生成一张科幻城市概念图", "制作一段产品宣传视频", "为美妆产品生成宣传图", "创作一个短篇分镜脚本"] as const;
+export const HOME_NAVIGATION = [
+    { label: "创作 Agent", href: "/create", action: "protected" },
+    { label: "短剧制作", href: "/drama", action: "protected" },
+    { label: "作品广场", href: "/gallery", action: "link" },
+    { label: "价格方案", href: "/billing", action: "billing" },
+] as const satisfies readonly HomeNavigationItem[];
 
 export const HOME_CREATION_MODES = [
-    { id: "writing", label: "AI 写作", icon: "writing" },
-    { id: "image", label: "AI 绘图", icon: "image" },
-    { id: "video", label: "AI 视频", icon: "video" },
-    { id: "audio", label: "AI 音频", icon: "audio" },
-    { id: "script", label: "AI 脚本", icon: "script" },
+    {
+        id: "agent",
+        label: "智能模式",
+        icon: "agent",
+        examples: ["生成一张科幻城市概念图", "制作一段产品宣传视频", "为电商产品生成详情页", "创作一个短剧分镜脚本"],
+    },
+    {
+        id: "image",
+        label: "AI 绘图",
+        icon: "image",
+        examples: ["生成电影感的未来城市概念图", "为美妆新品制作竖版宣传海报", "为电商产品生成详情页", "把参考图改成清透夏日广告"],
+    },
+    {
+        id: "video",
+        label: "AI 视频",
+        icon: "video",
+        examples: ["制作一段 10 秒新品发布短片", "生成竖屏咖啡品牌氛围广告", "让镜头缓慢向前推进", "制作一段产品功能演示视频"],
+    },
+    {
+        id: "audio",
+        label: "AI 音频",
+        icon: "audio",
+        examples: ["生成温暖自然的品牌介绍旁白", "制作沉稳的发布会开场音频", "将文案转换为轻快女声配音", "为短片生成自然男声旁白"],
+    },
 ] as const;
 
-export type HomeCreationMode = (typeof HOME_CREATION_MODES)[number]["id"];
+export type HomeCreationMode = CreateAgentMode;
 
 export const HOME_STEPS = [
     { number: "01", title: "选择场景", description: "选择合适的创作场景，明确创作类型", icon: "grid" },
@@ -45,31 +70,16 @@ export const HOME_ADVANTAGES = [
     { title: "企业级存储", description: "可靠保存创作资产", icon: "cloud" },
 ] as const;
 
-export const HOME_GALLERY_TABS = [
-    { id: "all", label: "全部" },
-    { id: "image", label: "图片设计" },
-    { id: "video", label: "视频作品" },
-    { id: "drama", label: "短剧分镜" },
-    { id: "poster", label: "海报设计" },
-    { id: "audio", label: "音频作品" },
-] as const;
+export const HOME_GALLERY_TABS = [{ id: "all", label: "全部" }, ...WORK_CATEGORIES.map((category) => ({ id: category, label: category }))] as const;
 
-export type HomeGalleryTab = (typeof HOME_GALLERY_TABS)[number]["id"];
+export type HomeGalleryTab = "all" | (typeof WORK_CATEGORIES)[number];
 
 export function homeGalleryMatches(item: PublicGalleryItem, tab: HomeGalleryTab) {
     const mediaType = item.preview?.mediaType;
-    if (tab === "all") return true;
-    if (tab === "image") return mediaType === "image" && item.sourceType !== "drama";
-    if (tab === "video") return mediaType === "video" && item.sourceType !== "drama";
-    if (tab === "drama") return item.sourceType === "drama" || item.category === "短剧";
-    if (tab === "poster") return mediaType === "image" && (item.category === "品牌内容" || item.category === "视觉设计");
-    return mediaType === "audio";
+    if (mediaType !== "image" && mediaType !== "video") return false;
+    return tab === "all" || item.category === tab;
 }
 
 export function homeGalleryTypeLabel(item: PublicGalleryItem) {
-    if (item.sourceType === "drama" || item.category === "短剧") return "短剧分镜";
-    if (item.preview?.mediaType === "video") return "视频作品";
-    if (item.preview?.mediaType === "audio") return "音频作品";
-    if (item.category === "品牌内容") return "海报设计";
-    return "图片设计";
+    return item.category;
 }

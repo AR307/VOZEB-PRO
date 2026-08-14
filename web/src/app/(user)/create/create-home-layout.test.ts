@@ -17,7 +17,8 @@ describe("create Agent home layout", () => {
         ]);
 
         expect(page).toContain("创作 Agent");
-        expect(page).toContain("createAgentPromptFromHash");
+        expect(page).toContain("createAgentDraftFromHash");
+        expect(page).toContain("setCreationMode(incomingDraft.mode)");
         expect(page).toContain('data-testid="creative-conversation-scroll"');
         expect(page).toContain("updateConversationScrollState");
         expect(page).toContain("onWheelCapture");

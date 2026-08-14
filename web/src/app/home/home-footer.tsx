@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowRight, Mail, Send } from "lucide-react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
-import { HOME_NAVIGATION } from "./home-data";
+import { HOME_NAVIGATION, type HomeNavigationItem } from "./home-data";
 import { useHomeActions } from "./home-actions";
 import styles from "./home.module.css";
 
@@ -27,16 +27,16 @@ export function HomeCta() {
 }
 
 export function HomeFooter() {
-    const { site, openProtectedPath } = useHomeActions();
+    const { site, openBillingPlans, openProtectedPath } = useHomeActions();
     const friendLinks = site.friendLinks.filter((item) => item.enabled && item.label.trim() && item.url.trim());
     const socials = Object.entries(site.socials).filter(([, item]) => item.enabled && item.label.trim() && item.url.trim());
     const copyright = site.footerCopyright?.trim();
     const policies = [site.privacyUrl?.trim() ? { label: "隐私政策", href: site.privacyUrl.trim() } : null, site.termsUrl?.trim() ? { label: "服务条款", href: site.termsUrl.trim() } : null].filter((item): item is { label: string; href: string } =>
         Boolean(item),
     );
-    const navigationGroups = [
-        { title: "产品", items: HOME_NAVIGATION.slice(0, 4) },
-        { title: "平台", items: [...HOME_NAVIGATION.slice(4), { label: "公告中心", href: "/announcements", protected: false }] },
+    const navigationGroups: Array<{ title: string; items: readonly HomeNavigationItem[] }> = [
+        { title: "产品", items: HOME_NAVIGATION },
+        { title: "平台", items: [{ label: "公告中心", href: "/announcements", action: "link" }] },
     ];
 
     return (
@@ -65,8 +65,12 @@ export function HomeFooter() {
                     {navigationGroups.map((group) => (
                         <FooterColumn key={group.title} title={group.title}>
                             {group.items.map((item) =>
-                                item.protected ? (
+                                item.action === "protected" ? (
                                     <button key={item.href} type="button" onClick={() => openProtectedPath(item.href)}>
+                                        {item.label}
+                                    </button>
+                                ) : item.action === "billing" ? (
+                                    <button key={item.href} type="button" onClick={openBillingPlans}>
                                         {item.label}
                                     </button>
                                 ) : (

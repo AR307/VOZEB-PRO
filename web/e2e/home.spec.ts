@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const galleryResponse = {
     code: 0,
@@ -6,7 +6,7 @@ const galleryResponse = {
     data: {
         items: [
             galleryItem(1, "image", "media", "视觉设计"),
-            galleryItem(2, "video", "media", "动态影像"),
+            galleryItem(2, "video", "media", "视频"),
             galleryItem(3, "image", "drama", "短剧"),
             galleryItem(4, "image", "media", "品牌内容"),
             galleryItem(5, "image", "canvas", "视觉设计"),
@@ -25,26 +25,89 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         galleryRequest = route.request().url();
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) });
     });
+    await page.route("**/api/billing/products", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ products: [], paymentProviders: [] }) }));
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { level: 1, name: "释放想象，AI 帮你实现" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "一个入口 完成所有 AI 创作" })).toBeVisible();
     await expect(page.locator("h1")).toHaveCount(1);
     await expect(page.getByText("核心能力", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("home-agent-card")).toHaveCount(1);
-    await expect(page.getByTestId("home-agent-halo").locator("[data-halo-ring]")).toHaveCount(6);
+    await expect(page.getByTestId("home-agent-halo").locator("[data-halo-ring]")).toHaveCount(4);
     await expect(page.getByTestId("home-public-gallery")).toBeVisible();
+    const galleryLayout = await page
+        .getByTestId("home-public-gallery")
+        .locator("article")
+        .evaluateAll((cards) => {
+            const visible = cards.map((card) => ({ bounds: card.getBoundingClientRect(), display: getComputedStyle(card).display })).filter((card) => card.display !== "none" && card.bounds.width > 0 && card.bounds.height > 0);
+            return { visibleCount: visible.length, rowCount: new Set(visible.map((card) => Math.round(card.bounds.top))).size };
+        });
+    expect(galleryLayout.rowCount).toBe(2);
+    expect(galleryLayout.visibleCount).toBe(testInfo.project.name.startsWith("mobile-") ? 4 : 6);
+    const firstGalleryCard = page.getByTestId("home-gallery-card").first();
+    await expect(firstGalleryCard.locator("[data-gallery-type], [data-gallery-like]")).toHaveCount(0);
+    await expect(firstGalleryCard.locator(".author")).toHaveCount(0);
+    const firstGalleryMedia = firstGalleryCard.getByRole("button", { name: /查看作品/ });
+    await expect(firstGalleryMedia).toBeVisible();
+    if (testInfo.project.name === "chromium") {
+        const workBody = firstGalleryCard.locator("[data-gallery-work-body]");
+        await expect(workBody).toHaveCSS("opacity", "0");
+        await expect(workBody).toHaveCSS("background-image", "none");
+        await firstGalleryCard.hover();
+        await expect.poll(() => workBody.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
+    }
+    await firstGalleryMedia.click();
+    const galleryPreview = page.getByRole("dialog");
+    await expect(galleryPreview.getByRole("img", { name: "首页公开作品 1" })).toBeVisible();
+    await galleryPreview.getByRole("button", { name: "Close" }).click();
+    await expect(page).toHaveURL(/\/$/);
     await expect(page.locator("header").getByRole("button", { name: "登录", exact: true })).toHaveCount(0);
     await expect(page.getByText("登录后使用 AI 创作", { exact: true })).toHaveCount(0);
+    const headerNavigation = page.getByRole("navigation", { name: "官网主导航" });
     if (testInfo.project.name === "chromium") {
+        await expect(headerNavigation).toBeVisible();
+        await expect(headerNavigation.getByRole("button", { name: "创作 Agent" })).toHaveCount(1);
+        await expect(headerNavigation.getByRole("button", { name: "短剧制作" })).toHaveCount(1);
+        await expect(headerNavigation.getByRole("link", { name: "作品广场" })).toHaveCount(1);
+        await expect(headerNavigation.getByRole("button", { name: "价格方案" })).toHaveCount(1);
+        await expect(headerNavigation.getByText("图片工作台", { exact: true })).toHaveCount(0);
+        await expect(headerNavigation.getByText("视频工作台", { exact: true })).toHaveCount(0);
         await page
             .locator("header")
             .getByRole("button", { name: /立即体验/ })
             .click();
         await expect(page.getByRole("dialog")).toBeVisible();
         await page.getByRole("button", { name: "Close" }).click();
+
+        const navGlass = page.getByTestId("home-nav-glass");
+        const firstNavItem = headerNavigation.getByRole("button", { name: "创作 Agent" });
+        const lastNavItem = headerNavigation.getByRole("button", { name: "价格方案" });
+        await firstNavItem.hover();
+        await expect(navGlass).toHaveCSS("opacity", "1");
+        await expect.poll(() => centerOffset(navGlass, firstNavItem)).toBeLessThanOrEqual(1);
+        await lastNavItem.hover();
+        await expect.poll(() => centerOffset(navGlass, lastNavItem)).toBeLessThanOrEqual(1);
+        await lastNavItem.click();
+        const plansDialog = page.getByRole("dialog");
+        await expect(plansDialog.getByText("升级创作套餐", { exact: true })).toBeVisible();
+        await expect(plansDialog.getByText("暂无已上架套餐", { exact: true })).toBeVisible();
+        await plansDialog.getByRole("button", { name: "关闭套餐选择" }).click();
+        await expect(plansDialog).toBeHidden();
+    } else {
+        await expect(headerNavigation).toHaveCount(0);
+        const menuButton = page.getByRole("button", { name: "打开导航菜单" });
+        await menuButton.click();
+        const mobileNavigation = page.getByRole("navigation", { name: "移动端导航" });
+        await expect(mobileNavigation).toBeVisible();
+        await expect(mobileNavigation.getByRole("button", { name: "创作 Agent" })).toHaveCount(1);
+        await expect(mobileNavigation.getByRole("button", { name: "短剧制作" })).toHaveCount(1);
+        await expect(mobileNavigation.getByRole("link", { name: "作品广场" })).toHaveCount(1);
+        await expect(mobileNavigation.getByRole("button", { name: "价格方案" })).toHaveCount(1);
+        await page.getByRole("button", { name: "关闭导航菜单" }).click();
+        await expect(mobileNavigation).toHaveCount(0);
     }
     expect(new URL(galleryRequest).pathname).toBe("/api/public/gallery");
     expect(new URL(galleryRequest).searchParams.get("limit")).toBe("18");
+    expect(new URL(galleryRequest).searchParams.get("sort")).toBe("random");
 
     const prompt = page.getByLabel("描述你想创作的内容");
     await prompt.fill("测试首页创作输入");
@@ -52,29 +115,38 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     await expect(prompt).toHaveValue("生成一张科幻城市概念图");
     await page.getByRole("button", { name: "AI 绘图" }).click();
     await expect(page.getByRole("button", { name: "AI 绘图" })).toHaveAttribute("aria-pressed", "true");
+    await expect(prompt).toHaveAttribute("placeholder", "描述你想创作的内容，比如：");
+    await page.getByRole("button", { name: "生成电影感的未来城市概念图" }).click();
+    await expect(prompt).toHaveValue("生成电影感的未来城市概念图");
+    await expect(page.getByLabel("创作模式").getByRole("button")).toHaveCount(4);
+    await expect(page.getByRole("button", { name: "智能模式" })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "智能规划" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Agent 模式" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "AI 写作" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "AI 脚本" })).toHaveCount(0);
 
     await expect(page.getByRole("button", { name: "使用麦克风" })).toHaveCount(0);
     if (testInfo.project.name === "chromium") {
         await prompt.focus();
         expect(await prompt.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe("none");
+        expect(await prompt.evaluate((element) => getComputedStyle(element).borderTopWidth)).toBe("0px");
+        expect(await prompt.evaluate((element) => getComputedStyle(element).boxShadow)).toBe("none");
+        expect(await prompt.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
 
-        const planningMode = page.getByLabel("选择 Agent 模式");
-        await planningMode.focus();
-        expect(await planningMode.evaluate((element) => getComputedStyle(element).borderTopWidth)).toBe("0px");
-        expect(await planningMode.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe("none");
-        await planningMode.click();
-        await expect(page.getByRole("listbox", { name: "Agent 模式" })).toBeVisible();
-        await expect(page.getByRole("option")).toHaveCount(2);
-        await page.getByRole("option", { name: /智能模式/ }).click();
-        await expect(page.getByRole("listbox", { name: "Agent 模式" })).toHaveCount(0);
-
-        const send = page.getByRole("button", { name: "发送到创作 Agent" });
+        const send = page.getByRole("button", { name: "开始创作" });
         await send.hover();
-        const sendStyle = await send.evaluate((element) => ({ backgroundImage: getComputedStyle(element).backgroundImage, color: getComputedStyle(element).color }));
+        const sendStyle = await send.evaluate((element) => ({
+            backgroundImage: getComputedStyle(element).backgroundImage,
+            borderRadius: getComputedStyle(element).borderRadius,
+            boxShadow: getComputedStyle(element).boxShadow,
+            color: getComputedStyle(element).color,
+        }));
         expect(sendStyle.backgroundImage).toContain("linear-gradient");
+        expect(sendStyle.borderRadius).toBe("50%");
+        expect(sendStyle.boxShadow).toBe("none");
         expect(sendStyle.color).toBe("rgb(255, 255, 255)");
     }
-    for (const action of ["发送到创作 Agent", "添加附件"]) {
+    for (const action of ["开始创作", "进入工作台添加参考素材"]) {
         await page.getByRole("button", { name: action }).click();
         const dialog = page.getByRole("dialog");
         const closeButton = dialog.getByRole("button", { name: "Close" });
@@ -105,36 +177,60 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         expect(footerLayout.firstPolicyLeft).toBeGreaterThan(footerLayout.footerCenter);
     }
 
-    await page.getByRole("tab", { name: "视频作品" }).click();
-    await expect(page.getByRole("tab", { name: "视频作品" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "音频作品" })).toHaveCount(0);
+    await page.getByRole("tab", { name: "视频", exact: true }).click();
+    await expect(page.getByRole("tab", { name: "视频", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByTestId("home-public-gallery").locator("article")).toHaveCount(1);
-    await page.getByRole("tab", { name: "短剧分镜" }).click();
+    await page
+        .getByTestId("home-gallery-card")
+        .getByRole("button", { name: /查看作品/ })
+        .click();
+    const videoPreview = page.getByRole("dialog");
+    await expect(videoPreview.locator("video")).toBeVisible();
+    await videoPreview.getByRole("button", { name: "Close" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await page.getByRole("tab", { name: "短剧", exact: true }).click();
     await expect(page.getByTestId("home-public-gallery").locator("article")).toHaveCount(2);
-    const posterTab = page.getByRole("tab", { name: "海报设计" });
-    await posterTab.click();
-    if (testInfo.project.name === "chromium") await posterTab.hover();
-    await expect(posterTab).toHaveCSS("color", "rgb(255, 255, 255)");
+    const brandTab = page.getByRole("tab", { name: "品牌内容", exact: true });
+    await brandTab.click();
+    if (testInfo.project.name === "chromium") await brandTab.hover();
+    await expect(brandTab).toHaveCSS("color", "rgb(255, 255, 255)");
 
     const beforeTheme = await homepageDomState(page);
     await page.getByRole("button", { name: "切换到深色主题" }).click();
     await expect(page.locator("html")).toHaveClass(/dark/);
+    if (testInfo.project.name === "chromium") {
+        const attach = page.getByRole("button", { name: "进入工作台添加参考素材" });
+        const send = page.getByRole("button", { name: "开始创作" });
+        const [attachStyle, sendStyle] = await Promise.all([
+            attach.evaluate((element) => ({ backgroundImage: getComputedStyle(element).backgroundImage, borderColor: getComputedStyle(element).borderColor, color: getComputedStyle(element).color })),
+            send.evaluate((element) => ({ backgroundImage: getComputedStyle(element).backgroundImage, color: getComputedStyle(element).color })),
+        ]);
+        expect(attachStyle.backgroundImage).toBe("none");
+        expect(attachStyle.borderColor).not.toBe("rgba(0, 0, 0, 0)");
+        expect(attachStyle.color).not.toBe(sendStyle.color);
+        expect(sendStyle.backgroundImage).toContain("linear-gradient");
+        expect(sendStyle.color).toBe("rgb(255, 255, 255)");
+    }
     expect(await homepageDomState(page)).toEqual(beforeTheme);
     await expectNoHorizontalOverflow(page);
     expect(browserErrors).toEqual([]);
     await context.close();
 });
 
-test("signed-in homepage sends the prompt to the existing Agent route", async ({ page }, testInfo) => {
+test("signed-in homepage restores the selected creation mode and prompt", async ({ page }, testInfo) => {
     await page.route("**/api/public/gallery?**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) }));
     await page.goto("/", { waitUntil: "domcontentloaded" });
     const workspaceEntry = page.locator("header button").filter({ hasText: "进入工作台" });
     await expect(workspaceEntry).toHaveCount(1);
     if (testInfo.project.name === "chromium") await expect(workspaceEntry).toBeVisible();
     await expect(page.locator("header").getByRole("button", { name: /用户|账号|头像/ })).toHaveCount(0);
-    await page.getByLabel("描述你想创作的内容").fill("已登录首页提示词");
-    await page.getByRole("button", { name: "发送到创作 Agent" }).click();
-    await expect(page).toHaveURL(/\/create#source=gallery&prompt=/);
-    expect(decodeURIComponent(new URL(page.url()).hash)).toContain("已登录首页提示词");
+    await page.getByRole("button", { name: "AI 绘图" }).click();
+    await page.getByLabel("描述你想创作的内容").fill("已登录首页图片提示词");
+    await page.getByRole("button", { name: "开始创作" }).click();
+    await expect(page).toHaveURL(/\/create(?:#.*)?$/);
+    await expect(page.getByRole("button", { name: "当前创作类型：图片生成" })).toBeVisible();
+    await expect(page.locator("textarea").first()).toHaveValue("已登录首页图片提示词");
 });
 
 test("homepage gallery hides internal service errors from visitors", async ({ page }) => {
@@ -159,43 +255,116 @@ test("homepage hero stays centered and responsive", async ({ page }, testInfo) =
     const geometry = await page.evaluate(() => {
         const viewportWidth = document.documentElement.clientWidth;
         const title = document.querySelector("h1")!.getBoundingClientRect();
+        const subtitle = document.querySelector("h1 + p")!.getBoundingClientRect();
         const card = document.querySelector<HTMLElement>('[data-testid="home-agent-card"]')!.getBoundingClientRect();
         const halo = document.querySelector<HTMLElement>('[data-testid="home-agent-halo"]')!.getBoundingClientRect();
-        const outerRing = document.querySelector<HTMLElement>('[data-testid="home-agent-halo"] > span')!.getBoundingClientRect();
         const textarea = document.querySelector<HTMLElement>("#home-agent-prompt")!.getBoundingClientRect();
-        const presets = document.querySelector<HTMLElement>('[aria-label="示例提示词"]')!.getBoundingClientRect();
-        const planningMode = document.querySelector<HTMLElement>('[aria-label="选择 Agent 模式"]')!.getBoundingClientRect();
+        const presetsElement = document.querySelector<HTMLElement>('[aria-label="示例提示词"]')!;
+        const presets = presetsElement.getBoundingClientRect();
+        const presetButtons = Array.from(presetsElement.querySelectorAll<HTMLButtonElement>("button"));
+        const presetButtonRects = presetButtons.map((button) => button.getBoundingClientRect());
+        const creationModesElement = document.querySelector<HTMLElement>('[aria-label="创作模式"]')!;
+        const creationModes = creationModesElement.getBoundingClientRect();
+        const toolbarElement = creationModesElement.parentElement!;
+        const toolbar = toolbarElement.getBoundingClientRect();
+        const send = document.querySelector<HTMLElement>('button[aria-label="开始创作"]')!.getBoundingClientRect();
+        const mobileToolbarButtons = Array.from(toolbarElement.querySelectorAll<HTMLButtonElement>("button")).map((button) => button.getBoundingClientRect());
+        const cardRadius = Number.parseFloat(getComputedStyle(document.querySelector<HTMLElement>('[data-testid="home-agent-card"]')!).borderRadius);
+        const rings = Array.from(document.querySelectorAll<HTMLElement>("[data-halo-ring]"));
+        const decorations = Array.from(document.querySelectorAll<HTMLElement>("[data-hero-decoration]"));
         return {
             viewportWidth,
             titleCenterOffset: Math.abs(title.left + title.width / 2 - viewportWidth / 2),
             cardCenterOffset: Math.abs(card.left + card.width / 2 - viewportWidth / 2),
             cardWidth: card.width,
+            cardHeight: card.height,
+            cardRadius,
             haloCenterOffset: Math.abs(halo.left + halo.width / 2 - (card.left + card.width / 2)),
-            haloHeight: halo.height,
             haloWidthRatio: halo.width / card.width,
-            outerRingCenterAboveCardBottom: card.bottom - (outerRing.top + outerRing.height / 2),
+            haloTop: halo.top,
+            cardBottom: card.bottom,
             textareaHeight: textarea.height,
             presetOffset: presets.top - textarea.bottom,
-            controlLeftOffsets: [textarea.left, presets.left, planningMode.left].map((left) => Math.abs(left - textarea.left)),
+            presetButtonsInsideCard: presetButtonRects.every((button) => button.left >= card.left && button.right <= card.right && button.top >= card.top && button.bottom <= card.bottom),
+            presetColumnCount: new Set(presetButtonRects.map((button) => Math.round(button.left))).size,
+            presetRowCount: new Set(presetButtonRects.map((button) => Math.round(button.top))).size,
+            presetsFitWithoutScroll: presetsElement.scrollWidth <= presetsElement.clientWidth + 1,
+            visiblePresetCount: presetButtons.filter((button) => {
+                const style = getComputedStyle(button);
+                const bounds = button.getBoundingClientRect();
+                return style.display !== "none" && bounds.width > 0 && bounds.height > 0 && Boolean(button.textContent?.trim());
+            }).length,
+            toolbarOffset: toolbar.top - presets.bottom,
+            sendInset: card.right - send.right,
+            sendVisible: send.width >= 42 && send.height >= 42,
+            filledRingCount: rings.filter((ring) => getComputedStyle(ring).backgroundImage !== "none").length,
+            borderOnlyRingCount: rings.filter((ring) => Number.parseFloat(getComputedStyle(ring).borderTopWidth) > 0 && getComputedStyle(ring).backgroundImage === "none").length,
+            decorationCount: decorations.length,
+            decorationSizeCount: new Set(
+                decorations.map((decoration) => {
+                    const bounds = decoration.getBoundingClientRect();
+                    return `${Math.round(bounds.width)}x${Math.round(bounds.height)}`;
+                }),
+            ).size,
+            polygonDecorationCount: decorations.filter((decoration) => getComputedStyle(decoration).clipPath !== "none").length,
+            animatedDecorationCount: decorations.filter((decoration) => getComputedStyle(decoration).animationName !== "none").length,
+            visibleDecorationCount: decorations.filter((decoration) => getComputedStyle(decoration).display !== "none").length,
+            decorationSubtitleOverlapCount: decorations.filter((decoration) => getComputedStyle(decoration).display !== "none" && decoration.getBoundingClientRect().top < subtitle.bottom).length,
+            mobileToolbarButtonCount: mobileToolbarButtons.length,
+            mobileToolbarButtonsInsideCard: mobileToolbarButtons.every((button) => button.left >= card.left && button.right <= card.right && button.top >= card.top && button.bottom <= card.bottom),
+            mobileToolbarRowSpread: Math.max(...mobileToolbarButtons.map((button) => button.top)) - Math.min(...mobileToolbarButtons.map((button) => button.top)),
+            visibleModeLabelCount: Array.from(creationModesElement.querySelectorAll<HTMLElement>("span:last-child")).filter((label) => getComputedStyle(label).display !== "none").length,
+            sequencedDecorationCount: decorations.filter((decoration) => getComputedStyle(decoration).animationName.includes("artifact-reveal") && getComputedStyle(decoration).animationName.includes("artifact-float")).length,
+            shadowedDecorationCount: decorations.filter((decoration) => {
+                const face = decoration.firstElementChild as HTMLElement | null;
+                return getComputedStyle(decoration).boxShadow !== "none" || getComputedStyle(decoration, "::before").boxShadow !== "none" || (face ? getComputedStyle(face).boxShadow !== "none" : false);
+            }).length,
+            castShadowDecorationCount: decorations.filter((decoration) => getComputedStyle(decoration, "::after").content !== "none").length,
         };
     });
     expect(geometry.titleCenterOffset).toBeLessThanOrEqual(2);
     expect(geometry.cardCenterOffset).toBeLessThanOrEqual(2);
     expect(geometry.cardWidth).toBeLessThanOrEqual(geometry.viewportWidth - (geometry.viewportWidth < 768 ? 24 : 48));
     if (testInfo.project.name === "chromium") {
-        expect(geometry.cardWidth).toBeGreaterThan(850);
+        expect(geometry.cardWidth).toBeGreaterThanOrEqual(1080);
+        expect(geometry.cardWidth).toBeLessThanOrEqual(1120);
+        expect(geometry.cardHeight).toBeGreaterThanOrEqual(286);
+        expect(geometry.cardHeight).toBeLessThanOrEqual(304);
+        expect(geometry.cardRadius).toBeGreaterThanOrEqual(28);
+        expect(geometry.cardRadius).toBeLessThanOrEqual(32);
         expect(geometry.haloCenterOffset).toBeLessThanOrEqual(1);
-        expect(geometry.haloHeight).toBeGreaterThanOrEqual(244);
-        expect(geometry.haloHeight).toBeLessThanOrEqual(246);
-        expect(geometry.haloWidthRatio).toBeGreaterThan(1.33);
-        expect(geometry.haloWidthRatio).toBeLessThan(1.35);
-        expect(geometry.outerRingCenterAboveCardBottom).toBeGreaterThan(20);
-        expect(geometry.outerRingCenterAboveCardBottom).toBeLessThan(36);
-        expect(geometry.textareaHeight).toBeGreaterThanOrEqual(90);
-        expect(geometry.presetOffset).toBeGreaterThanOrEqual(0);
-        expect(geometry.presetOffset).toBeLessThanOrEqual(4);
-        expect(Math.max(...geometry.controlLeftOffsets)).toBeLessThanOrEqual(1);
+        expect(geometry.haloWidthRatio).toBeGreaterThan(1.16);
+        expect(geometry.haloWidthRatio).toBeLessThan(1.2);
+        expect(geometry.haloTop).toBeLessThan(geometry.cardBottom);
+        expect(geometry.textareaHeight).toBeGreaterThanOrEqual(68);
+        expect(geometry.presetOffset).toBe(0);
+        expect(geometry.toolbarOffset).toBeGreaterThanOrEqual(18);
+        expect(geometry.toolbarOffset).toBeLessThanOrEqual(26);
+        expect(geometry.sendInset).toBeGreaterThanOrEqual(34);
+        expect(geometry.filledRingCount).toBe(4);
+        expect(geometry.borderOnlyRingCount).toBe(0);
+        expect(geometry.decorationCount).toBe(4);
+        expect(geometry.decorationSizeCount).toBe(4);
+        expect(geometry.polygonDecorationCount).toBe(0);
+        expect(geometry.animatedDecorationCount).toBe(4);
+        expect(geometry.sequencedDecorationCount).toBe(4);
+        expect(geometry.shadowedDecorationCount).toBe(0);
+        expect(geometry.castShadowDecorationCount).toBe(0);
     }
+    if (testInfo.project.name.startsWith("mobile-")) {
+        expect(geometry.visiblePresetCount).toBe(4);
+        expect(geometry.presetButtonsInsideCard).toBe(true);
+        expect(geometry.presetColumnCount).toBe(2);
+        expect(geometry.presetRowCount).toBe(2);
+        expect(geometry.presetsFitWithoutScroll).toBe(true);
+        expect(geometry.visibleDecorationCount).toBe(4);
+        expect(geometry.decorationSubtitleOverlapCount).toBe(0);
+        expect(geometry.mobileToolbarButtonCount).toBe(6);
+        expect(geometry.mobileToolbarButtonsInsideCard).toBe(true);
+        expect(geometry.mobileToolbarRowSpread).toBeLessThanOrEqual(3);
+        expect(geometry.visibleModeLabelCount).toBe(0);
+    }
+    expect(geometry.sendVisible).toBe(true);
     await expectNoHorizontalOverflow(page);
 });
 
@@ -265,11 +434,36 @@ async function mobileFooterDomState(page: Page) {
 async function expectNoHorizontalOverflow(page: Page) {
     const overflow = await page.evaluate(() => {
         const root = document.querySelector<HTMLElement>("main.app-scroll-page");
+        const rootBounds = root?.getBoundingClientRect();
+        const offenders = rootBounds
+            ? Array.from(root.querySelectorAll<HTMLElement>("*")).flatMap((element) => {
+                  const bounds = element.getBoundingClientRect();
+                  if (bounds.width <= 0 || (bounds.left >= rootBounds.left - 1 && bounds.right <= rootBounds.right + 1)) return [];
+                  let parent = element.parentElement;
+                  while (parent && parent !== root) {
+                      const overflowX = getComputedStyle(parent).overflowX;
+                      if (overflowX === "hidden" || overflowX === "clip" || overflowX === "auto" || overflowX === "scroll") return [];
+                      parent = parent.parentElement;
+                  }
+                  return [{ tag: element.tagName, className: element.className, left: Math.round(bounds.left), right: Math.round(bounds.right), width: Math.round(bounds.width) }];
+              })
+            : [];
         return {
             document: [document.documentElement.clientWidth, document.documentElement.scrollWidth],
             body: [document.body.clientWidth, document.body.scrollWidth],
             root: root ? [root.clientWidth, root.scrollWidth] : [0, 1],
+            offenders,
         };
     });
-    for (const [label, [clientWidth, scrollWidth]] of Object.entries(overflow)) expect(scrollWidth, `${label} horizontal overflow`).toBeLessThanOrEqual(clientWidth + 1);
+    for (const [label, widths] of Object.entries(overflow)) {
+        if (label === "offenders") continue;
+        const [clientWidth, scrollWidth] = widths as number[];
+        expect(scrollWidth, `${label} horizontal overflow: ${JSON.stringify(overflow.offenders)}`).toBeLessThanOrEqual(clientWidth + 1);
+    }
+}
+
+async function centerOffset(left: Locator, right: Locator) {
+    const [leftBox, rightBox] = await Promise.all([left.boundingBox(), right.boundingBox()]);
+    if (!leftBox || !rightBox) return Number.POSITIVE_INFINITY;
+    return Math.abs(leftBox.x + leftBox.width / 2 - (rightBox.x + rightBox.width / 2));
 }

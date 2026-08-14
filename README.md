@@ -185,9 +185,8 @@ flowchart LR
 
     EDITOR --> SCRIPT["第一阶段：生成或编辑剧本"]
     SCRIPT --> REVIEW["第二阶段：内容审核和人工确认"]
-    REVIEW --> ASSETS["第三阶段：角色、场景和道具"]
-    ASSETS --> STORYBOARD["第四阶段：分镜和镜头设计"]
-    STORYBOARD --> SHOTS["第五阶段：生成镜头图片和视频"]
+    REVIEW --> STORYBOARD["第三阶段：分镜和镜头设计"]
+    STORYBOARD --> SHOTS["第四阶段：生成镜头图片和视频"]
 
     SHOTS --> AUDIO["生成配音、音效和背景音乐"]
     AUDIO --> SUBTITLE["生成并校对字幕"]
@@ -214,7 +213,7 @@ flowchart TB
     MANAGE --> SAVE_ASSET["保存为文本素材"]
     MANAGE --> USE
 
-    ASSETS["我的素材 /assets"] --> FILTER["按图片、视频、音频、文本和附件筛选"]
+    ASSETS["我的素材 /assets"] --> FILTER["按图片、视频、音频和文本筛选"]
     FILTER --> PREVIEW["预览或下载"]
     FILTER --> CONTINUE["发送到 Agent、Canvas 或短剧"]
     FILTER --> DELETE["检查业务引用后删除"]
@@ -515,7 +514,7 @@ pnpm run dev
   </tr>
 </table>
 
-用户端、公开页和管理后台共 42 张功能截图见[页面功能图册](docs/content/docs/overview/page-gallery.mdx)。
+用户端、公开页和管理后台共 40 张功能截图见[页面功能图册](docs/content/docs/overview/page-gallery.mdx)。
 
 ## 数据与安全
 
@@ -559,12 +558,11 @@ pnpm run build
     <td>
       <strong>VOZEB 开源交流</strong><br>
       QQ 群：<code>1049777515</code> · <a href="https://qm.qq.com/q/9MVLTxuRd6">点击加入群聊</a><br><br>
-      欢迎交流部署、模型渠道适配、工作台使用、Bug 复现和代码贡献。请勿在群内发送 API Key、数据库密码、支付密钥、服务器私钥或未经脱敏的生产日志。
+      欢迎交流部署、模型渠道适配、创作功能使用、Bug 复现和代码贡献。请勿在群内发送 API Key、数据库密码、支付密钥、服务器私钥或未经脱敏的生产日志。
     </td>
   </tr>
 </table>
 
 ## 致谢
 
-- 感谢原创开源作者 **basketikun** 对画布创作工作流、Canvas Agent 和 Codex 插件能力的开源贡献。
 - 感谢 [LINUX DO](https://linux.do) 社区、相关提示词开源仓库、Codex / Claude Code 生态，以及项目使用的所有开源工具与基础设施。

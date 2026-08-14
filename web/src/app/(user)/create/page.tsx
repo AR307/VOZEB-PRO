@@ -17,7 +17,7 @@ import type { CreativeAgentRun } from "@/services/api/creative";
 import { optimizePrompt } from "@/services/api/prompt-optimization";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
-import { createAgentPromptFromHash } from "@/lib/create-agent-prompt";
+import { createAgentDraftFromHash } from "@/lib/create-agent-prompt";
 import { resolveSiteTitle } from "@/lib/site-brand";
 
 import { CreativeComposer } from "./components/creative-composer";
@@ -115,12 +115,16 @@ export default function CreatePage() {
     useEffect(() => {
         if (initialPromptRestoredRef.current) return;
         initialPromptRestoredRef.current = true;
-        const incomingPrompt = createAgentPromptFromHash(window.location.hash);
-        if (!incomingPrompt) return;
-        updatePrompt(incomingPrompt);
+        const incomingDraft = createAgentDraftFromHash(window.location.hash);
+        if (!incomingDraft || (!incomingDraft.prompt && !incomingDraft.mode)) return;
+        if (incomingDraft.prompt) updatePrompt(incomingDraft.prompt);
+        if (incomingDraft.mode) {
+            setCreationMode(incomingDraft.mode);
+            setGenerationPreferences(incomingDraft.mode === "agent" ? {} : { mode: incomingDraft.mode });
+        }
         router.replace("/create");
         window.requestAnimationFrame(() => inputRef.current?.focus());
-        message.success("已填入作品提示词");
+        message.success(incomingDraft.prompt ? "已填入创作需求" : "已选择创作类型");
     }, [message, router, updatePrompt]);
 
     useEffect(() => {

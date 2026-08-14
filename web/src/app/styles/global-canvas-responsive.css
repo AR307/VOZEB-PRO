@@ -75,7 +75,7 @@
     .canvas-topbar-left {
         flex: 1 1 auto;
         gap: 6px;
-        max-width: calc(100vw - 172px);
+        max-width: calc(100vw - 196px);
     }
 
     .canvas-topbar-left > .ant-dropdown-trigger,
@@ -85,16 +85,25 @@
         width: 34px;
     }
 
+    .canvas-topbar .canvas-shortcuts-action {
+        display: none !important;
+    }
+
     .canvas-topbar-title {
-        flex: 1 1 auto;
+        flex: 1 1 100px;
+        max-width: 100%;
     }
 
     .canvas-topbar-title-button {
-        max-width: calc(100vw - 230px);
+        max-width: none !important;
+        min-width: 0;
+        width: 100%;
     }
 
     .canvas-topbar-title input {
-        max-width: calc(100vw - 230px);
+        max-width: none !important;
+        min-width: 0;
+        width: 100%;
     }
 
     .canvas-topbar-actions {
@@ -135,9 +144,11 @@
 
     .canvas-user-status-actions .canvas-points-action {
         gap: 5px !important;
-        min-width: 58px !important;
-        padding-inline: 9px !important;
-        width: auto !important;
+        font-size: 0 !important;
+        gap: 0 !important;
+        min-width: 34px !important;
+        padding-inline: 0 !important;
+        width: 34px !important;
     }
 
     .canvas-user-status-actions svg,
@@ -217,6 +228,11 @@
         width: min(248px, calc(100vw - 24px));
     }
 
+    .canvas-assets-drawer.ant-drawer-open .ant-drawer-content-wrapper {
+        transform: translateX(0) !important;
+        width: min(336px, 100vw) !important;
+    }
+
     .canvas-toolbar-dock-tip {
         display: none;
     }
@@ -224,13 +240,13 @@
 
 @media (max-width: 430px) {
     .canvas-topbar-left {
-        max-width: calc(100vw - 150px);
+        max-width: calc(100vw - 196px);
     }
 
     .canvas-topbar-title-button,
     .canvas-topbar-title input {
         font-size: 1rem;
-        max-width: calc(100vw - 210px);
+        max-width: none !important;
     }
 
     .canvas-user-status-actions > button,
@@ -245,9 +261,8 @@
     }
 
     .canvas-user-status-actions .canvas-points-action {
-        min-width: 54px !important;
-        padding-inline: 8px !important;
-        width: auto !important;
+        min-width: 32px !important;
+        width: 32px !important;
     }
 
     .canvas-user-status-actions svg,

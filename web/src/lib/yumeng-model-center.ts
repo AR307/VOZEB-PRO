@@ -62,20 +62,12 @@ function imageOperation(requestTemplate: string): SystemChannelModelConfig {
     return { ...imageBase, requestTemplate };
 }
 
-function videoOperation(
-    requestTemplate: string,
-    durationRange: string,
-    references: Pick<SystemChannelModelConfig, "supportsReferenceImage" | "supportsReferenceVideo" | "supportsReferenceAudio" | "referenceRule">,
-): SystemChannelModelConfig {
+function videoOperation(requestTemplate: string, durationRange: string, references: Pick<SystemChannelModelConfig, "supportsReferenceImage" | "supportsReferenceVideo" | "supportsReferenceAudio" | "referenceRule">): SystemChannelModelConfig {
     return { ...videoBase, requestTemplate, durationRange, ...references };
 }
 
-const seedreamOperation = imageOperation(
-    '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","size":"{{size}}","watermark":false}',
-);
-const seedreamProOperation = imageOperation(
-    '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","watermark":false}',
-);
+const seedreamOperation = imageOperation('{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","size":"{{size}}","watermark":false}');
+const seedreamProOperation = imageOperation('{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","watermark":false}');
 const multimodalVideoReferences = {
     referenceRule: "首帧/首尾帧与多模态参考互斥；音频不能单独输入。模型中心接口使用上游可访问的公网 URL；素材库 ID 仅用于旧版 Seedance2 专用接口。",
     supportsReferenceImage: true,
@@ -106,11 +98,7 @@ const seedance25Operation = videoOperation(
     "4-30 秒",
     multimodalVideoReferences,
 );
-const seedance15Operation = videoOperation(
-    '{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","size":"{{aspect_ratio}}","first_image":"{{first_frame_or_image}}","last_image":"{{last_frame}}"}',
-    "4-11 秒",
-    frameImageReferences,
-);
+const seedance15Operation = videoOperation('{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","size":"{{aspect_ratio}}","first_image":"{{first_frame_or_image}}","last_image":"{{last_frame}}"}', "4-11 秒", frameImageReferences);
 const seedance20Operation = videoOperation(
     '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_videos":"{{videos}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","seed":"-1","first_image":"{{first_frame}}","last_image":"{{last_frame}}","generate_audio":"{{generate_audio_text}}","tools":[],"watermark":"{{watermark_text}}"}',
     "4-15 秒",
@@ -136,11 +124,7 @@ const happyHorseReferenceOperation = videoOperation(
     "3-15 秒",
     referenceImageOnly,
 );
-const happyHorseTextOperation = videoOperation(
-    '{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","seed":0,"watermark":"{{watermark}}"}',
-    "3-15 秒",
-    textOnly,
-);
+const happyHorseTextOperation = videoOperation('{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","seed":0,"watermark":"{{watermark}}"}', "3-15 秒", textOnly);
 const wanImageOperation = videoOperation(
     '{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","resolution":"{{resolution}}","seed":0,"first_image":"{{first_frame_or_image}}","last_image":"{{last_frame}}","watermark":"{{watermark}}"}',
     "4-15 秒",
@@ -151,11 +135,7 @@ const wanReferenceOperation = videoOperation(
     "4-15 秒",
     referenceImageOnly,
 );
-const wanTextOperation = videoOperation(
-    '{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","seed":0,"watermark":"{{watermark}}"}',
-    "4-15 秒",
-    textOnly,
-);
+const wanTextOperation = videoOperation('{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","seed":0,"watermark":"{{watermark}}"}', "4-15 秒", textOnly);
 const wanEditOperation = videoOperation(
     '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_videos":"{{videos}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","seed":0,"audio_setting":"{{generate_audio}}","watermark":"{{watermark}}"}',
     "",
@@ -259,6 +239,25 @@ export function buildYumengVideoRequest(input: YumengVideoRequestInput) {
     if (id.startsWith("sd_2.0_")) {
         return {
             ...compact({
+                model,
+                prompt: input.prompt,
+                reference_images: input.images,
+                reference_videos: input.videos,
+                reference_audios: input.audios,
+                duration: input.duration,
+                aspect_ratio: input.aspectRatio,
+                resolution,
+                seed: "-1",
+                first_image: input.firstFrame,
+                last_image: input.lastFrame,
+                generate_audio: String(input.generateAudio),
+                watermark: String(input.watermark),
+            }),
+            tools: [],
+        };
+    }
+    if (id === "seedance-2.5-c1") {
+        return compact({
             model,
             prompt: input.prompt,
             reference_images: input.images,
@@ -267,17 +266,9 @@ export function buildYumengVideoRequest(input: YumengVideoRequestInput) {
             duration: input.duration,
             aspect_ratio: input.aspectRatio,
             resolution,
-            seed: "-1",
             first_image: input.firstFrame,
             last_image: input.lastFrame,
-            generate_audio: String(input.generateAudio),
-            watermark: String(input.watermark),
-            }),
-            tools: [],
-        };
-    }
-    if (id === "seedance-2.5-c1") {
-        return compact({ model, prompt: input.prompt, reference_images: input.images, reference_videos: input.videos, reference_audios: input.audios, duration: input.duration, aspect_ratio: input.aspectRatio, resolution, first_image: input.firstFrame, last_image: input.lastFrame });
+        });
     }
     if (id.startsWith("seedance_1_5_pro_")) {
         return compact({ model, prompt: input.prompt, duration: input.duration, size: input.aspectRatio, first_image: firstFrame, last_image: input.lastFrame });
@@ -298,7 +289,18 @@ export function buildYumengVideoRequest(input: YumengVideoRequestInput) {
         });
     }
     if (id === "klingo3") {
-        return compact({ model, prompt: input.prompt, reference_images: input.images, duration: input.duration, aspect_ratio: input.aspectRatio, resolution, first_image: input.firstFrame, last_image: input.lastFrame, generate_audio: input.generateAudio, reference_mode: frameMode ? "frame" : "image" });
+        return compact({
+            model,
+            prompt: input.prompt,
+            reference_images: input.images,
+            duration: input.duration,
+            aspect_ratio: input.aspectRatio,
+            resolution,
+            first_image: input.firstFrame,
+            last_image: input.lastFrame,
+            generate_audio: input.generateAudio,
+            reference_mode: frameMode ? "frame" : "image",
+        });
     }
     if (isHappyHorse(id)) {
         const common = { model, prompt: input.prompt, duration: input.duration, resolution, seed: 0, watermark: input.watermark };
@@ -309,7 +311,8 @@ export function buildYumengVideoRequest(input: YumengVideoRequestInput) {
     if (id === "wan2.7-i2v") return compact({ model, prompt: input.prompt, duration: input.duration, resolution, seed: 0, first_image: firstFrame, last_image: input.lastFrame, watermark: input.watermark });
     if (id === "wan2.7-r2v") return compact({ model, prompt: input.prompt, reference_images: input.images, duration: input.duration, aspect_ratio: input.aspectRatio, resolution, seed: 0, watermark: input.watermark });
     if (id === "wan2.7-t2v") return compact({ model, prompt: input.prompt, duration: input.duration, aspect_ratio: input.aspectRatio, resolution, seed: 0, watermark: input.watermark });
-    if (id === "wan2.7-videoedit") return compact({ model, prompt: input.prompt, reference_images: input.images, reference_videos: input.videos, aspect_ratio: input.aspectRatio, resolution, seed: 0, audio_setting: input.generateAudio, watermark: input.watermark });
+    if (id === "wan2.7-videoedit")
+        return compact({ model, prompt: input.prompt, reference_images: input.images, reference_videos: input.videos, aspect_ratio: input.aspectRatio, resolution, seed: 0, audio_setting: input.generateAudio, watermark: input.watermark });
     throw new Error(`昱梦视频模型未注册：${input.model}`);
 }
 
@@ -342,7 +345,5 @@ function normalizeVideoResolution(model: string, value: string) {
 }
 
 function compact(value: Record<string, unknown>) {
-    return Object.fromEntries(
-        Object.entries(value).filter(([, item]) => item !== undefined && item !== "" && (!Array.isArray(item) || item.length > 0)),
-    );
+    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== "" && (!Array.isArray(item) || item.length > 0)));
 }

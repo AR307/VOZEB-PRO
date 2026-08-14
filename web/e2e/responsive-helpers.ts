@@ -127,6 +127,47 @@ export async function expectNoHorizontalOverflow(page: Page, label: string) {
     expect(sizes.body[1], `${label} body overflow`).toBeLessThanOrEqual(sizes.body[0] + 1);
 }
 
+export async function expectVisibleControlsWithinViewport(page: Page, label: string) {
+    const offenders = await page.evaluate(() => {
+        const viewportWidth = document.documentElement.clientWidth;
+        const controls = [...document.querySelectorAll<HTMLElement>('button, a[href], input, textarea, select, [role="button"], [role="tab"], [role="menuitem"]')];
+        const horizontallyScrollable = (element: HTMLElement) => {
+            for (let current = element.parentElement; current && current !== document.body; current = current.parentElement) {
+                const style = getComputedStyle(current);
+                if (/auto|scroll/.test(style.overflowX) && current.scrollWidth > current.clientWidth + 1) return true;
+            }
+            return false;
+        };
+        return controls
+            .map((element) => {
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return {
+                    element,
+                    rect,
+                    style,
+                    label: element.getAttribute("aria-label") || element.getAttribute("title") || element.textContent?.trim().replace(/\s+/g, " ").slice(0, 80) || element.tagName,
+                };
+            })
+            .filter(({ element, rect, style }) => {
+                if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= window.innerHeight) return false;
+                if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+                if (element.closest('[aria-hidden="true"], [inert]')) return false;
+                return !horizontallyScrollable(element) && (rect.left < -1 || rect.right > viewportWidth + 1);
+            })
+            .slice(0, 12)
+            .map(({ element, rect, label: controlLabel }) => ({
+                tag: element.tagName,
+                label: controlLabel,
+                left: Math.round(rect.left),
+                right: Math.round(rect.right),
+                width: Math.round(rect.width),
+                viewportWidth,
+            }));
+    });
+    expect(offenders, `${label} visible controls outside viewport`).toEqual([]);
+}
+
 export async function expectDialogWithinViewport(dialog: Locator) {
     await expect
         .poll(async () => {

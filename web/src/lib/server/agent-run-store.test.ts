@@ -65,7 +65,14 @@ describe("createAgentRun Canvas snapshot", () => {
                 selectedNodeIds: ["selected", "selected"],
                 nodes: [
                     { id: "config", type: "config", title: "配置", metadata: { size: "1824x1024" } },
-                    { id: "selected", type: "image", title: "商品", width: 400, height: 600, metadata: { content: `data:image/png;base64,${"binary-marker".repeat(20_000)}`, prompt: "红色商品包装", serverUrl: "/api/reference-assets/current", naturalWidth: 800, naturalHeight: 1200 } },
+                    {
+                        id: "selected",
+                        type: "image",
+                        title: "商品",
+                        width: 400,
+                        height: 600,
+                        metadata: { content: `data:image/png;base64,${"binary-marker".repeat(20_000)}`, prompt: "红色商品包装", serverUrl: "/api/reference-assets/current", naturalWidth: 800, naturalHeight: 1200 },
+                    },
                     { id: "related", type: "text", title: "文案", metadata: { content: "红色包装" } },
                     { id: "unrelated", type: "image", title: "旧图", metadata: { serverUrl: "/api/reference-assets/old" } },
                 ],

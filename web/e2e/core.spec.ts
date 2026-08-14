@@ -156,6 +156,42 @@ test("image task persists a real media result and reuses the same request identi
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
 });
 
+test("unified creative page reaches the local planning and image protocols", async ({ page, request }) => {
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await expect(page.locator(".creative-composer")).toHaveAttribute("data-ready", "true", { timeout: 45_000 });
+
+    await page.getByRole("button", { name: "当前创作类型：Agent 模式" }).click();
+    const modePicker = page.locator(".ant-popover").filter({ hasText: "创作类型" }).last();
+    await expect(modePicker).toBeVisible();
+    await modePicker.getByRole("button", { name: /图片生成/ }).click();
+    await expect(page.getByRole("button", { name: "当前创作类型：图片生成" })).toBeVisible();
+
+    const prompt = `统一入口协议图片 ${randomUUID().slice(0, 8)}`;
+    await page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" }).fill(prompt);
+    const runCreated = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/agent/runs");
+    await page.getByRole("button", { name: "发送" }).click();
+    const runResponse = await runCreated;
+    expect(runResponse.ok(), await runResponse.text()).toBe(true);
+    const runId = ((await runResponse.json()) as { data: { run: { id: string } } }).data.run.id;
+
+    await expect
+        .poll(
+            async () => {
+                const response = await request.get(`/api/agent/runs/${runId}`);
+                if (!response.ok()) return `http-${response.status()}`;
+                return ((await response.json()) as { data: { run: { status: string } } }).data.run.status;
+            },
+            { timeout: 60_000 },
+        )
+        .toBe("completed");
+    await expect(page.getByTestId("creative-media-result")).toBeVisible();
+    await expect(page.getByTestId("creative-media-result").getByRole("img")).toHaveAttribute("src", /\/api\/generation-log-assets\/permanent\/.+\.png/);
+
+    const state = await protocolFixtureState(request);
+    expect(state.requests.some((item) => item.method === "POST" && item.path.endsWith("/chat/completions"))).toBe(true);
+    expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
+});
+
 test("video request replay and cancellation keep one upstream task", async ({ request }) => {
     const clientRequestId = `e2e-video:${randomUUID()}`;
     const body = { config: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 }, prompt: "slow video", source: "video-workbench", context: { clientRequestId } };

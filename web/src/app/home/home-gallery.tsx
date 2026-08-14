@@ -4,23 +4,24 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, GalleryVerticalEnd, Heart, ImageOff, Music2, Play, RotateCw } from "lucide-react";
+import { Modal } from "antd";
+import { ArrowRight, GalleryVerticalEnd, ImageOff, Play, RotateCw } from "lucide-react";
 
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
 import { imagePreviewUrl } from "@/lib/media-image-url";
-import { userAvatarFallback } from "@/lib/user-avatar";
 import { listPublicGallery, type PublicGalleryItem } from "@/services/api/work-governance";
-import { HOME_GALLERY_TABS, homeGalleryMatches, homeGalleryTypeLabel, type HomeGalleryTab } from "./home-data";
+import { HOME_GALLERY_TABS, homeGalleryMatches, type HomeGalleryTab } from "./home-data";
 import styles from "./home.module.css";
 
 export function HomeGallery() {
     const [tab, setTab] = useState<HomeGalleryTab>("all");
+    const [previewItem, setPreviewItem] = useState<PublicGalleryItem>();
     const query = useQuery({
-        queryKey: ["home-public-gallery"],
-        queryFn: () => listPublicGallery({ limit: 18, sort: "latest" }),
+        queryKey: ["home-public-gallery", "random"],
+        queryFn: () => listPublicGallery({ limit: 18, sort: "random" }),
         staleTime: 60_000,
     });
-    const items = (query.data?.items || []).filter((item) => homeGalleryMatches(item, tab)).slice(0, 6);
+    const items = (query.data?.items || []).filter((item) => homeGalleryMatches(item, tab));
 
     return (
         <section id="inspiration" className={styles.section} aria-labelledby="home-gallery-title">
@@ -40,7 +41,7 @@ export function HomeGallery() {
             <div id="home-gallery-panel" role="tabpanel" className={styles.galleryPanel}>
                 {query.isLoading ? (
                     <div className={styles.galleryGrid} aria-label="正在加载公开作品">
-                        {Array.from({ length: 6 }, (_, index) => (
+                        {Array.from({ length: 8 }, (_, index) => (
                             <GallerySkeleton key={index} />
                         ))}
                     </div>
@@ -58,7 +59,7 @@ export function HomeGallery() {
                 ) : items.length ? (
                     <div className={styles.galleryGrid} data-testid="home-public-gallery">
                         {items.map((item) => (
-                            <HomeWorkCard key={item.slug} item={item} />
+                            <HomeWorkCard key={item.slug} item={item} onPreview={() => setPreviewItem(item)} />
                         ))}
                     </div>
                 ) : (
@@ -75,60 +76,60 @@ export function HomeGallery() {
                     查看更多作品 <ArrowRight aria-hidden="true" />
                 </Link>
             </div>
+            <HomeMediaPreview item={previewItem} onClose={() => setPreviewItem(undefined)} />
         </section>
     );
 }
 
-function HomeWorkCard({ item }: { item: PublicGalleryItem }) {
+function HomeWorkCard({ item, onPreview }: { item: PublicGalleryItem; onPreview: () => void }) {
     const [mediaFailed, setMediaFailed] = useState(false);
     const [duration, setDuration] = useState(0);
     const preview = item.preview;
-    const authorName = item.authorName || "匿名作者";
 
     return (
-        <article className={styles.workCard}>
-            <Link href={`/share/${encodeURIComponent(item.slug)}`} className={styles.workMedia} aria-label={`查看作品：${item.title}`}>
-                {mediaFailed || !preview ? (
+        <article className={styles.workCard} data-testid="home-gallery-card">
+            <button type="button" className={styles.workMedia} aria-label={`查看作品：${item.title}`} onClick={onPreview}>
+                {mediaFailed || !preview || (preview.mediaType !== "image" && preview.mediaType !== "video") ? (
                     <span className={styles.mediaFallback} role="img" aria-label="作品预览不可用">
                         <ImageOff aria-hidden="true" />
                         <span>预览不可用</span>
                     </span>
                 ) : preview.mediaType === "image" ? (
                     <LazyMediaImage src={imagePreviewUrl(preview.url, 640)} alt={item.title} containerClassName={styles.workImageWrap} imageClassName={styles.workImage} errorLabel="作品图片不可用" />
-                ) : preview.mediaType === "video" ? (
-                    <video src={preview.url} muted playsInline preload="metadata" className={styles.workImage} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onError={() => setMediaFailed(true)} />
                 ) : (
-                    <span className={styles.audioWave} aria-label="音频作品">
-                        <Music2 aria-hidden="true" />
-                        {Array.from({ length: 19 }, (_, index) => (
-                            <i key={index} style={{ height: `${24 + ((index * 17) % 58)}%` }} />
-                        ))}
-                    </span>
+                    <video src={preview.url} muted playsInline preload="metadata" className={styles.workImage} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onError={() => setMediaFailed(true)} />
                 )}
-                <span className={styles.workType}>{homeGalleryTypeLabel(item)}</span>
                 {preview?.mediaType === "video" ? (
                     <span className={styles.playIcon}>
                         <Play aria-hidden="true" fill="currentColor" />
                     </span>
                 ) : null}
                 {preview?.mediaType === "video" && duration > 0 ? <span className={styles.duration}>{formatDuration(duration)}</span> : null}
-            </Link>
-            <div className={styles.workBody}>
-                <Link href={`/share/${encodeURIComponent(item.slug)}`} className={styles.workTitle}>
-                    {item.title}
-                </Link>
-                <div className={styles.workMeta}>
-                    <span className={styles.author}>
-                        <span>{item.authorAvatarUrl ? <img src={item.authorAvatarUrl} alt="" loading="lazy" /> : userAvatarFallback(authorName)}</span>
-                        <span>{authorName}</span>
-                    </span>
-                    <span className={styles.likeCount}>
-                        <Heart aria-hidden="true" />
-                        {formatCount(item.likeCount)}
-                    </span>
-                </div>
-            </div>
+                <span className={styles.workBody} data-gallery-work-body>
+                    <span className={styles.workTitle}>{item.title}</span>
+                </span>
+            </button>
         </article>
+    );
+}
+
+function HomeMediaPreview({ item, onClose }: { item?: PublicGalleryItem; onClose: () => void }) {
+    const preview = item?.preview;
+    const supported = preview?.mediaType === "image" || preview?.mediaType === "video";
+    return (
+        <Modal
+            open={Boolean(item && supported)}
+            onCancel={onClose}
+            footer={null}
+            centered
+            width="auto"
+            destroyOnHidden
+            title={null}
+            styles={{ container: { padding: 0, overflow: "hidden" }, body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "88dvh" } }}
+        >
+            {item && preview?.mediaType === "image" ? <img src={imagePreviewUrl(preview.url, 1920)} alt={item.title} className="block max-h-[88dvh] max-w-[min(92vw,1440px)] object-contain" /> : null}
+            {item && preview?.mediaType === "video" ? <video src={preview.url} aria-label={item.title} className="block max-h-[88dvh] max-w-[min(92vw,1440px)] object-contain" controls autoPlay playsInline /> : null}
+        </Modal>
     );
 }
 
@@ -156,8 +157,4 @@ function GalleryState({ icon, title, description, action }: { icon: ReactNode; t
 function formatDuration(seconds: number) {
     const safe = Math.max(0, Math.round(seconds));
     return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
-}
-
-function formatCount(value: number) {
-    return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value);
 }

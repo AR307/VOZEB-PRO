@@ -110,7 +110,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     if (request.method === "POST" && /\/models\/[^/]+:generateContent$/.test(path)) {
         const payload = jsonBody(body);
         if (payload.generationConfig?.responseModalities?.includes("IMAGE")) {
-            return sendJson(response, 200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: PNG_BASE64 } }] } }] });
+            return sendJson(response, 200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: (await fixtureImage(options)).toString("base64") } }] } }] });
         }
         const toolName = selectedToolName(payload);
         const text = toolName ? JSON.stringify(toolArguments(toolName, payload)) : "协议测试文本返回成功";
@@ -145,10 +145,10 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     if (request.method === "POST" && ["/images/generations", "/images/edits"].includes(path)) {
         const model = requestedModel(body, request.headers["content-type"] || "");
         if (options.failImage || shouldFailRequest(request, model)) return sendJson(response, options.failImage || model.includes("-fail") ? 400 : 503, { error: { message: "fixture image failure" } });
-        return sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ b64_json: PNG_BASE64, revised_prompt: "protocol fixture" }] });
+        return sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ b64_json: (await fixtureImage(options)).toString("base64"), revised_prompt: "protocol fixture" }] });
     }
     if (request.method === "POST" && ["/sdapi/v1/txt2img", "/sdapi/v1/img2img"].includes(path)) {
-        return sendJson(response, 200, { images: [PNG_BASE64], info: "{}" });
+        return sendJson(response, 200, { images: [(await fixtureImage(options)).toString("base64")], info: "{}" });
     }
     if (request.method === "POST" && path === "/custom/images") {
         return sendJson(response, 200, { data: { image_url: `${url.origin}/media/fixture.png` } });
@@ -218,7 +218,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         const bytes = options.videoPath ? await readFile(options.videoPath) : FALLBACK_MP4;
         return sendBytes(response, 200, "video/mp4", bytes);
     }
-    if (request.method === "GET" && path === "/media/fixture.png") return sendBytes(response, 200, "image/png", Buffer.from(PNG_BASE64, "base64"));
+    if (request.method === "GET" && path === "/media/fixture.png") return sendBytes(response, 200, "image/png", await fixtureImage(options));
 
     if (request.method === "POST" && path === "/audio/speech") {
         const model = requestedModel(body, request.headers["content-type"] || "");
@@ -367,6 +367,10 @@ function createWave() {
     return wave;
 }
 
+function fixtureImage(options) {
+    return options.imagePath ? readFile(options.imagePath) : Promise.resolve(Buffer.from(PNG_BASE64, "base64"));
+}
+
 async function readRequestBody(request) {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -412,6 +416,11 @@ function delay(ms) {
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
     const port = Number(process.env.VOZEB_PRO_PROTOCOL_FIXTURE_PORT) || 4010;
     const host = process.env.VOZEB_PRO_PROTOCOL_FIXTURE_HOST || "127.0.0.1";
-    const fixture = createProtocolFixtureServer({ videoPath: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_VIDEO, responseDelayMs: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_DELAY_MS, failImage: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_FAIL_IMAGE === "1" });
+    const fixture = createProtocolFixtureServer({
+        imagePath: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_IMAGE,
+        videoPath: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_VIDEO,
+        responseDelayMs: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_DELAY_MS,
+        failImage: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_FAIL_IMAGE === "1",
+    });
     fixture.server.listen(port, host, () => console.log(`Protocol fixture ready at http://${host}:${port}`));
 }
