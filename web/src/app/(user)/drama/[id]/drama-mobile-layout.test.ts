@@ -51,6 +51,7 @@ describe("drama mobile list layout", () => {
         expect(sections).toContain("styles={{ container: { padding: 12, width: 320 } }}");
         expect(agent).toContain("size={360}");
         expect(agent).toContain("drama-agent-drawer");
+        expect(agent).toContain('aria-label="项目 Agent"');
         expect(agent).toContain("data-drama-agent-panel-frame");
         expect(agent).toContain("useState(404)");
         expect(agent).toContain('aria-label="项目 Agent 面板"');

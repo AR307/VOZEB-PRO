@@ -57,6 +57,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         setSettings(next);
     };
     const getLatestSiteSettings = () => latestSettingsRef.current.site;
+    const getLatestSettings = () => latestSettingsRef.current;
 
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
         setSettings((current) => {
@@ -121,13 +122,16 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const updateDataLifecycle = (key: keyof AuthSettings["dataLifecycle"], value: boolean | number) => {
-        setSettings((current) => ({
+        const current = latestSettingsRef.current;
+        const next = {
             ...current,
             dataLifecycle: {
                 ...current.dataLifecycle,
                 [key]: key === "maintenanceBatchSize" ? clampInteger(value, 1, 500, current.dataLifecycle.maintenanceBatchSize) : value,
             },
-        }));
+        };
+        latestSettingsRef.current = next;
+        setSettings(next);
     };
 
     const updateModelPointCost = (model: string, value: number | null) => {
@@ -331,6 +335,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         testMailSettings,
         updateSiteSetting,
         getLatestSiteSettings,
+        getLatestSettings,
         uploadSiteLogo,
         uploadSiteIcon,
         updateSiteSocialSetting,

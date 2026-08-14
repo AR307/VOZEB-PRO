@@ -122,6 +122,7 @@ export function DramaAgentPanel({
                 onClose={() => onOpenChange(false)}
                 rootClassName="drama-agent-drawer"
                 styles={{ wrapper: { maxWidth: "calc(100vw - 8px)" }, body: { padding: 0 } }}
+                aria-label="项目 Agent"
             >
                 {content}
             </Drawer>

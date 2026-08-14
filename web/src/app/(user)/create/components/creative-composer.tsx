@@ -168,8 +168,9 @@ export function CreativeComposer({
 
     const openAssetMention = () => {
         const textarea = inputRef.current?.resizableTextArea?.textArea;
-        const cursor = textarea?.selectionStart ?? value.length;
-        const next = `${value.slice(0, cursor)}@${value.slice(cursor)}`;
+        const currentValue = textarea?.value ?? value;
+        const cursor = textarea?.selectionStart ?? currentValue.length;
+        const next = `${currentValue.slice(0, cursor)}@${currentValue.slice(cursor)}`;
         updateComposerValue(next, cursor + 1);
         focusComposerAt(cursor + 1);
     };
@@ -178,7 +179,8 @@ export function CreativeComposer({
         const nextAssetIds = selectedAssetIds.includes(asset.id) ? selectedAssetIds : [...selectedAssetIds, asset.id];
         const alias = creativeAssetReferenceAliases(referenceAliasAssets, nextAssetIds).get(asset.id);
         if (!alias) return;
-        const result = replaceCreativeAssetMention(value, caretRef.current, alias);
+        const currentValue = inputRef.current?.resizableTextArea?.textArea?.value ?? value;
+        const result = replaceCreativeAssetMention(currentValue, caretRef.current, alias);
         onReferenceAsset(asset.id);
         updateComposerValue(result.value, result.cursor);
         setMentionQuery(null);
@@ -210,7 +212,7 @@ export function CreativeComposer({
                         "creative-composer-input relative z-[1] min-w-0 !border-0 !bg-transparent !px-1 !py-1 !text-[15px] !leading-7 !shadow-none !outline-none sm:!px-2",
                         hasMentionReferences && "!text-transparent caret-[#20242a] dark:caret-[#f3f5f7]",
                     )}
-                    placeholder={compactMode ? "输入你的创作想法、脚本或画面要求，支持图文混合输入" : "输入你的创作想法、脚本或画面要求"}
+                    placeholder={compactMode ? "输入你的创作想法" : "输入你的创作想法、脚本或画面要求"}
                     onFocus={() => {
                         if (compactMode) onExpand?.();
                     }}
@@ -299,6 +301,7 @@ export function CreativeComposer({
                             type="text"
                             className="!size-11 !min-w-11 !shrink-0 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white"
                             icon={<AtSign className="size-4" />}
+                            onMouseDown={(event) => event.preventDefault()}
                             onClick={(event) => {
                                 event.stopPropagation();
                                 openAssetMention();
@@ -492,7 +495,14 @@ export function CreativeComposer({
                             onChangeGenerationPreference={onChangeGenerationPreference}
                         />
                         <Tooltip title="引用当前对话资产">
-                            <Button type="text" className={creativeComposerToolButtonClass(mentionQuery !== null)} icon={<AtSign className="size-4" />} onClick={openAssetMention} aria-label="引用当前对话资产">
+                            <Button
+                                type="text"
+                                className={creativeComposerToolButtonClass(mentionQuery !== null)}
+                                icon={<AtSign className="size-4" />}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={openAssetMention}
+                                aria-label="引用当前对话资产"
+                            >
                                 <span className="hidden text-xs font-medium sm:inline">引用</span>
                             </Button>
                         </Tooltip>
@@ -646,7 +656,9 @@ function ComposerMentionPreview({ segments, assetsById, previewRef }: { segments
                         </span>
                         <span className="absolute inset-0 inline-flex min-w-0 items-center gap-0.5 overflow-hidden text-[#536273] dark:text-[#c8d0d9]">
                             {previewUrl ? <img src={imagePreviewUrl(previewUrl, 96)} alt="" className="size-4 shrink-0 rounded object-cover shadow-[0_1px_2px_rgba(32,36,42,0.16)]" /> : <Icon className="size-3.5 shrink-0" />}
-                            <span className="min-w-0 truncate text-[13px] font-medium">{segment.text.slice(1)}</span>
+                            <span data-mention-label className="min-w-0 truncate text-[13px] font-medium">
+                                {segment.text.slice(1)}
+                            </span>
                         </span>
                     </span>
                 );

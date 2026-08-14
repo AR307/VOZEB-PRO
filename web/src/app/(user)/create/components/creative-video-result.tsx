@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Keyboard
 
 import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { cn } from "@/lib/utils";
 
 import { creativeAssetLayout } from "./creative-asset-layout";
 import { CreativeResultSwitcher, useSelectedCreativeResult } from "./creative-result-switcher";
@@ -35,7 +36,12 @@ export function CreativeVideoResult({
     const resultStyle = { "--creative-result-media-width": mediaWidth } as CSSProperties;
 
     return (
-        <div data-testid="creative-video-result" data-results-count={videos.length} className="grid w-fit max-w-full grid-cols-[minmax(0,1fr)] items-start sm:grid-cols-[var(--creative-result-media-width)_auto] sm:gap-x-3" style={resultStyle}>
+        <div
+            data-testid="creative-video-result"
+            data-results-count={videos.length}
+            className={cn("grid w-fit max-w-full grid-cols-[minmax(0,1fr)] items-start", videos.length > 1 && "sm:grid-cols-[var(--creative-result-media-width)_auto] sm:gap-x-3")}
+            style={resultStyle}
+        >
             <div
                 data-testid="creative-primary-result"
                 data-rendered-width={layout?.width}

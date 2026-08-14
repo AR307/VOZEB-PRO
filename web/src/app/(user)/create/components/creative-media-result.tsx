@@ -6,6 +6,7 @@ import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { cn } from "@/lib/utils";
 
 import { creativeAssetLayout } from "./creative-asset-layout";
 import { CreativeResultSwitcher, useSelectedCreativeResult } from "./creative-result-switcher";
@@ -26,7 +27,12 @@ export function CreativeMediaResult({ assets, fallbackRatio, renderActions }: { 
     const resultStyle = { "--creative-result-media-width": mediaWidth } as CSSProperties;
 
     return (
-        <div data-testid="creative-media-result" data-results-count={results.length} className="grid w-fit max-w-full grid-cols-[minmax(0,1fr)] items-start sm:grid-cols-[var(--creative-result-media-width)_auto] sm:gap-x-3" style={resultStyle}>
+        <div
+            data-testid="creative-media-result"
+            data-results-count={results.length}
+            className={cn("grid w-fit max-w-full grid-cols-[minmax(0,1fr)] items-start", results.length > 1 && "sm:grid-cols-[var(--creative-result-media-width)_auto] sm:gap-x-3")}
+            style={resultStyle}
+        >
             {activeAsset.type === "audio" ? (
                 <figure className="col-start-1 row-start-1 w-[352px] max-w-full rounded-xl border border-[#e7e9ee] bg-white p-4 dark:border-[#303640] dark:bg-[#181b20]">
                     <AgentMediaPreview type="audio" url={url} title={activeAsset.title || "生成音频"} />

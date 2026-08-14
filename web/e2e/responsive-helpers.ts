@@ -180,12 +180,13 @@ export async function expectDialogWithinViewport(dialog: Locator) {
 
 export async function openCreativeHistory(page: Page) {
     const dialog = page.getByRole("dialog", { name: "创作历史" });
-    await expect
-        .poll(async () => {
-            if (await dialog.isVisible().catch(() => false)) return true;
-            await page.getByRole("button", { name: "创作历史" }).click();
-            return dialog.isVisible().catch(() => false);
-        })
-        .toBe(true);
-    return dialog;
+    const desktopPanel = page.locator("aside").filter({ has: page.getByRole("heading", { name: "创作历史", exact: true }) });
+    const surface = (page.viewportSize()?.width || 0) >= 1024 ? desktopPanel : dialog;
+    if (!(await surface.isVisible().catch(() => false))) {
+        const openButton = page.getByTestId("creative-page-tools").getByRole("button", { name: "打开创作历史" });
+        await expect(openButton).toBeVisible();
+        await openButton.click();
+    }
+    await expect(surface).toBeVisible();
+    return surface;
 }

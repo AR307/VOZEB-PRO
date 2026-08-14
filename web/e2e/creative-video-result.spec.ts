@@ -127,7 +127,7 @@ test("multiple image results share one switcher and actions follow the selected 
     });
     expect(selectionColors.border).toBe(selectionColors.primary);
     const actionPalettes = await Promise.all(
-        ["复制提示词", "下载"].map((name) =>
+        ["更多本轮创作操作", "下载"].map((name) =>
             round.getByRole("button", { name, exact: true }).evaluate((element) => {
                 const style = getComputedStyle(element);
                 return { background: style.backgroundColor, border: style.borderTopColor, color: style.color };
@@ -135,7 +135,7 @@ test("multiple image results share one switcher and actions follow the selected 
         ),
     );
     expect(actionPalettes[1]).toEqual(actionPalettes[0]);
-    await round.getByRole("button", { name: "复制提示词" }).click();
+    await copyCurrentPrompt(page, round);
     await expect.poll(() => page.evaluate(() => (window as unknown as { __lastCopiedText?: string }).__lastCopiedText)).toBe(fixture.optimizedPromptFor(2));
     const actionBounds = await round.getByLabel("本轮创作操作", { exact: true }).evaluate((element) => element.getBoundingClientRect().toJSON());
     expect(actionBounds.width).toBeLessThanOrEqual(primaryBounds.width + 1);
@@ -161,17 +161,23 @@ test("multiple image results share one switcher and actions follow the selected 
     await expect(primary).toHaveAttribute("data-rendered-height", "1280");
     await expect(round.getByLabel("本轮创作操作", { exact: true })).toHaveAttribute("data-active-asset-id", fixture.assets[3].id);
 
-    await round.getByRole("button", { name: "复制提示词" }).click();
+    await copyCurrentPrompt(page, round);
     await expect.poll(() => page.evaluate(() => (window as unknown as { __lastCopiedText?: string }).__lastCopiedText)).toBe(fixture.optimizedPromptFor(3));
     await expectNoHorizontalOverflow(page);
-    await expect(round.getByRole("button", { name: "复制提示词" })).toBeVisible();
+    await expect(round.getByRole("button", { name: "更多本轮创作操作" })).toBeVisible();
     await expect(round.getByRole("button", { name: "重新编辑" })).toHaveCount(0);
     await expect(round.getByRole("button", { name: "再次生成" })).toHaveCount(0);
     expect(fixture.repeatedRequests()).toHaveLength(0);
     const conversationScroll = page.getByTestId("creative-conversation-scroll");
+    const composerDock = page.getByTestId("creative-composer-dock");
     await conversationScroll.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
-    const [scrollBounds, roundBounds] = await Promise.all([conversationScroll.evaluate((element) => element.getBoundingClientRect().toJSON()), round.evaluate((element) => element.getBoundingClientRect().toJSON())]);
-    expect(scrollBounds.bottom - roundBounds.bottom).toBeLessThanOrEqual(48);
+    const [scrollBounds, roundBounds, dockBounds] = await Promise.all([
+        conversationScroll.evaluate((element) => element.getBoundingClientRect().toJSON()),
+        round.evaluate((element) => element.getBoundingClientRect().toJSON()),
+        composerDock.evaluate((element) => element.getBoundingClientRect().toJSON()),
+    ]);
+    expect(Math.abs(scrollBounds.bottom - dockBounds.top)).toBeLessThanOrEqual(1);
+    expect(roundBounds.bottom).toBeLessThanOrEqual(dockBounds.top + 2);
 });
 
 test("copy prompt refreshes a restored run whose cached details omit the public prompt", async ({ page }, testInfo) => {
@@ -180,13 +186,14 @@ test("copy prompt refreshes a restored run whose cached details omit the public 
     const fixture = await mockCreativeRound(page, { type: "image", sizes: [IMAGE_SIZES[0]], withholdPrompts: true });
     await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
 
-    const copyButton = page.getByTestId("creative-media-round").getByRole("button", { name: "复制提示词" });
-    await expect(copyButton).toBeVisible({ timeout: 45_000 });
-    await expect(copyButton).toBeEnabled();
+    const round = page.getByTestId("creative-media-round");
+    const moreButton = round.getByRole("button", { name: "更多本轮创作操作" });
+    await expect(moreButton).toBeVisible({ timeout: 45_000 });
+    await expect(moreButton).toBeEnabled();
     const requestsBeforeCopy = fixture.runRequests();
 
     fixture.revealPrompts();
-    await copyButton.click();
+    await copyCurrentPrompt(page, round);
 
     await expect.poll(fixture.runRequests).toBeGreaterThan(requestsBeforeCopy);
     await expect.poll(() => page.evaluate(() => (window as unknown as { __lastCopiedText?: string }).__lastCopiedText)).toBe(fixture.optimizedPromptFor(0));
@@ -347,13 +354,13 @@ test("multiple videos switch src, poster and size while releasing the previous p
     await expect(secondPlayer.getByText("00:00 / 00:15", { exact: true })).toBeVisible();
     await expect(round.getByLabel("本轮创作操作", { exact: true })).toHaveAttribute("data-active-asset-id", fixture.assets[1].id);
     await expect.poll(() => page.evaluate(() => Number((window as unknown as { __mediaPauseCalls?: number }).__mediaPauseCalls || 0))).toBeGreaterThan(pausesBeforeSwitch);
-    await expect.poll(() => page.evaluate(() => Number((window as unknown as { __mediaLoadCalls?: number }).__mediaLoadCalls || 0))).toBeGreaterThan(0);
+    expect(await page.evaluate(() => Number((window as unknown as { __mediaLoadCalls?: number }).__mediaLoadCalls || 0))).toBe(0);
     await expect(result.getByText("更多", { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await captureResult(result, testInfo, "video-multiple-results");
 });
 
-test("failed image and video generations restore their prompts for editing", async ({ page }, testInfo) => {
+test("failed image and video generations expose only in-place retry", async ({ page }, testInfo) => {
     await preparePage(page, testInfo);
     for (const type of ["image", "video"] as const) {
         const fixture = await mockCreativeRound(page, { type, sizes: [], failed: true });
@@ -363,11 +370,9 @@ test("failed image and video generations restore their prompts for editing", asy
         await expect(round).toBeVisible({ timeout: 45_000 });
         await expect(round.getByTestId("creative-generation-failure")).toBeVisible();
         await expect(round.getByText("当前模型暂不可用，请切换模型或稍后重试。", { exact: true })).toBeVisible();
-        await expect(round.getByRole("button", { name: "编辑提示词后重试" })).toHaveText("编辑重试");
+        await expect(round.getByRole("button", { name: "直接重试本次创作" })).toHaveText("直接重试");
         await expect(round.getByTestId("creative-primary-result")).toHaveCount(0);
-        await round.getByRole("button", { name: "编辑提示词后重试" }).click();
-        await expect(page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" })).toHaveValue(fixture.prompt);
-        await expect(page.getByRole("button", { name: `当前创作类型：${type === "image" ? "图片生成" : "视频生成"}` })).toBeVisible();
+        await expect(round.getByRole("button", { name: /编辑.*重试/ })).toHaveCount(0);
         await expectNoHorizontalOverflow(page);
         await captureResult(round, testInfo, `${type}-generation-failed`);
     }
@@ -386,7 +391,7 @@ test("partial image and video runs keep every successful result visible with a f
         await expect(result).toBeVisible({ timeout: 45_000 });
         await expect(result).toHaveAttribute("data-results-count", "2");
         await expect(result.getByTestId("creative-result-switcher")).toHaveAttribute("data-results-count", "2");
-        await expect(round.getByRole("button", { name: "编辑重试" })).toBeVisible();
+        await expect(round.getByRole("button", { name: "直接重试本次创作" })).toBeVisible();
         await expect(round.getByRole("button", { name: `重试 ${type === "image" ? "图片" : "视频"}生成` })).toHaveCount(0);
         await expectNoHorizontalOverflow(page);
         await captureResult(round, testInfo, `${type}-partial-results`);
@@ -402,13 +407,16 @@ test("asset mentions stay as inline thumbnail references while the editor is foc
 
         const composer = page.locator(".creative-composer");
         const input = composer.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" });
-        await expect(input).toBeVisible({ timeout: 45_000 });
+        await expect(page.getByTestId("creative-media-round")).toBeVisible({ timeout: 45_000 });
+        await expect(composer).toHaveAttribute("data-ready", "true");
+        await expect(input).toBeVisible();
         await input.fill("书店收购价格");
         await input.evaluate((element) => {
             const textarea = element as HTMLTextAreaElement;
             textarea.setSelectionRange(0, 0);
         });
         await composer.getByRole("button", { name: "引用当前对话资产" }).click();
+        await expect(input).toHaveValue("@书店收购价格");
         const mentionPicker = page.getByTestId("creative-asset-mention-picker");
         await expect(mentionPicker.getByRole("tablist", { name: "引用素材类型" })).toHaveCount(0);
         const mentionGrid = mentionPicker.getByTestId(`creative-asset-mention-${type}-grid`);
@@ -416,9 +424,15 @@ test("asset mentions stay as inline thumbnail references while the editor is foc
         await expect(pickerItems).toHaveCount(2);
         await expect(pickerItems.nth(0)).toHaveAttribute("data-asset-id", String(fixture.assets[0].id));
         await expect(pickerItems.nth(1)).toHaveAttribute("data-asset-id", String(fixture.assets[1].id));
-        const [firstPickerBounds, secondPickerBounds] = await Promise.all([pickerItems.nth(0).boundingBox(), pickerItems.nth(1).boundingBox()]);
-        expect(firstPickerBounds && secondPickerBounds && Math.abs(firstPickerBounds.y - secondPickerBounds.y)).toBeLessThan(1);
-        expect(firstPickerBounds && secondPickerBounds && secondPickerBounds.x).toBeGreaterThan(firstPickerBounds?.x || 0);
+        await expect
+            .poll(async () => {
+                const [firstPickerBounds, secondPickerBounds] = await Promise.all([pickerItems.nth(0).boundingBox(), pickerItems.nth(1).boundingBox()]);
+                return {
+                    sameRow: Boolean(firstPickerBounds && secondPickerBounds && Math.abs(firstPickerBounds.y - secondPickerBounds.y) < 1),
+                    ordered: Boolean(firstPickerBounds && secondPickerBounds && secondPickerBounds.x > firstPickerBounds.x),
+                };
+            })
+            .toEqual({ sameRow: true, ordered: true });
         await expect(mentionPicker.getByText(`${label}结果 1`, { exact: true })).toHaveCount(0);
         await page.getByRole("button", { name: `选择${label}结果 1`, exact: true }).click();
         await expect(input).toHaveValue(`@${label}1 书店收购价格`);
@@ -434,8 +448,7 @@ test("asset mentions stay as inline thumbnail references while the editor is foc
         const mentionPreview = composer.getByTestId("creative-composer-mention-preview");
         const chips = mentionPreview.getByTestId("creative-composer-reference-chip");
         await expect(chips).toHaveCount(1);
-        await expect(chips).toContainText(`${label}1`);
-        await expect(chips).not.toContainText(`@${label}1`);
+        await expect(chips.locator("[data-mention-label]")).toHaveText(`${label}1`);
         await expect(chips.locator("img")).toHaveCount(1);
         await expect(chips.locator("[data-mention-token-width]")).toHaveText(`@${label}1`);
 
@@ -889,9 +902,14 @@ async function expectShrinkToFitShell(result: ReturnType<Page["getByTestId"]>, m
         result.getByTestId("creative-primary-result").evaluate((element) => element.getBoundingClientRect().toJSON()),
         result.getByLabel("本轮创作操作", { exact: true }).evaluate((element) => element.getBoundingClientRect().toJSON()),
     ]);
-    expect(Math.abs(shell.width - primary.width)).toBeLessThanOrEqual(2);
-    expect(actions.width).toBeLessThanOrEqual(primary.width + 2);
+    expect(Math.abs(shell.width - Math.max(primary.width, actions.width))).toBeLessThanOrEqual(2);
+    expect(actions.width).toBeLessThanOrEqual(shell.width + 2);
     expect(primary.width).toBeLessThanOrEqual(mediaWidth + 2);
+}
+
+async function copyCurrentPrompt(page: Page, round: ReturnType<Page["getByTestId"]>) {
+    await round.getByRole("button", { name: "更多本轮创作操作" }).click();
+    await page.getByRole("menuitem", { name: "复制提示词" }).click();
 }
 
 async function captureResult(locator: ReturnType<Page["getByTestId"]>, testInfo: TestInfo, name: string) {

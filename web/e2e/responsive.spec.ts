@@ -587,15 +587,16 @@ test("creative composer renders uploaded images as thumbnails instead of filenam
     expect(requests.assetUploads()).toBe(0);
     await expect(page).toHaveURL(/\/create$/);
     const inputRow = page.getByTestId("creative-composer-input-row");
+    const previewSlot = page.getByLabel(`已上传图片 ${fileName}`);
     const textarea = page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" });
     await expect
         .poll(async () => {
             const [previewRect, textareaRect, rowRect] = await Promise.all([
-                preview.evaluate((element) => element.getBoundingClientRect().toJSON()),
+                previewSlot.evaluate((element) => element.getBoundingClientRect().toJSON()),
                 textarea.evaluate((element) => element.getBoundingClientRect().toJSON()),
                 inputRow.evaluate((element) => element.getBoundingClientRect().toJSON()),
             ]);
-            return previewRect.top >= rowRect.top && previewRect.bottom <= rowRect.bottom && previewRect.left < textareaRect.left && previewRect.width >= 56 && previewRect.height >= 56;
+            return previewRect.top >= rowRect.top && previewRect.bottom <= rowRect.bottom && previewRect.left < textareaRect.left && previewRect.width >= 48 && previewRect.height >= 48;
         })
         .toBe(true);
     await expectNoHorizontalOverflow(page, `${testInfo.project.name} creative image attachment preview`);
@@ -665,8 +666,9 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
     await expect(result.getByText("更多生成结果", { exact: true })).toHaveCount(0);
     await expect(result.getByTestId("creative-result-switcher")).toHaveCount(0);
     const [primaryRect, mediaRect] = await Promise.all([primaryResult.evaluate((element) => element.getBoundingClientRect().toJSON()), media.evaluate((element) => element.getBoundingClientRect().toJSON())]);
-    expect(Math.abs(primaryRect.width - 300)).toBeLessThanOrEqual(2);
-    expect(Math.abs(primaryRect.height - 533)).toBeLessThanOrEqual(2);
+    const portraitScale = Math.min(1, page.viewportSize()!.height / 3 / 533);
+    expect(Math.abs(primaryRect.width - 300 * portraitScale)).toBeLessThanOrEqual(2);
+    expect(Math.abs(primaryRect.height - 533 * portraitScale)).toBeLessThanOrEqual(2);
     expect(primaryRect.width - mediaRect.width).toBeLessThanOrEqual(3);
     expect(primaryRect.height - mediaRect.height).toBeLessThanOrEqual(3);
 
@@ -694,7 +696,7 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
         request.evaluate((element) => element.getBoundingClientRect().toJSON()),
     ]);
     expect(Math.abs(groupRect.width - resultRect.width)).toBeLessThanOrEqual(2);
-    expect(Math.abs(actionsRect.width - groupRect.width)).toBeLessThanOrEqual(2);
+    expect(actionsRect.width).toBeLessThanOrEqual(primaryRect.width + 2);
     expect(groupRect.width).toBeGreaterThanOrEqual(primaryRect.width - 2);
     expect(groupRect.width).toBeLessThanOrEqual(352);
     expect(requestRect.bottom, JSON.stringify({ requestBottom: requestRect.bottom, groupTop: groupRect.top })).toBeLessThanOrEqual(groupRect.top + 1);
@@ -758,7 +760,7 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
         await testInfo.attach("深色单结果创作记录", { path: screenshotPath, contentType: "image/png" });
     }
 
-    await expect(round.getByRole("button", { name: "复制提示词" })).toBeVisible();
+    await expect(round.getByRole("button", { name: "更多本轮创作操作" })).toBeVisible();
     await expect(round.getByRole("button", { name: "重新编辑" })).toHaveCount(0);
     await expect(round.getByRole("button", { name: "再次生成" })).toHaveCount(0);
     expect(fixture.repeatedRequest()).toBeUndefined();
@@ -778,11 +780,17 @@ test("creative conversation uses the shared switcher only for multiple media res
     await expect(primaryResult.getByRole("img", { name: "生成结果 1" })).toBeVisible({ timeout: 45_000 });
     await expect(result).toHaveAttribute("data-results-count", "4");
     await expect(switcher).toHaveAttribute("data-results-count", "4");
-    await expect(result.getByText("更多生成结果", { exact: true })).toBeVisible();
+    await expect(result.getByText("更多", { exact: true })).toBeVisible();
     await expect(switcher.getByRole("button", { name: /查看生成结果/ })).toHaveCount(4);
     const bounds = await switcher.getByRole("button", { name: /查看生成结果/ }).evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().toJSON()));
     expect(bounds.every((rect) => rect.width <= 79 && rect.height <= 65)).toBe(true);
-    expect(Math.max(...bounds.map((rect) => rect.top)) - Math.min(...bounds.map((rect) => rect.top))).toBeLessThanOrEqual(1);
+    if (page.viewportSize()!.width >= 640) {
+        expect(Math.max(...bounds.map((rect) => rect.left)) - Math.min(...bounds.map((rect) => rect.left))).toBeLessThanOrEqual(1);
+        expect(bounds.every((rect, index) => index === 0 || rect.top > bounds[index - 1].top)).toBe(true);
+    } else {
+        expect(Math.max(...bounds.map((rect) => rect.top)) - Math.min(...bounds.map((rect) => rect.top))).toBeLessThanOrEqual(1);
+        expect(bounds.every((rect, index) => index === 0 || rect.left > bounds[index - 1].left)).toBe(true);
+    }
     await switcher.getByRole("button", { name: "查看生成结果 2" }).click();
     await expect(switcher.getByRole("button", { name: "查看生成结果 2" })).toHaveAttribute("aria-pressed", "true");
     const [groupWidth, primaryWidth, actionsWidth, switcherWidth] = await Promise.all([
@@ -792,9 +800,10 @@ test("creative conversation uses the shared switcher only for multiple media res
         switcher.evaluate((element) => element.getBoundingClientRect().width),
     ]);
     expect(primaryWidth).toBeLessThanOrEqual(420);
-    expect(Math.abs(groupWidth - primaryWidth)).toBeLessThanOrEqual(2);
-    expect(Math.abs(actionsWidth - primaryWidth)).toBeLessThanOrEqual(2);
-    expect(Math.abs(switcherWidth - primaryWidth)).toBeLessThanOrEqual(2);
+    expect(groupWidth).toBeGreaterThanOrEqual(primaryWidth);
+    expect(actionsWidth).toBeLessThanOrEqual(primaryWidth + 2);
+    if (page.viewportSize()!.width >= 640) expect(switcherWidth).toBeLessThan(primaryWidth);
+    else expect(Math.abs(switcherWidth - primaryWidth)).toBeLessThanOrEqual(2);
     await expectNoHorizontalOverflow(page, `${testInfo.project.name} four media results`);
 
     if (process.env.VOZEB_PRO_VISUAL_CAPTURE === "1") {
@@ -828,7 +837,8 @@ test("switching conversations keeps the previous Agent run isolated and resumabl
     await history.getByText("空闲对话 B", { exact: true }).click();
     await expect(page.getByText("B 对话自己的消息", { exact: true })).toBeVisible();
     await expect(page.getByText("A 对话正在生成海报", { exact: true })).toBeHidden();
-    await expect(history).toBeHidden();
+    if ((page.viewportSize()?.width || 0) >= 1024) await expect(history).toBeVisible();
+    else await expect(history).toBeHidden();
 
     fixture.releaseDelayedRun();
     await fixture.delayedRunReturned;
@@ -1119,7 +1129,7 @@ test("creative workspaces remain usable without horizontal overflow in light and
             await page.getByRole("button", { name: "打开项目 Agent" }).click();
             let agentSurface: Locator;
             if ((page.viewportSize()?.width || 0) >= 1280) {
-                const agentPanel = page.getByLabel("项目 Agent 面板");
+                const agentPanel = page.getByRole("complementary", { name: "项目 Agent 面板" });
                 await expect(agentPanel).toBeVisible();
                 const contentBox = await productionSurface.boundingBox();
                 const agentBox = await agentPanel.boundingBox();
@@ -1157,7 +1167,7 @@ test("creative workspaces remain usable without horizontal overflow in light and
             await expect(stageSuggestionMenu.getByRole("menuitem")).toHaveCount(4);
             await page.keyboard.press("Escape");
             await agentSurface.getByRole("button", { name: "收起项目 Agent" }).click();
-            await expect(page.getByRole("button", { name: "打开项目 Agent" })).toBeVisible();
+            await expect(page.getByRole("button", { name: "打开项目 Agent", exact: true })).toBeVisible();
         }
         if (route === canvasRoute) {
             await expect(page.locator("[data-canvas-surface]")).toHaveCSS("background-color", "rgb(255, 255, 255)");

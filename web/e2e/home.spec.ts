@@ -146,7 +146,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         expect(sendStyle.boxShadow).toBe("none");
         expect(sendStyle.color).toBe("rgb(255, 255, 255)");
     }
-    for (const action of ["开始创作", "进入工作台添加参考素材"]) {
+    for (const action of ["开始创作", "进入创作页添加参考素材"]) {
         await page.getByRole("button", { name: action }).click();
         const dialog = page.getByRole("dialog");
         const closeButton = dialog.getByRole("button", { name: "Close" });
@@ -200,7 +200,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     await page.getByRole("button", { name: "切换到深色主题" }).click();
     await expect(page.locator("html")).toHaveClass(/dark/);
     if (testInfo.project.name === "chromium") {
-        const attach = page.getByRole("button", { name: "进入工作台添加参考素材" });
+        const attach = page.getByRole("button", { name: "进入创作页添加参考素材" });
         const send = page.getByRole("button", { name: "开始创作" });
         const [attachStyle, sendStyle] = await Promise.all([
             attach.evaluate((element) => ({ backgroundImage: getComputedStyle(element).backgroundImage, borderColor: getComputedStyle(element).borderColor, color: getComputedStyle(element).color })),
@@ -221,13 +221,13 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
 test("signed-in homepage restores the selected creation mode and prompt", async ({ page }, testInfo) => {
     await page.route("**/api/public/gallery?**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) }));
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    const workspaceEntry = page.locator("header button").filter({ hasText: "进入工作台" });
-    await expect(workspaceEntry).toHaveCount(1);
-    if (testInfo.project.name === "chromium") await expect(workspaceEntry).toBeVisible();
+    const createEntry = page.locator("header").getByRole("button", { name: "开始创作", exact: true });
+    if (testInfo.project.name === "chromium") await expect(createEntry).toBeVisible();
+    else await expect(createEntry).toHaveCount(0);
     await expect(page.locator("header").getByRole("button", { name: /用户|账号|头像/ })).toHaveCount(0);
     await page.getByRole("button", { name: "AI 绘图" }).click();
     await page.getByLabel("描述你想创作的内容").fill("已登录首页图片提示词");
-    await page.getByRole("button", { name: "开始创作" }).click();
+    await page.getByTestId("home-agent-card").getByRole("button", { name: "开始创作" }).click();
     await expect(page).toHaveURL(/\/create(?:#.*)?$/);
     await expect(page.getByRole("button", { name: "当前创作类型：图片生成" })).toBeVisible();
     await expect(page.locator("textarea").first()).toHaveValue("已登录首页图片提示词");

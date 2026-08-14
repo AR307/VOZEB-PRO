@@ -200,6 +200,7 @@ export function AdminSettingsSection({ controller }: { controller: AdminDashboar
         updateGenerationDefaults,
         updateGenerationCostControl,
         updateDataLifecycle,
+        getLatestSettings,
         updateMailSetting,
         testMailSettings,
     } = controller;
@@ -218,7 +219,14 @@ export function AdminSettingsSection({ controller }: { controller: AdminDashboar
                         <div className="hidden flex-wrap gap-2 text-xs text-stone-500 sm:flex dark:text-stone-400">
                             {access.system ? <Tag className="m-0">{settings.registrationEnabled ? "注册开放" : "注册关闭"}</Tag> : <Tag className="m-0">生成控制</Tag>}
                         </div>
-                        <Button type="primary" aria-label="保存系统设置" title="保存系统设置" loading={settingsLoading} icon={<Save className="size-4" />} onClick={() => saveSettings(buildAdminSettingsPatch(settings, access), "系统设置已保存")}>
+                        <Button
+                            type="primary"
+                            aria-label="保存系统设置"
+                            title="保存系统设置"
+                            loading={settingsLoading}
+                            icon={<Save className="size-4" />}
+                            onClick={() => saveSettings(buildAdminSettingsPatch(getLatestSettings(), access), "系统设置已保存")}
+                        >
                             <span className="sm:hidden">保存</span>
                             <span className="hidden sm:inline">保存系统设置</span>
                         </Button>

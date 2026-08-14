@@ -18,7 +18,7 @@
   <a href="https://www.vozeb.com">演示站</a> ·
   <a href="docs/index.md">文档索引</a> ·
   <a href="docs/content/docs/overview/configuration.mdx">0.0.6 发布说明</a> ·
-  <a href="docs/content/docs/overview/project-structure.mdx">项目结构</a> ·
+  <a href="#目录与文件用途">目录与文件用途</a> ·
   <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
   <a href="https://linux.do">LINUX DO</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a> ·
@@ -408,13 +408,15 @@ VOZEB_PRO_MAINTENANCE_TOKEN=replace-with-another-openssl-rand-hex-32
 VOZEB_PRO_WORKER_TOKEN=replace-with-a-distinct-openssl-rand-hex-32
 ```
 
-分别生成加密密钥、一次性安装令牌、维护令牌和 Worker 令牌，再写入 `.env` 并启动。维护令牌与 Worker 令牌必须不同：
+为四个变量分别执行一次下面的命令，并保存每次不同的输出。维护令牌与 Worker 令牌必须不同：
 
 ```bash
 openssl rand -hex 32
-openssl rand -hex 32
-openssl rand -hex 32
-openssl rand -hex 32
+```
+
+写入 `.env` 后启动：
+
+```bash
 docker compose pull
 docker compose up -d
 docker compose ps
@@ -473,7 +475,7 @@ pnpm run dev
 5. 配置 SMTP、注册策略、本地媒体或 S3 兼容对象存储。
 6. 在“初始化配置”检查上线项，再验证真实生成、退款和备份恢复。
 
-## 项目文件
+## 目录与文件用途
 
 | 路径                                        | 文件里是什么                                                               |
 | ------------------------------------------- | -------------------------------------------------------------------------- |
@@ -541,7 +543,7 @@ pnpm run build
 ## 文档与协议
 
 - [功能总览](docs/content/docs/overview/features.mdx)
-- [项目结构与流程](docs/content/docs/overview/project-structure.mdx)
+- [目录与文件用途](docs/content/docs/overview/project-structure.mdx)
 - [配置说明](docs/content/docs/overview/configuration.mdx)
 - [数据库结构](docs/content/docs/backend/backend-database.mdx)
 - [待测试](docs/content/docs/progress/pending-test.mdx)
