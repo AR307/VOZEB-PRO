@@ -5,7 +5,7 @@ import { AdminDashboard } from "@/components/admin/admin-dashboard";
 import { parseAdminSection, resolveAdminSection } from "@/components/admin/admin-sections";
 import { AdminReturnButton } from "@/components/admin/admin-return-button";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
-import { getAuthSettings, getPublicUserSummary } from "@/lib/auth/store";
+import { getFreshAuthSettings, getPublicUserSummary } from "@/lib/auth/store";
 import { getAdminSetupSummary } from "@/lib/server/admin-setup-status";
 import { serializeAdminSettingsForUser } from "@/lib/server/admin-channel-config";
 import { getAuthenticatedPageAccess } from "@/lib/server/page-access";
@@ -27,7 +27,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
     const initialSection = resolveAdminSection(currentUser, requestedSection);
     if (!initialSection) redirect("/");
 
-    const [settings, userSummary] = await Promise.all([getAuthSettings(), getPublicUserSummary()]);
+    const [settings, userSummary] = await Promise.all([getFreshAuthSettings(), getPublicUserSummary()]);
     const setup = await getAdminSetupSummary({ settings, userSummary });
 
     return (

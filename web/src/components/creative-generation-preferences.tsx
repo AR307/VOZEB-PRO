@@ -2,13 +2,13 @@
 
 import { Button, Popover, Select } from "antd";
 import { AudioLines, ChevronDown, ImageIcon, Lightbulb, Maximize2, Sparkles, Video } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { audioFormatLabel, audioFormatOptions, audioVoiceLabel, audioVoiceOptions } from "@/lib/audio-generation";
 import type { CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { cn } from "@/lib/utils";
 
-import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement } from "./creative-composer-popover";
+import { creativeComposerPopoverOverflow, creativeComposerPopoverPanelMaxHeight, type CreativeComposerPopoverPlacement } from "./creative-composer-popover";
 import { creativeComposerToolButtonClass } from "./creative-composer-styles";
 import { PositiveNumberField, SuggestedPositiveIntegerField, SwitchPreference, VideoQualityField } from "./creative-generation-preference-fields";
 
@@ -122,9 +122,32 @@ export function CreativeGenerationPreferences({
     onChange: (patch: CreativeGenerationPreferencePatch) => void;
 }) {
     const [open, setOpen] = useState(false);
+    const [panelMaxHeight, setPanelMaxHeight] = useState<number>();
+    const triggerRef = useRef<HTMLButtonElement>(null);
     const availableCapabilities = capabilities.length ? capabilities : [capability];
     const activeCapability = availableCapabilities.includes(capability) ? capability : availableCapabilities[0];
     const summary = triggerLabel || generationPreferenceSummary(activeCapability, preferences);
+    const maximumPanelHeight = compact ? 440 : 520;
+
+    const measurePanelHeight = useCallback(() => {
+        const trigger = triggerRef.current;
+        if (!trigger) return;
+        const visualViewport = window.visualViewport;
+        const viewportTop = visualViewport?.offsetTop || 0;
+        const viewportBottom = viewportTop + (visualViewport?.height || window.innerHeight);
+        setPanelMaxHeight(creativeComposerPopoverPanelMaxHeight(placement, trigger.getBoundingClientRect(), { top: viewportTop, bottom: viewportBottom }, maximumPanelHeight));
+    }, [maximumPanelHeight, placement]);
+
+    useEffect(() => {
+        if (!open) return;
+        const visualViewport = window.visualViewport;
+        window.addEventListener("resize", measurePanelHeight);
+        visualViewport?.addEventListener("resize", measurePanelHeight);
+        return () => {
+            window.removeEventListener("resize", measurePanelHeight);
+            visualViewport?.removeEventListener("resize", measurePanelHeight);
+        };
+    }, [measurePanelHeight, open]);
 
     return (
         <Popover
@@ -134,6 +157,7 @@ export function CreativeGenerationPreferences({
             arrow={false}
             open={open}
             onOpenChange={(nextOpen) => {
+                if (nextOpen) measurePanelHeight();
                 setOpen(nextOpen);
                 onOpenChange?.(nextOpen);
             }}
@@ -143,7 +167,7 @@ export function CreativeGenerationPreferences({
                     data-canvas-no-drag
                     data-creative-generation-preferences
                     className={cn("hide-scrollbar min-w-0 max-w-[calc(100vw-32px)] overflow-x-hidden overflow-y-auto overscroll-contain", compact ? "w-[316px]" : "w-[360px]", panelClassName)}
-                    style={{ maxHeight: compact ? "min(440px, calc(100dvh - 80px))" : "min(520px, calc(100dvh - 96px))" }}
+                    style={{ maxHeight: panelMaxHeight === undefined ? `min(${maximumPanelHeight}px, calc(100dvh - 96px))` : panelMaxHeight }}
                     onClick={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                     onMouseDown={(event) => event.stopPropagation()}
@@ -182,6 +206,7 @@ export function CreativeGenerationPreferences({
             }
         >
             <Button
+                ref={triggerRef}
                 type="text"
                 className={typeof triggerClassName === "function" ? triggerClassName(open) : triggerClassName || creativeComposerToolButtonClass(open)}
                 icon={triggerIcon || <PreferenceSummaryIcon capability={activeCapability} preferences={preferences} />}

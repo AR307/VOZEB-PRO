@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { AuthInputError, getAuthSettings, isAuthInputError, setAuthSettings, type AuthSettings, type SiteSocialKey, type SiteSocialSettings } from "@/lib/auth/store";
+import { AuthInputError, getFreshAuthSettings, isAuthInputError, setAuthSettings, type AuthSettings, type SiteSocialKey, type SiteSocialSettings } from "@/lib/auth/store";
 import { normalizeSiteSocial } from "@/lib/auth/store-normalizers";
 import { modelRoutingValidationErrors, normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import { readJsonBody } from "@/lib/auth/request";
@@ -18,7 +18,7 @@ export async function GET() {
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
     if (!hasAnyAdminPermission(currentUser)) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
-    return NextResponse.json({ settings: serializeAdminSettingsForUser(await getAuthSettings(), currentUser) });
+    return NextResponse.json({ settings: serializeAdminSettingsForUser(await getFreshAuthSettings(), currentUser) });
 }
 
 export async function PATCH(request: Request) {
@@ -32,7 +32,7 @@ export async function PATCH(request: Request) {
         if (!hasAllAdminPermissions(currentUser, requiredPermissions)) return NextResponse.json({ error: "当前管理员没有修改这些设置的职责权限" }, { status: 403 });
         const socialValidationError = siteSocialValidationError(body.site?.socials);
         if (socialValidationError) throw new AuthInputError(socialValidationError);
-        const currentSettings = await getAuthSettings();
+        const currentSettings = await getFreshAuthSettings();
         const patch: Partial<AuthSettings> = {};
         if (body.site) patch.site = body.site;
         if (typeof body.registrationEnabled === "boolean") patch.registrationEnabled = body.registrationEnabled;

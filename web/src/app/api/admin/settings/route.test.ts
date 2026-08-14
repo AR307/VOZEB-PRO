@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
-    getAuthSettings: vi.fn(),
+    getFreshAuthSettings: vi.fn(),
     setAuthSettings: vi.fn(),
     safeRecordAuditLog: vi.fn(async () => undefined),
 }));
@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/auth/store")>();
-    return { ...actual, getAuthSettings: mocks.getAuthSettings, setAuthSettings: mocks.setAuthSettings };
+    return { ...actual, getFreshAuthSettings: mocks.getFreshAuthSettings, setAuthSettings: mocks.setAuthSettings };
 });
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin" })), safeRecordAuditLog: mocks.safeRecordAuditLog }));
 
@@ -27,7 +27,7 @@ describe("admin settings model routing", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["system.manage", "billing.manage", "upstream.manage"] });
-        mocks.getAuthSettings.mockResolvedValue(savedSettings);
+        mocks.getFreshAuthSettings.mockResolvedValue(savedSettings);
         mocks.setAuthSettings.mockImplementation(async (patch) => ({ ...savedSettings, ...patch }));
     });
 
@@ -64,7 +64,7 @@ describe("admin settings model routing", () => {
     });
 
     it("recreates channel-backed logical models during a later channel-only save", async () => {
-        mocks.getAuthSettings.mockResolvedValue({ ...savedSettings, logicalModels: [], defaultModels: { ...savedSettings.defaultModels, textModel: "" } });
+        mocks.getFreshAuthSettings.mockResolvedValue({ ...savedSettings, logicalModels: [], defaultModels: { ...savedSettings.defaultModels, textModel: "" } });
 
         const response = await PATCH(request({ systemChannels: savedSettings.systemChannels }));
 
@@ -169,7 +169,7 @@ describe("admin settings model routing", () => {
         const response = await PATCH(request({ registrationEnabled: false, generationConcurrency: { agent: 2 } }));
 
         expect(response.status).toBe(403);
-        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+        expect(mocks.getFreshAuthSettings).not.toHaveBeenCalled();
         expect(mocks.setAuthSettings).not.toHaveBeenCalled();
     });
 
@@ -179,7 +179,7 @@ describe("admin settings model routing", () => {
         const response = await PATCH(request({ registrationEnabled: false }));
 
         expect(response.status).toBe(403);
-        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+        expect(mocks.getFreshAuthSettings).not.toHaveBeenCalled();
         expect(mocks.setAuthSettings).not.toHaveBeenCalled();
     });
 
@@ -197,7 +197,7 @@ describe("admin settings model routing", () => {
 
     it("does not return system mail configuration to an upstream-only administrator", async () => {
         mocks.getCurrentUser.mockResolvedValue({ id: "upstream-admin", role: "admin", status: "active", adminPermissions: ["upstream.manage"] });
-        mocks.getAuthSettings.mockResolvedValue({ ...savedSettings, mail: { provider: "SMTP", host: "smtp.internal", port: 465, secure: true, username: "admin", password: "mail-secret", fromEmail: "admin@example.com", fromName: "Admin" } });
+        mocks.getFreshAuthSettings.mockResolvedValue({ ...savedSettings, mail: { provider: "SMTP", host: "smtp.internal", port: 465, secure: true, username: "admin", password: "mail-secret", fromEmail: "admin@example.com", fromName: "Admin" } });
 
         const response = await GET();
         const payload = (await response.json()) as { settings: { mail: { host: string; password: string } } };

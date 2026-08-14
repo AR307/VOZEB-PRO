@@ -361,32 +361,17 @@ async function mockCreativeMediaRound(page: Page, imageBuffer: Buffer, options: 
 
 async function openComposerPopover(trigger: Locator, popover: Locator) {
     await expect(trigger).toBeVisible();
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        if ((await trigger.getAttribute("aria-expanded")) === "true" && (await popover.isVisible())) return;
-        await trigger.click();
-        try {
-            await popover.waitFor({ state: "visible", timeout: 5_000 });
-            await expect(trigger).toHaveAttribute("aria-expanded", "true");
-            return;
-        } catch (error) {
-            if (attempt === 2) throw error;
-        }
-    }
+    if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+    await expect(popover).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
 }
 
 async function selectComposerPopoverOption(trigger: Locator, popover: Locator, option: Locator, verify: () => Promise<void>) {
-    let failure: unknown;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        await openComposerPopover(trigger, popover);
-        try {
-            await option.click({ force: true, timeout: 5_000 });
-            await verify();
-            return;
-        } catch (error) {
-            failure = error;
-        }
-    }
-    throw failure || new Error("选择创作参数失败");
+    await openComposerPopover(trigger, popover);
+    await option.scrollIntoViewIfNeeded();
+    await expect(option).toBeVisible();
+    await option.click();
+    await verify();
 }
 
 test("creative composer controls return to a neutral palette after selection", async ({ page }) => {
