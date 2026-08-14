@@ -84,6 +84,25 @@ describe("site settings", () => {
         });
     });
 
+    it("normalizes common social handles and addresses without dropping them", () => {
+        const settings = normalizeSiteSettings({
+            socials: {
+                email: { enabled: true, label: "邮箱", url: "owner@example.com" },
+                telegram: { enabled: true, label: "Telegram", url: "t.me/vozeb_group" },
+                x: { enabled: true, label: "X", url: "@vozeb_pro" },
+                instagram: { enabled: true, label: "Instagram", url: "instagram.com/vozeb.pro" },
+            },
+        });
+
+        expect(settings.socials).toEqual({
+            email: { enabled: true, label: "邮箱", url: "mailto:owner@example.com" },
+            telegram: { enabled: true, label: "Telegram", url: "https://t.me/vozeb_group" },
+            x: { enabled: true, label: "X", url: "https://x.com/vozeb_pro" },
+            instagram: { enabled: true, label: "Instagram", url: "https://instagram.com/vozeb.pro" },
+        });
+        expect(normalizeSiteSettings(settings).socials).toEqual(settings.socials);
+    });
+
     it("does not restore friend links that an administrator explicitly deleted", () => {
         const settings = normalizeSiteSettings({ friendLinks: [] });
 

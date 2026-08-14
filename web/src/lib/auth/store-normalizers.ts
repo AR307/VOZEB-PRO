@@ -516,6 +516,16 @@ function normalizeSiteSocialUrl(key: SiteSocialKey, value: unknown) {
     if (!url) return "";
     if (url.startsWith("mailto:")) return normalizeLinkUrl(url, "");
     if (key === "email" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(url)) return `mailto:${url}`;
+    if (url.startsWith("@")) {
+        const handle = url.slice(1);
+        if (key === "telegram" && /^[a-zA-Z0-9_]{5,32}$/.test(handle)) return `https://t.me/${handle}`;
+        if (key === "x" && /^[a-zA-Z0-9_]{1,15}$/.test(handle)) return `https://x.com/${handle}`;
+        if (key === "instagram" && /^[a-zA-Z0-9._]{1,30}$/.test(handle)) return `https://instagram.com/${handle}`;
+    }
+    const socialHost = url.replace(/^\/+/, "");
+    if (key === "telegram" && /^(?:www\.)?(?:t\.me|telegram\.me)\//i.test(socialHost)) return `https://${socialHost}`;
+    if (key === "x" && /^(?:www\.)?(?:x\.com|twitter\.com)\//i.test(socialHost)) return `https://${socialHost}`;
+    if (key === "instagram" && /^(?:www\.)?instagram\.com\//i.test(socialHost)) return `https://${socialHost}`;
     return normalizeLinkUrl(url, "");
 }
 

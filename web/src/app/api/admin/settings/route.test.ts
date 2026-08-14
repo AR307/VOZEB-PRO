@@ -15,6 +15,7 @@ vi.mock("@/lib/auth/store", async (importOriginal) => {
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin" })), safeRecordAuditLog: mocks.safeRecordAuditLog }));
 
 import { GET, PATCH } from "./route";
+import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
 
 const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
@@ -110,6 +111,36 @@ describe("admin settings model routing", () => {
         expect(response.status).toBe(200);
         expect(mocks.setAuthSettings).toHaveBeenCalledWith({ dataLifecycle });
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: { fields: ["dataLifecycle"] } }));
+    });
+
+    it("accepts common social address formats without silently deleting them", async () => {
+        const site = {
+            ...DEFAULT_SITE_SETTINGS,
+            socials: {
+                ...DEFAULT_SITE_SETTINGS.socials,
+                telegram: { enabled: true, label: "Telegram", url: "t.me/vozeb_group" },
+                x: { enabled: true, label: "X", url: "@vozeb_pro" },
+                instagram: { enabled: true, label: "Instagram", url: "instagram.com/vozeb.pro" },
+            },
+        };
+
+        const response = await PATCH(request({ site }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith({ site });
+    });
+
+    it("rejects an invalid non-empty social address instead of reporting a destructive save as successful", async () => {
+        const site = {
+            ...DEFAULT_SITE_SETTINGS,
+            socials: { ...DEFAULT_SITE_SETTINGS.socials, x: { enabled: true, label: "X", url: "not a social address" } },
+        };
+
+        const response = await PATCH(request({ site }));
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "X 地址无效，请填写完整链接或 @用户名" });
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
     });
 
     it("allows a system administrator to save only system settings", async () => {

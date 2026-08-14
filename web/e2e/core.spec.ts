@@ -38,7 +38,7 @@ test("site footer deletions remain deleted after settings and public-session rel
     }
 });
 
-test("admin site form persists a plain contact email and the friend-link delete action", async ({ page, request }) => {
+test("admin site form persists social addresses, publishes them to the home footer, and deletes friend links", async ({ page, request }) => {
     const beforeResponse = await request.get("/api/admin/settings");
     expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
     const before = ((await beforeResponse.json()) as { settings: { site: Record<string, unknown> } }).settings.site;
@@ -50,7 +50,13 @@ test("admin site form persists a plain contact email and the friend-link delete 
                 site: {
                     ...before,
                     friendLinks: [testLink],
-                    socials: { ...socials, email: { enabled: true, label: "邮箱联系", url: "mailto:before@example.com" } },
+                    socials: {
+                        ...socials,
+                        email: { enabled: true, label: "邮箱联系", url: "mailto:before@example.com" },
+                        telegram: { enabled: true, label: "Telegram", url: "" },
+                        x: { enabled: true, label: "X", url: "" },
+                        instagram: { enabled: true, label: "Instagram", url: "" },
+                    },
                 },
             },
         });
@@ -58,31 +64,54 @@ test("admin site form persists a plain contact email and the friend-link delete 
 
         await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
         await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
-        const emailInput = page.getByPlaceholder("mailto:csyqlz@gmail.com");
+        const emailInput = page.getByPlaceholder("name@example.com");
+        const telegramInput = page.getByPlaceholder("https://t.me/username 或 @username");
+        const xInput = page.getByPlaceholder("https://x.com/username 或 @username");
+        const instagramInput = page.getByPlaceholder("https://instagram.com/username 或 @username");
         await expect(emailInput).toBeVisible();
         await expect(emailInput).toHaveValue("mailto:before@example.com");
         await emailInput.fill("owner@example.com");
+        await telegramInput.fill("t.me/vozeb_group");
+        await xInput.fill("@vozeb_pro");
+        await instagramInput.fill("instagram.com/vozeb.pro");
         await expect(emailInput).toHaveValue("owner@example.com");
         await page.getByRole("button", { name: "保存网站设置" }).click();
         await expect(page.getByLabel("当前密码")).toHaveCount(0);
         await expect(page.getByText("网站信息已保存")).toBeVisible();
         await expect(emailInput).toHaveValue("mailto:owner@example.com");
+        await expect(telegramInput).toHaveValue("https://t.me/vozeb_group");
+        await expect(xInput).toHaveValue("https://x.com/vozeb_pro");
+        await expect(instagramInput).toHaveValue("https://instagram.com/vozeb.pro");
 
-        await page.reload({ waitUntil: "domcontentloaded" });
+        await page.goto("/", { waitUntil: "domcontentloaded" });
+        await expect(page.locator('footer a[aria-label="Telegram"]')).toHaveAttribute("href", "https://t.me/vozeb_group");
+        await expect(page.locator('footer a[aria-label="X"]')).toHaveAttribute("href", "https://x.com/vozeb_pro");
+        await expect(page.locator('footer a[aria-label="Instagram"]')).toHaveAttribute("href", "https://instagram.com/vozeb.pro");
+
+        await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
         await expect(emailInput).toHaveValue("mailto:owner@example.com");
+        await expect(telegramInput).toHaveValue("https://t.me/vozeb_group");
+        await expect(xInput).toHaveValue("https://x.com/vozeb_pro");
+        await expect(instagramInput).toHaveValue("https://instagram.com/vozeb.pro");
         await page.getByRole("button", { name: "删除友情链接" }).click();
         await expect(page.getByLabel("当前密码")).toHaveCount(0);
         await expect(page.getByText("友情链接已删除")).toBeVisible();
-        await expect(page.getByText("暂无友情链接。")).toBeVisible();
-
-        await page.reload({ waitUntil: "domcontentloaded" });
-        await expect(page.getByText("暂无友情链接。")).toBeVisible();
-        await expect(page.getByText(testLink.label, { exact: true })).toHaveCount(0);
 
         const persistedResponse = await request.get("/api/admin/settings");
         const persisted = ((await persistedResponse.json()) as { settings: { site: { friendLinks: unknown[]; socials: typeof socials } } }).settings.site;
         expect(persisted.friendLinks).toEqual([]);
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.getByText(testLink.label, { exact: true })).toHaveCount(0);
+
         expect(persisted.socials.email.url).toBe("mailto:owner@example.com");
+        expect(persisted.socials.telegram).toEqual({ enabled: true, label: "Telegram", url: "https://t.me/vozeb_group" });
+        expect(persisted.socials.x).toEqual({ enabled: true, label: "X", url: "https://x.com/vozeb_pro" });
+        expect(persisted.socials.instagram).toEqual({ enabled: true, label: "Instagram", url: "https://instagram.com/vozeb.pro" });
+
+        const publicResponse = await request.get("/api/auth/session");
+        const publicSite = ((await publicResponse.json()) as { settings: { site: { socials: typeof socials } } }).settings.site;
+        expect(publicSite.socials).toEqual(persisted.socials);
     } finally {
         const restored = await request.patch("/api/admin/settings", { data: { site: before } });
         expect(restored.ok(), await restored.text()).toBe(true);

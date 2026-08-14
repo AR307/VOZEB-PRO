@@ -8,10 +8,10 @@ import { SiteLogo } from "@/components/layout/site-logo";
 import type { AuthSettings, SiteSocialKey } from "@/lib/auth/store";
 
 export const siteSocialItems: Array<{ key: SiteSocialKey; label: string; placeholder: string; icon: ReactNode }> = [
-    { key: "email", label: "邮箱联系", placeholder: "mailto:csyqlz@gmail.com", icon: <Mail className="size-4" /> },
-    { key: "telegram", label: "Telegram", placeholder: "未配置", icon: <Send className="size-4" /> },
-    { key: "x", label: "X", placeholder: "未配置", icon: <span className="text-xs font-bold">X</span> },
-    { key: "instagram", label: "Instagram", placeholder: "未配置", icon: <span className="text-[11px] font-bold">IG</span> },
+    { key: "email", label: "邮箱联系", placeholder: "name@example.com", icon: <Mail className="size-4" /> },
+    { key: "telegram", label: "Telegram", placeholder: "https://t.me/username 或 @username", icon: <Send className="size-4" /> },
+    { key: "x", label: "X", placeholder: "https://x.com/username 或 @username", icon: <span className="text-xs font-bold">X</span> },
+    { key: "instagram", label: "Instagram", placeholder: "https://instagram.com/username 或 @username", icon: <span className="text-[11px] font-bold">IG</span> },
 ];
 
 export function SiteLogoPreview({ logoUrl }: { logoUrl: string }) {

@@ -30,9 +30,21 @@ describe("updatePostgresAuthSettings", () => {
     });
 
     it("updates site settings without rewriting plans or channels", async () => {
-        await updatePostgresAuthSettings({ site: { ...DEFAULT_SETTINGS.site, title: "新站点" } });
+        const site = {
+            ...DEFAULT_SETTINGS.site,
+            title: "新站点",
+            socials: {
+                ...DEFAULT_SETTINGS.site.socials,
+                telegram: { enabled: true, label: "Telegram", url: "https://t.me/vozeb_group" },
+                x: { enabled: true, label: "X", url: "https://x.com/vozeb_pro" },
+                instagram: { enabled: true, label: "Instagram", url: "https://instagram.com/vozeb.pro" },
+            },
+        };
 
-        expect(mocks.updateSettings).toHaveBeenCalledWith({ site: expect.objectContaining({ title: "新站点" }) });
+        const settings = await updatePostgresAuthSettings({ site });
+
+        expect(mocks.updateSettings).toHaveBeenCalledWith({ site: expect.objectContaining({ title: "新站点", socials: site.socials }) });
+        expect(settings.site.socials).toEqual(site.socials);
         expect(mocks.upsertEntitlementPlan).not.toHaveBeenCalled();
         expect(mocks.removeEntitlementPlansNotIn).not.toHaveBeenCalled();
         expect(mocks.upsertSystemModelChannel).not.toHaveBeenCalled();
