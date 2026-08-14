@@ -256,12 +256,16 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         }));
     };
 
-    const deleteFriendLink = (id: string) => {
+    const deleteFriendLink = async (id: string) => {
+        const previousSite = getLatestSiteSettings();
         const site = {
-            ...getLatestSiteSettings(),
-            friendLinks: (getLatestSiteSettings().friendLinks || []).filter((link) => link.id !== id),
+            ...previousSite,
+            friendLinks: (previousSite.friendLinks || []).filter((link) => link.id !== id),
         };
-        return saveSettings({ site }, "友情链接已删除");
+        updateSite(() => site);
+        const saved = await saveSettings({ site }, "友情链接已删除");
+        if (!saved && getLatestSiteSettings() === site) updateSite(() => previousSite);
+        return saved;
     };
 
     const fetchModelsForChannel = async (channel: SystemModelChannel) => {

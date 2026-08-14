@@ -57,7 +57,7 @@ jobs:
           VOZEB_PRO_E2E_DATABASE_URL: postgres://vozeb:vozeb-e2e-password@127.0.0.1:5432/vozeb_pro_e2e
       - name: PostgreSQL integration tests
         run: >-
-          pnpm exec vitest run
+          pnpm exec vitest run --no-file-parallelism
           src/lib/server/database/auth-entity-concurrency.postgres.test.ts
           src/lib/server/admin-backup-store.postgres.test.ts
           src/lib/server/points-wallet-idempotency.postgres.test.ts

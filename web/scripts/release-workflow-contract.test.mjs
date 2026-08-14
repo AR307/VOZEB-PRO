@@ -39,6 +39,17 @@ describe("release workflow contract", () => {
         expect(source).not.toMatch(/uses:\s+[^\s]+@(v\d|main|master)\b/);
     });
 
+    it.each([
+        ["quality.yml", "web"],
+        ["docker-image.yml", "quality"],
+    ])("serializes shared PostgreSQL integration tests in %s", (file, job) => {
+        const document = parseDocument(workflow(file));
+        expect(document.errors).toEqual([]);
+
+        const step = document.toJS().jobs[job].steps.find((item) => item.name === "PostgreSQL integration tests");
+        expect(step?.run).toContain("pnpm exec vitest run --no-file-parallelism");
+    });
+
     it("declares one pnpm version for the repository and both Docker builds", () => {
         const rootPackage = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
         const appDockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");

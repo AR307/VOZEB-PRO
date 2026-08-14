@@ -96,6 +96,7 @@ test("admin site form persists social addresses, publishes them to the home foot
         await page.getByRole("button", { name: "删除友情链接" }).click();
         await expect(page.getByLabel("当前密码")).toHaveCount(0);
         await expect(page.getByText("友情链接已删除")).toBeVisible();
+        await expect(page.getByText(testLink.label, { exact: true })).toHaveCount(0);
 
         const persistedResponse = await request.get("/api/admin/settings");
         const persisted = ((await persistedResponse.json()) as { settings: { site: { friendLinks: unknown[]; socials: typeof socials } } }).settings.site;
