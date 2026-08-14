@@ -71,7 +71,7 @@ describe("generation operations aggregation", () => {
         expect(mocks.findPublicUserIdsByKeyword).toHaveBeenCalledWith("0001");
         expect(mocks.listStoredGenerationTaskRecords).toHaveBeenNthCalledWith(1, { page: 1, search: "0001", searchUserIds: ["user-one"], includeAll: false });
         expect(mocks.summarizeStoredAgentPerformance).toHaveBeenCalledWith({ page: 1, search: "0001", searchUserIds: ["user-one"] });
-        expect(mocks.listStoredGenerationTaskRecordsByRunIds).toHaveBeenCalledWith(["task-one"]);
+        expect(mocks.listStoredGenerationTaskRecordsByRunIds).toHaveBeenCalledWith(["task-one"], ["user-one"]);
         expect(JSON.stringify(result)).not.toContain("amountCents");
     });
 

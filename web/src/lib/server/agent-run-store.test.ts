@@ -44,6 +44,76 @@ describe("createAgentRun video frames", () => {
     });
 });
 
+describe("createAgentRun Canvas snapshot", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.createCreativeRunBundle.mockImplementation(async (_userId, input) => input);
+    });
+
+    it("persists one trusted compact snapshot with exact config size and one-hop context", async () => {
+        const created = await createAgentRun("user", {
+            clientRequestId: "request-canvas",
+            surface: "canvas",
+            projectId: "trusted-project",
+            prompt: "按当前配置修改商品图",
+            assetIds: [],
+            skillIds: [],
+            modelIds: [],
+            snapshot: {
+                projectId: "spoofed-project",
+                imageSize: "1:1",
+                selectedNodeIds: ["selected", "selected"],
+                nodes: [
+                    { id: "config", type: "config", title: "配置", metadata: { size: "1824x1024" } },
+                    { id: "selected", type: "image", title: "商品", width: 400, height: 600, metadata: { content: `data:image/png;base64,${"binary-marker".repeat(20_000)}`, prompt: "红色商品包装", serverUrl: "/api/reference-assets/current", naturalWidth: 800, naturalHeight: 1200 } },
+                    { id: "related", type: "text", title: "文案", metadata: { content: "红色包装" } },
+                    { id: "unrelated", type: "image", title: "旧图", metadata: { serverUrl: "/api/reference-assets/old" } },
+                ],
+                connections: [{ id: "edge", fromNodeId: "related", toNodeId: "selected" }],
+                viewport: { x: 100, y: 200, k: 0.5 },
+            },
+        });
+
+        expect(created.run.snapshot).toMatchObject({
+            canvasSnapshotVersion: 1,
+            projectId: "trusted-project",
+            imageSize: "1:1",
+            selectedNodeIds: ["selected"],
+            analysis: { nodeCount: 4, selectedNodeTypes: ["image"] },
+        });
+        expect((created.run.snapshot as { nodes: Array<{ id: string; metadata: Record<string, unknown> }> }).nodes.map((node) => node.id)).toEqual(["config", "selected", "related"]);
+        expect((created.run.snapshot as { nodes: Array<{ id: string; metadata: Record<string, unknown> }> }).nodes[0]?.metadata.size).toBe("1824x1024");
+        expect((created.run.snapshot as { nodes: Array<{ id: string; metadata: Record<string, unknown> }> }).nodes[1]?.metadata).toMatchObject({ content: "红色商品包装", url: "/api/reference-assets/current" });
+        expect(JSON.stringify(created.run.snapshot)).not.toContain("binary-marker");
+        expect(created.run.snapshot).not.toHaveProperty("viewport");
+        expect(mocks.createCreativeRunBundle).toHaveBeenCalledWith("user", expect.objectContaining({ run: expect.objectContaining({ snapshot: created.run.snapshot }) }));
+    });
+
+    it("keeps the complete compact Canvas when the current turn has no selected nodes", async () => {
+        const created = await createAgentRun("user", {
+            clientRequestId: "request-canvas-all",
+            surface: "canvas",
+            projectId: "project",
+            prompt: "总结当前画布",
+            assetIds: [],
+            skillIds: [],
+            modelIds: [],
+            snapshot: {
+                selectedNodeIds: [],
+                nodes: [
+                    { id: "one", type: "text", title: "一", metadata: { content: "第一段" } },
+                    { id: "two", type: "image", title: "二", metadata: { url: "/api/reference-assets/two" } },
+                ],
+                connections: [{ id: "edge", fromNodeId: "one", toNodeId: "two" }],
+            },
+        });
+
+        expect((created.run.snapshot as { nodes: unknown[]; connections: unknown[]; analysis: { nodeCount: number } }).nodes).toHaveLength(2);
+        expect((created.run.snapshot as { nodes: unknown[]; connections: unknown[]; analysis: { nodeCount: number } }).connections).toHaveLength(1);
+        expect((created.run.snapshot as { nodes: unknown[]; connections: unknown[]; analysis: { nodeCount: number } }).analysis.nodeCount).toBe(2);
+    });
+});
+
 describe("setAgentRunStatus", () => {
     beforeEach(() => vi.clearAllMocks());
 

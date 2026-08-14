@@ -93,6 +93,7 @@ export function CreativeGenerationPreferences({
     triggerLabelClassName,
     panelClassName,
     placement = "topLeft",
+    autoAdjustOverflow,
     fixedSizeLabel,
     compact = false,
     showCount = true,
@@ -111,6 +112,7 @@ export function CreativeGenerationPreferences({
     triggerLabelClassName?: string;
     panelClassName?: string;
     placement?: CreativeComposerPopoverPlacement;
+    autoAdjustOverflow?: boolean;
     fixedSizeLabel?: string;
     compact?: boolean;
     showCount?: boolean;
@@ -128,7 +130,7 @@ export function CreativeGenerationPreferences({
         <Popover
             trigger="click"
             placement={placement}
-            autoAdjustOverflow={creativeComposerPopoverOverflow(placement)}
+            autoAdjustOverflow={autoAdjustOverflow ?? creativeComposerPopoverOverflow(placement)}
             arrow={false}
             open={open}
             onOpenChange={(nextOpen) => {

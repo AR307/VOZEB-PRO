@@ -35,11 +35,11 @@ describe("creative conversation collection route", () => {
     });
 
     it("returns one bounded conversation page with server-side filters", async () => {
-        const response = await GET(new Request("http://localhost/api/creative/conversations?surface=chat&source=agent&limit=1&offset=2"));
+        const response = await GET(new Request("http://localhost/api/creative/conversations?surface=chat&source=agent&projectId=project-one&limit=1&offset=2"));
         const payload = await response.json();
 
         expect(response.status).toBe(200);
-        expect(mocks.listConversationsForUser).toHaveBeenCalledWith("user-one", { surface: "chat", source: "agent", status: null, limit: "2", offset: "2" });
+        expect(mocks.listConversationsForUser).toHaveBeenCalledWith("user-one", { surface: "chat", source: "agent", projectId: "project-one", status: null, limit: "2", offset: "2" });
         expect(payload.data).toEqual({ conversations: [expect.objectContaining({ id: "one" })], hasMore: true });
     });
 

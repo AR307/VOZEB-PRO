@@ -71,6 +71,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const startingShotRef = useRef("");
     const storyboardTaskRef = useRef("");
     const [stage, setStage] = useState<DramaProjectStage>("script");
+    const [assetsOpen, setAssetsOpen] = useState(false);
     const [episodeNavigatorOpen, setEpisodeNavigatorOpen] = useState(false);
     const [agentOpen, setAgentOpen] = useState(false);
     const [selectedShotId, setSelectedShotId] = useState<string>();
@@ -82,13 +83,16 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const [expandedStoryboardShotId, setExpandedStoryboardShotId] = useState("");
     const { isWaiting: isCapacityWaiting, schedule: scheduleCapacityRetry } = useGenerationCapacityRetry();
     const audioReady = Boolean(config.audioModel.trim());
+    const changeStage = (nextStage: DramaProjectStage) => {
+        setStage(nextStage);
+        setAssetsOpen(false);
+    };
 
     const episode = project.episodes.find((item) => item.id === project.activeEpisodeId) || project.episodes[0];
     useEffect(() => {
         const media = window.matchMedia("(min-width: 1366px)");
         const update = () => {
             setEpisodeNavigatorOpen(media.matches);
-            setAgentOpen(media.matches);
         };
         update();
         media.addEventListener("change", update);
@@ -355,30 +359,40 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 project={project}
                 episode={episode}
                 stage={stage}
+                assetsOpen={assetsOpen}
                 episodeNavigatorOpen={episodeNavigatorOpen}
                 agentOpen={agentOpen}
-                onStageChange={setStage}
+                onStageChange={changeStage}
+                onOpenAssets={() => {
+                    setAssetsOpen(true);
+                    setAgentOpen(false);
+                    setEpisodeNavigatorOpen(false);
+                }}
+                onCloseAssets={() => setAssetsOpen(false)}
                 onEpisodeNavigatorOpenChange={setEpisodeNavigatorOpen}
                 onToggleAgent={() => setAgentOpen((open) => !open)}
                 onOpenVersions={() => void openVersions()}
             />
             <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-drama-workspace-body>
-                <DramaEpisodeSidebar project={project} episode={episode} open={episodeNavigatorOpen} onOpenChange={setEpisodeNavigatorOpen} onStageChange={setStage} />
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-drama-production-surface>
+                <DramaEpisodeSidebar project={project} episode={episode} open={episodeNavigatorOpen && !assetsOpen} onOpenChange={setEpisodeNavigatorOpen} onStageChange={changeStage} />
+                <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-drama-production-surface>
                     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto" data-drama-production-scroll>
-                        <section className={`mx-auto flex min-h-full min-w-0 flex-col px-3 py-4 sm:px-5 sm:py-6 ${stage === "script" ? "max-w-none" : stage === "assets" ? "max-w-[1600px]" : "max-w-[1440px]"}`} data-drama-stage={stage}>
-                            {stage === "script" ? (
-                                <DramaScriptPanel project={project} episode={episode} analyzing={analyzing} onAnalyze={() => void analyzeScript()} onStageChange={setStage} selectedShotId={selectedShotId} onSelectedShotChange={setSelectedShotId} />
+                        <section
+                            className={`mx-auto flex min-h-full min-w-0 flex-col px-3 py-3 ${stage === "script" ? "max-w-none min-[1366px]:px-3 min-[1366px]:pb-3 min-[1366px]:pt-3" : "max-w-[1440px] sm:px-5 sm:py-4"}`}
+                            data-drama-stage={assetsOpen ? "assets" : stage}
+                        >
+                            {assetsOpen ? <DramaAssetsPanel project={project} episode={episode} /> : null}
+
+                            {!assetsOpen && stage === "script" ? (
+                                <DramaScriptPanel project={project} episode={episode} analyzing={analyzing} onAnalyze={() => void analyzeScript()} onStageChange={changeStage} selectedShotId={selectedShotId} onSelectedShotChange={setSelectedShotId} />
                             ) : null}
 
-                            {stage === "review" ? <DramaReviewPanel project={project} episode={episode} designing={designing} onDesignVisuals={() => void designVisuals()} onStageChange={setStage} /> : null}
+                            {!assetsOpen && stage === "review" ? <DramaReviewPanel project={project} episode={episode} designing={designing} onDesignVisuals={() => void designVisuals()} onStageChange={changeStage} /> : null}
 
-                            {stage === "assets" ? <DramaAssetsPanel project={project} /> : null}
-
-                            {stage === "storyboard" ? (
+                            {!assetsOpen && stage === "storyboard" ? (
                                 <div>
                                     <DramaStageHeader
-                                        step="04 · 分镜"
+                                        step="03"
                                         title="分镜编辑"
                                         description="精调画面、镜头运动、生成方式和配音策略；完成后进入统一镜头生产队列。"
                                         status={
@@ -387,15 +401,19 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                         tone={
                                             !episode.shots.length ? "attention" : episode.shots.every((shot) => shot.videoPrompt.trim() && ((shot.videoMode || project.defaultVideoMode) !== "storyboard" || shot.imagePrompt.trim())) ? "ready" : "attention"
                                         }
-                                        metrics={[
-                                            { label: "镜头", value: episode.shots.length },
-                                            { label: "总时长", value: `${episode.shots.reduce((total, shot) => total + shot.duration, 0)} 秒` },
-                                            { label: "参考图模式", value: episode.shots.filter((shot) => (shot.videoMode || project.defaultVideoMode) === "reference").length },
-                                        ]}
+                                        metrics={
+                                            episode.shots.length
+                                                ? [
+                                                      { label: "镜头", value: episode.shots.length },
+                                                      { label: "总时长", value: `${episode.shots.reduce((total, shot) => total + shot.duration, 0)} 秒` },
+                                                      { label: "参考图模式", value: episode.shots.filter((shot) => (shot.videoMode || project.defaultVideoMode) === "reference").length },
+                                                  ]
+                                                : []
+                                        }
                                         action={
                                             <Button
                                                 type="primary"
-                                                className="!h-11 !w-full sm:!h-9 sm:!w-auto"
+                                                className="!h-9 !w-full sm:!w-auto"
                                                 icon={<ArrowRight className="size-4" />}
                                                 disabled={!episode.shots.length || episode.reviewStatus !== "visual_ready"}
                                                 onClick={() => setStage("generate")}
@@ -405,7 +423,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                         }
                                     />
                                     {episode.shots.length ? (
-                                        <div className="mt-5 grid min-w-0 items-start gap-3 sm:gap-5 xl:grid-cols-2">
+                                        <div className="mt-3 grid min-w-0 items-start gap-3 xl:grid-cols-2">
                                             {episode.shots.map((shot) => (
                                                 <DramaStoryboardShotCard
                                                     key={shot.id}
@@ -418,18 +436,17 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                             ))}
                                         </div>
                                     ) : (
-                                        <div className="mt-5 rounded-xl border border-dashed border-border bg-card/55 px-4 py-7 text-center">
-                                            <h3 className="font-semibold">还没有可编辑的分镜</h3>
-                                            <p className="mx-auto mt-1 max-w-lg text-sm leading-6 text-muted-foreground">先从剧本提取内容结构，并在内容审核阶段确认镜头事实与视觉方案。</p>
-                                            <Button type="primary" className="!mt-4" onClick={() => setStage(episode.script.trim() ? "review" : "script")}>
-                                                {episode.script.trim() ? "前往内容审核" : "先填写剧本"}
-                                            </Button>
+                                        <div className="mt-2.5 flex min-h-14 items-center rounded-lg border border-dashed border-border bg-card/25 px-3 py-2.5">
+                                            <div className="min-w-0">
+                                                <h3 className="text-sm font-medium">还没有可编辑的分镜</h3>
+                                                <p className="mt-0.5 truncate text-xs text-muted-foreground">先从剧本提取内容结构，并在内容审核阶段确认镜头事实与视觉方案。</p>
+                                            </div>
                                         </div>
                                     )}
                                 </div>
                             ) : null}
 
-                            {stage === "generate" ? <DramaGenerationPanel project={project} episode={episode} onStageChange={setStage} /> : null}
+                            {!assetsOpen && stage === "generate" ? <DramaGenerationPanel project={project} episode={episode} onStageChange={changeStage} onOpenAssets={() => setAssetsOpen(true)} /> : null}
                         </section>
                     </div>
                 </div>
@@ -443,7 +460,20 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                     onConversationChange={(creativeConversationId) => updateProject(project.id, { creativeConversationId })}
                 />
             </div>
-            {stage === "script" ? <DramaScriptGlobalBar project={project} episode={episode} onOpenVersions={() => void openVersions()} onContinue={() => void analyzeScript()} analyzing={analyzing} /> : null}
+            {stage === "script" ? (
+                <DramaScriptGlobalBar
+                    project={project}
+                    episode={episode}
+                    onSave={() => createVersion(project, "手动保存版本")}
+                    onContinue={() => {
+                        if (!episode.shots.length) return void analyzeScript();
+                        if (episode.reviewStatus === "draft") updateEpisode(project.id, episode.id, { reviewStatus: "content_review" });
+                        setStage("review");
+                    }}
+                    analyzing={analyzing}
+                    episodeNavigatorOpen={episodeNavigatorOpen}
+                />
+            ) : null}
             <DramaVersionModal
                 open={versionsOpen}
                 loading={versionsLoading}
@@ -456,8 +486,24 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     );
 }
 
-function DramaScriptGlobalBar({ project, episode, onOpenVersions, onContinue, analyzing }: { project: DramaProject; episode: DramaProject["episodes"][number]; onOpenVersions: () => void; onContinue: () => void; analyzing: boolean }) {
+function DramaScriptGlobalBar({
+    project,
+    episode,
+    onSave,
+    onContinue,
+    analyzing,
+    episodeNavigatorOpen,
+}: {
+    project: DramaProject;
+    episode: DramaProject["episodes"][number];
+    onSave: () => Promise<void>;
+    onContinue: () => void;
+    analyzing: boolean;
+    episodeNavigatorOpen: boolean;
+}) {
+    const { message } = App.useApp();
     const saveState = useDramaStore((state) => state.saveStateByProject[project.id]);
+    const [savingVersion, setSavingVersion] = useState(false);
     const savedLabel =
         saveState?.status === "saving"
             ? "保存中…"
@@ -467,14 +513,40 @@ function DramaScriptGlobalBar({ project, episode, onOpenVersions, onContinue, an
                 ? `最近保存 ${new Date(saveState.savedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
                 : `最近保存 ${new Date(project.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
     return (
-        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-3 py-2.5 sm:px-5" data-drama-script-global-bar>
-            <Button type="text" size="small" icon={<History className="size-3.5" />} onClick={onOpenVersions}>
-                {savedLabel}
-            </Button>
-            <Button type="primary" size="middle" icon={<ArrowRight className="size-4" />} disabled={!episode.script.trim()} loading={analyzing} onClick={onContinue}>
-                完成剧本，进入内容审核
-            </Button>
-            {saveState?.status === "saving" ? <span className="text-xs text-muted-foreground">正在同步草稿</span> : null}
+        <footer className={`flex h-[60px] shrink-0 items-center justify-between gap-2 border-t border-border bg-card px-3 sm:gap-3 sm:px-5 ${episodeNavigatorOpen ? "min-[1366px]:!pl-[210px]" : ""}`} data-drama-script-global-bar>
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <span className={`size-2 shrink-0 rounded-full ${saveState?.status === "error" ? "bg-rose-500" : saveState?.status === "saving" ? "bg-amber-500" : "bg-emerald-500"}`} />
+                <span className="hidden sm:inline" title={savedLabel}>
+                    {saveState?.status === "saving" ? "正在自动保存" : saveState?.status === "error" ? "自动保存失败" : "自动保存已开启"}
+                </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                <Button
+                    className="!h-10 !px-3 sm:!px-5"
+                    loading={savingVersion}
+                    onClick={() => {
+                        setSavingVersion(true);
+                        void onSave()
+                            .then(() => message.success("草稿版本已保存"))
+                            .catch((error) => message.error(error instanceof Error ? error.message : "草稿保存失败"))
+                            .finally(() => setSavingVersion(false));
+                    }}
+                >
+                    <span className="sm:hidden">保存</span>
+                    <span className="hidden sm:inline">保存草稿</span>
+                </Button>
+                <Button
+                    type="primary"
+                    className="!h-10 !px-3 enabled:!border-violet-600 enabled:!bg-violet-600 enabled:!text-white enabled:hover:!border-violet-500 enabled:hover:!bg-violet-500 dark:enabled:!border-violet-400 dark:enabled:!bg-violet-400 dark:enabled:!text-violet-950 sm:!px-6"
+                    icon={<ArrowRight className="size-4" />}
+                    disabled={!episode.script.trim()}
+                    loading={analyzing}
+                    onClick={onContinue}
+                >
+                    <span className="sm:hidden">进入内容审核</span>
+                    <span className="hidden sm:inline">完成剧本，进入内容审核</span>
+                </Button>
+            </div>
         </footer>
     );
 }

@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 
 describe("create Agent home layout", () => {
     it("keeps Agent input, recent work and reusable public inspiration in one flow", async () => {
-        const [page, composer, conversationList, generationControls, preferences, overview, inspiration, previewModal] = await Promise.all([
+        const [page, composer, messages, conversationList, generationControls, preferences, overview, inspiration, previewModal] = await Promise.all([
             readFile(resolve(process.cwd(), "src/app/(user)/create/page.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-composer.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-messages.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-conversation-list.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-generation-controls.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/components/creative-generation-preferences.tsx"), "utf8"),
@@ -24,6 +25,11 @@ describe("create Agent home layout", () => {
         expect(page).toContain("awayFromLatestRef.current = false");
         expect(page).toContain("setAwayFromLatestState(true)");
         expect(page).toContain("回到底部");
+        expect(page).toContain("conversationWasLoadingRef");
+        expect(page).toContain("if (wasLoading)");
+        expect(page).toContain("resizeObserver.observe(content)");
+        expect(messages).toContain('data-testid="creative-message-list"');
+        expect(messages).toContain("[assets.length, followLatest, lastMessageId, loading]");
         expect(page).toContain("historyOpen && screens.lg");
         expect(page).toContain("historyOpen && screens.lg !== true");
         expect(page).toContain("aria-expanded={historyOpen}");

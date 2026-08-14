@@ -104,6 +104,8 @@ describe("serializePublicSettings", () => {
         expect(result).not.toHaveProperty("entitlements");
         expect(result).not.toHaveProperty("allowUserApiConfig");
         expect(result).not.toHaveProperty("freeDailyPoints");
+        expect(result.site).not.toHaveProperty("homeShowcaseMode");
+        expect(result.site).not.toHaveProperty("homeShowcaseItems");
     });
 });
 

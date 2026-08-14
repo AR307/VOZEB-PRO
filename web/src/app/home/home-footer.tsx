@@ -10,14 +10,14 @@ import { useHomeActions } from "./home-actions";
 import styles from "./home.module.css";
 
 export function HomeCta() {
-    const { startCreating } = useHomeActions();
+    const { site, startCreating } = useHomeActions();
     return (
         <section className={styles.cta} aria-labelledby="home-cta-title">
             <span className={`${styles.ctaCrystal} ${styles.ctaCrystalLeft}`} aria-hidden="true" />
             <span className={`${styles.ctaCrystal} ${styles.ctaCrystalRight}`} aria-hidden="true" />
             <div>
                 <h2 id="home-cta-title">开启你的 AI 创作工作流</h2>
-                <p>加入 VOZEB PRO，释放你的创作潜力，让 AI 成为你最强的创作伙伴。</p>
+                <p>加入 {site.title}，释放你的创作潜力，让 AI 成为你最强的创作伙伴。</p>
             </div>
             <button type="button" onClick={() => startCreating()}>
                 免费开始 <ArrowRight aria-hidden="true" />
@@ -45,7 +45,7 @@ export function HomeFooter() {
                 <div className={styles.footerBrand}>
                     <Link href="/" className={styles.footerLogo}>
                         <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
-                        <span>{site.title || "VOZEB PRO"}</span>
+                        <span>{site.title}</span>
                     </Link>
                     {site.seoDescription?.trim() ? <p>{site.seoDescription}</p> : null}
                     {socials.length ? (

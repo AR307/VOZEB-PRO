@@ -64,7 +64,7 @@ export function CreativeVideoResult({
                 height={layout?.height || 293}
                 thumbnailWidth={112}
                 sideThumbnailWidth={88}
-                className="col-start-1 row-start-3 sm:col-start-2 sm:row-span-2 sm:row-start-1"
+                className="col-start-1 row-start-3 sm:col-start-2 sm:row-start-1"
                 renderThumbnail={(video, index) => {
                     const item = creativeVideoPresentation(message, video, fallbackResolution, fallbackRatio);
                     const posterUrl = item.coverUrl ? imagePreviewUrl(item.coverUrl, 360) : undefined;
@@ -99,7 +99,7 @@ function CreativeVideoPlayer({ asset, coverUrl, resolution, onDimensions }: { as
         <div
             ref={playback.playerRef}
             data-testid="creative-video-player"
-            className="group/player relative size-full overflow-hidden bg-black text-white outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#817cff]"
+            className="group/player relative size-full overflow-hidden bg-black text-white outline-none [container-type:inline-size] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#817cff]"
             tabIndex={0}
             onKeyDown={playback.handleKeyboard}
         >
@@ -166,12 +166,7 @@ function useVideoPlayback(asset: CreativeAsset) {
 
     useEffect(() => {
         const video = videoRef.current;
-        return () => {
-            if (!video) return;
-            video.pause();
-            video.removeAttribute("src");
-            video.load();
-        };
+        return () => video?.pause();
     }, [asset.id]);
 
     const togglePlayback = async () => {
@@ -273,7 +268,7 @@ function VideoControls({ resolution, playback }: { resolution?: string; playback
                 className="h-1 min-w-8 flex-1 cursor-pointer appearance-none rounded-full bg-white/30 [&::-moz-range-thumb]:size-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
                 style={{ background: `linear-gradient(90deg, #ffffff 0%, #ffffff ${playback.progress}%, rgba(255,255,255,.3) ${playback.progress}%, rgba(255,255,255,.3) 100%)` }}
             />
-            {resolution ? <span className="hidden shrink-0 text-[11px] font-semibold min-[480px]:inline">{resolution}</span> : null}
+            {resolution ? <span className="hidden shrink-0 text-[11px] font-semibold @min-[280px]:inline">{resolution}</span> : null}
             <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md hover:bg-white/10" onClick={() => playback.setMuted((value) => !value)} aria-label={playback.muted ? "打开声音" : "静音"}>
                 {playback.muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
             </button>

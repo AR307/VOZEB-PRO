@@ -427,8 +427,8 @@ describe("split Postgres repositories", () => {
         expect(settings).toMatchObject({ freeDailyPointsEnabled: false, freeDailyPoints: 20 });
         expect(sql).toContain("free_daily_points_enabled");
         expect(sql).not.toContain("daily_plan_points_enabled");
-        expect(params[3]).toBe(false);
-        expect(params[18]).toBe(20);
+        expect(sql).not.toContain("site =");
+        expect(params).toEqual([false, 20]);
     });
 
     it("persists generation cost controls as structured settings", async () => {
@@ -440,8 +440,9 @@ describe("split Postgres repositories", () => {
         const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
 
         expect(settings.generationCostControl).toEqual(generationCostControl);
-        expect(sql).toContain("generation_cost_control = COALESCE($9, generation_cost_control)");
-        expect(params[8]).toEqual(JSON.stringify(generationCostControl));
+        expect(sql).toContain("generation_cost_control = $1");
+        expect(sql).not.toContain("site =");
+        expect(params).toEqual([JSON.stringify(generationCostControl)]);
     });
 
     it("persists bounded technical data lifecycle settings", async () => {
@@ -453,8 +454,9 @@ describe("split Postgres repositories", () => {
         const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
 
         expect(settings.dataLifecycle).toEqual(dataLifecycle);
-        expect(sql).toContain("data_lifecycle = COALESCE($10, data_lifecycle)");
-        expect(params[9]).toEqual(JSON.stringify(dataLifecycle));
+        expect(sql).toContain("data_lifecycle = $1");
+        expect(sql).not.toContain("site =");
+        expect(params).toEqual([JSON.stringify(dataLifecycle)]);
     });
 
     it("preserves the product list boolean contract", async () => {

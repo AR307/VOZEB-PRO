@@ -37,17 +37,18 @@ export async function createConversationForUser(userId: string, value: unknown) 
     return createCreativeConversation(userId, { surface, source, projectId, title });
 }
 
-export function listConversationsForUser(userId: string, input: { surface?: string | null; source?: string | null; status?: string | null; limit?: string | null; offset?: string | null }) {
+export function listConversationsForUser(userId: string, input: { surface?: string | null; source?: string | null; projectId?: string | null; status?: string | null; limit?: string | null; offset?: string | null }) {
     const surface = input.surface ? normalizeCreativeSurface(input.surface) : undefined;
     const source = input.source ? normalizeCreativeConversationSource(input.source) : undefined;
     if (input.surface && !surface) throw new CreativeRuntimeServiceError("创作入口不正确", 400);
     if (input.source && !source) throw new CreativeRuntimeServiceError("创作会话来源不正确", 400);
+    const projectId = optionalText(input.projectId, 160);
     const status = normalizeStatus(input.status);
-    return listCreativeConversations(userId, { surface: surface || undefined, source: source || undefined, status, limit: Number(input.limit), offset: Number(input.offset) });
+    return listCreativeConversations(userId, { surface: surface || undefined, source: source || undefined, projectId, status, limit: Number(input.limit), offset: Number(input.offset) });
 }
 
 export async function getConversationForUser(userId: string, id: string) {
-    const conversation = await getCreativeConversation(id);
+    const conversation = await getCreativeConversation(id, userId);
     if (!conversation || conversation.userId !== userId) throw new CreativeRuntimeServiceError("创作会话不存在", 404);
     return conversation;
 }
@@ -83,7 +84,7 @@ export async function listAssetsForUser(userId: string, id: string) {
 }
 
 export async function getAssetForUser(userId: string, id: string) {
-    const asset = await getCreativeAsset(id);
+    const asset = await getCreativeAsset(id, userId);
     if (!asset || asset.userId !== userId || asset.status === "deleted") throw new CreativeRuntimeServiceError("创作资产不存在", 404);
     return asset;
 }

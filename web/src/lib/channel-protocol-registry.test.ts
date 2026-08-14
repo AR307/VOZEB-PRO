@@ -40,11 +40,12 @@ describe("channel protocol registry", () => {
         expect(channelProtocolDefinition("gemini").modelCatalogPaths).toEqual(["/v1beta/models"]);
         expect(channelProtocolDefinition("yumeng")).toMatchObject({
             label: "昱梦",
+            defaultBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer",
             modelCatalogPaths: [],
             capabilities: ["image", "video"],
             builtInModels: expect.any(Array),
         });
-        expect(channelProtocolDefinition("yumeng").builtInModels).toHaveLength(29);
+        expect(channelProtocolDefinition("yumeng").builtInModels).toHaveLength(26);
     });
 
     it("keeps strict protocol paths and request contracts isolated", () => {
@@ -66,7 +67,7 @@ describe("channel protocol registry", () => {
                 queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id",
                 resultField: "result_url / video_url",
                 supportsReferenceImage: true,
-                supportsReferenceVideo: false,
+                supportsReferenceVideo: true,
                 supportsReferenceAudio: true,
             },
         });
@@ -152,24 +153,41 @@ describe("channel protocol registry", () => {
     it("applies only the documented Yumeng v2 model-center contract", () => {
         const configured = applyChannelProtocol({ ...channel, baseUrl: "", models: [] }, "yumeng");
 
-        expect(configured.baseUrl).toBe("");
-        expect(configured.models).toHaveLength(29);
+        expect(configured.baseUrl).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer");
+        expect(configured.models).toHaveLength(26);
         expect(configured.models).toContain("seedream_5.0Pro");
-        expect(configured.models).toContain("klingo3");
+        expect(configured.models).toContain("KlingO3");
+        expect(configured.models).toContain("seedance-2.5-c1");
+        expect(configured.models).toContain("videos_933_c1");
+        expect(configured.models).not.toContain("seedance-2.5-c2");
+        expect(configured.models).not.toContain("videos_stable");
         expect(configured.advancedConfig?.modelConfigs).toMatchObject({
             "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks" },
             klingo3: { capability: "video", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks" },
-            videos_stable: { capability: "video", protocol: "yumeng", durationRange: "4-15 秒", supportsReferenceVideo: true, requestTemplate: expect.stringContaining("first_image") },
-            videos_stable_fast: { capability: "video", protocol: "yumeng", durationRange: "4-15 秒", supportsReferenceVideo: true, requestTemplate: expect.stringContaining("last_image") },
+            "sd_2.0_fast_special": { capability: "video", protocol: "yumeng", durationRange: "4-15 秒", supportsReferenceVideo: true, requestTemplate: expect.stringContaining("first_image") },
+            "seedance-2.5-c1": { capability: "video", protocol: "yumeng", durationRange: "4-30 秒", supportsReferenceVideo: true },
+            videos_933_c1: { capability: "video", protocol: "yumeng", durationRange: "4-15 秒", supportsReferenceVideo: true, requestTemplate: expect.stringContaining("reference_mode") },
         });
         expect(configured.advancedConfig?.operationConfigs).toMatchObject({
             image: { protocol: "yumeng", capability: "image", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id" },
-            video: { protocol: "yumeng", capability: "video", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id", supportsReferenceVideo: false },
+            video: { protocol: "yumeng", capability: "video", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id", supportsReferenceVideo: true },
         });
+        for (const model of configured.models) {
+            expect(configured.advancedConfig?.modelConfigs?.[model.toLowerCase()]).toMatchObject({
+                protocol: "yumeng",
+                createPath: "/kyyReactApiServer/v2/model-center/tasks",
+                queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id",
+            });
+        }
         expect(protocolAuthHeaders("secret", configured.advancedConfig)).toEqual({ authorization: "Bearer secret" });
         expect(channelSupportsModelCatalog(configured)).toBe(false);
         expect(channelSupportsModelCatalog(applyChannelProtocol(channel, "openai"))).toBe(true);
         expect(channelSupportsModelCatalog({ advancedConfig: { ...configured.advancedConfig!, modelCatalogPaths: ["/v2/model-center/models"] } })).toBe(true);
+    });
+
+    it("repairs the retired Yumeng portal host without changing custom provider hosts", () => {
+        expect(applyChannelProtocol({ ...channel, baseUrl: "http://token.myairealm.com/" }, "yumeng").baseUrl).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer");
+        expect(applyChannelProtocol({ ...channel, baseUrl: "https://yumeng.example.com/kyyReactApiServer" }, "yumeng").baseUrl).toBe("https://yumeng.example.com/kyyReactApiServer");
     });
 
     it("loads the documented Seedance special models and rejects preset tampering", () => {

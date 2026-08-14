@@ -25,6 +25,35 @@ describe("site settings", () => {
         expect(settings.friendLinks).toContainEqual(expect.objectContaining({ id: "qq-vozeb-open-source", url: "https://qm.qq.com/q/9MVLTxuRd6", enabled: true }));
     });
 
+    it("updates only bundled brand defaults when the site title changes", () => {
+        const settings = normalizeSiteSettings({
+            ...DEFAULT_SITE_SETTINGS,
+            title: "无限创作",
+        });
+
+        expect(settings).toMatchObject({
+            title: "无限创作",
+            seoTitle: "无限创作",
+            seoKeywords: expect.stringContaining("无限创作"),
+            footerCopyright: expect.stringContaining("无限创作"),
+        });
+        expect(settings.friendLinks).toContainEqual(expect.objectContaining({ id: "vozeb-pro-home", label: "无限创作" }));
+    });
+
+    it("preserves explicitly customized brand copy when the title changes", () => {
+        const settings = normalizeSiteSettings({
+            ...DEFAULT_SITE_SETTINGS,
+            title: "无限创作",
+            seoTitle: "独立 SEO 标题",
+            seoKeywords: "自定义,关键词",
+            footerCopyright: "© 独立运营主体",
+            friendLinks: [{ id: "vozeb-pro-home", label: "官方网站", url: "https://www.vozeb.com/", enabled: true }],
+        });
+
+        expect(settings).toMatchObject({ seoTitle: "独立 SEO 标题", seoKeywords: "自定义,关键词", footerCopyright: "© 独立运营主体" });
+        expect(settings.friendLinks[0]?.label).toBe("官方网站");
+    });
+
     it("preserves customized footer links and social contacts", () => {
         const settings = normalizeSiteSettings({
             footerCopyright: "© Monster Studio. All rights reserved.",

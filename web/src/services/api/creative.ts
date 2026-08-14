@@ -50,8 +50,9 @@ export type CreativeAgentRun = {
 
 type ApiResponse<T> = { code: number; data: T; msg: string };
 
-export function listCreativeConversationPage(input: { source?: CreativeConversationSource; offset?: number; limit?: number } = {}) {
-    const query = new URLSearchParams({ surface: "chat", source: input.source || "agent", status: "active", limit: String(input.limit || 50), offset: String(input.offset || 0) });
+export function listCreativeConversationPage(input: { surface?: CreativeConversation["surface"]; source?: CreativeConversationSource; projectId?: string; offset?: number; limit?: number } = {}) {
+    const query = new URLSearchParams({ surface: input.surface || "chat", source: input.source || "agent", status: "active", limit: String(input.limit || 50), offset: String(input.offset || 0) });
+    if (input.projectId) query.set("projectId", input.projectId);
     return request<{ conversations: CreativeConversation[]; hasMore: boolean }>(`/api/creative/conversations?${query}`);
 }
 
@@ -113,9 +114,16 @@ export function listCreativeAgentRuns(surface: CreativeRunRequest["surface"] = "
 }
 
 export function retryCreativeAgentTask(runId: string, taskId: string, expectedConversationId?: string) {
+    return retryCreativeAgentTasks(runId, [taskId], expectedConversationId);
+}
+
+export function retryCreativeAgentTasks(runId: string, taskIds: string[], expectedConversationId?: string) {
+    const [taskId] = taskIds;
+    if (!taskId) return Promise.reject(new Error("请选择需要重试的失败任务"));
     return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/retry`, {
         method: "POST",
-        ...(expectedConversationId ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: expectedConversationId }) } : {}),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...(expectedConversationId ? { conversationId: expectedConversationId } : {}), taskIds }),
     }).then((data) => data.run);
 }
 

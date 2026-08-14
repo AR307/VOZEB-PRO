@@ -4,7 +4,7 @@ import { closestImageAspectRatio, normalizeImageSizeValue, parseImageDimensions 
 import type { AgentRun, AgentRunReference, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 
-import { selectedCanvasNodeIds } from "./agent-run-surface-policy";
+import { selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 import { agentCanvasOutputNodeIds, agentCanvasTaskNodeId } from "./agent-run-canvas-node-ids";
 
 export type CanvasTaskReferenceNode = {

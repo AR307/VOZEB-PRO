@@ -13,7 +13,9 @@ describe("Drama generation production workspace", () => {
         expect(source).toContain("后期处理");
         expect(source).toContain("交付导出");
         expect(source).toContain("buildPrimaryAction");
-        expect(source).toContain("data-drama-generation-empty");
+        expect(source).toContain("onOpenAssets");
+        expect(source).not.toContain("data-drama-generation-empty");
+        expect(source).toContain('<section className="mt-2.5"');
         expect(source).not.toContain("<Empty");
         expect(source).not.toContain("sm:grid-cols-4");
     });

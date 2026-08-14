@@ -54,7 +54,6 @@ function mergeSettings(current: AuthSettings, imported: AuthSettings): AuthSetti
         site: {
             ...current.site,
             ...imported.site,
-            homeShowcaseItems: mergeRecords(current.site.homeShowcaseItems, imported.site.homeShowcaseItems, (item) => item.id),
             friendLinks: mergeRecords(current.site.friendLinks, imported.site.friendLinks, (item) => item.id),
             socials: { ...current.site.socials, ...imported.site.socials },
         },

@@ -60,7 +60,7 @@ export function CreativeMediaResult({ assets, fallbackRatio, renderActions }: { 
                 selectedIndex={selectedIndex}
                 width={mediaWidth}
                 height={layout?.height || 240}
-                className="col-start-1 row-start-3 sm:col-start-2 sm:row-span-2 sm:row-start-1"
+                className="col-start-1 row-start-3 sm:col-start-2 sm:row-start-1"
                 renderThumbnail={(asset, index) => {
                     const previewUrl = assetUrl(asset);
                     if (asset.type === "image") return <img src={imagePreviewUrl(previewUrl, 240)} alt={asset.title || `生成结果 ${index + 1}`} loading="lazy" className="size-full object-cover" />;

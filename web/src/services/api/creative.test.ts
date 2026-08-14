@@ -223,6 +223,16 @@ describe("创作会话来源", () => {
         expect(Object.fromEntries(url.searchParams)).toMatchObject({ surface: "chat", source: "video-workbench", status: "active", offset: "10", limit: "20" });
     });
 
+    it("requests only the selected drama project conversations", async () => {
+        const fetchMock = vi.fn(async (_input: string | URL | Request) => Response.json({ code: 0, data: { conversations: [], hasMore: false }, msg: "ok" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await listCreativeConversationPage({ surface: "drama", source: "drama", projectId: "project-one", limit: 20 });
+
+        const url = new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost");
+        expect(Object.fromEntries(url.searchParams)).toMatchObject({ surface: "drama", source: "drama", projectId: "project-one", status: "active", limit: "20" });
+    });
+
     it("requests one bounded page of older conversation messages", async () => {
         const fetchMock = vi.fn(async (_input: string | URL | Request) => Response.json({ code: 0, data: { messages: [] }, msg: "ok" }));
         vi.stubGlobal("fetch", fetchMock);
@@ -261,7 +271,7 @@ describe("创作会话来源", () => {
         expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/agent/runs?surface=canvas&status=active&projectId=project-one");
         expect(fetchMock.mock.calls[1]).toEqual([
             "/api/agent/runs/run-one/tasks/task-one/retry",
-            expect.objectContaining({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: "conversation-one" }), cache: "no-store" }),
+            expect.objectContaining({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: "conversation-one", taskIds: ["task-one"] }), cache: "no-store" }),
         ]);
     });
 

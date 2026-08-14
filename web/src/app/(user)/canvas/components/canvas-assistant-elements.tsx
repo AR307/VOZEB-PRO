@@ -281,7 +281,6 @@ export function compactSnapshot(snapshot: CanvasAgentSnapshot) {
     return {
         title: snapshot.title,
         imageSize: snapshot.imageSize,
-        viewport: snapshot.viewport,
         selectedNodeIds: snapshot.selectedNodeIds,
         nodes: snapshot.nodes
             .filter((node) => !selected.size || selected.has(node.id) || node.type === CanvasNodeType.Config)
@@ -289,10 +288,9 @@ export function compactSnapshot(snapshot: CanvasAgentSnapshot) {
                 id: node.id,
                 type: node.type,
                 title: node.title,
-                position: node.position,
                 width: node.width,
                 height: node.height,
-                metadata: compactMetadata(node.metadata || {}),
+                metadata: compactMetadata(node.type, node.metadata || {}),
             })),
         connections,
     };
@@ -303,20 +301,31 @@ export function canvasRunSelectedNodeIds(snapshot: CanvasAgentSnapshot, submitte
     return Array.from(new Set([...snapshot.selectedNodeIds.filter((id) => !mediaNodeIds.has(id)), ...submittedReferenceIds]));
 }
 
-export function compactMetadata(metadata: CanvasNodeData["metadata"]) {
+export function compactMetadata(type: CanvasNodeType, metadata: CanvasNodeData["metadata"]) {
+    const content = compactNodeContent(type, metadata);
     const fallbackUrl = [metadata?.serverUrl, metadata?.content, metadata?.remoteUrl].find((value) => typeof value === "string" && value && !value.startsWith("data:") && !value.startsWith("blob:"));
     const mediaUrl = serverMediaUrl(metadata?.storageKey, fallbackUrl || "");
     return {
-        content: String(metadata?.content || ""),
-        prompt: String(metadata?.prompt || metadata?.composerContent || ""),
-        status: metadata?.status,
-        generationMode: metadata?.generationMode,
-        model: metadata?.model,
+        content: content || undefined,
         size: metadata?.size,
         naturalWidth: metadata?.naturalWidth,
         naturalHeight: metadata?.naturalHeight,
-        url: mediaUrl || undefined,
+        url: isStableCanvasMediaUrl(mediaUrl) ? mediaUrl : undefined,
     };
+}
+
+function compactNodeContent(type: CanvasNodeType, metadata: CanvasNodeData["metadata"]) {
+    const values =
+        type === CanvasNodeType.Config
+            ? [metadata?.composerContent, metadata?.prompt, metadata?.content]
+            : isCanvasImageNodeType(type) || type === CanvasNodeType.Video || type === CanvasNodeType.Audio
+              ? [metadata?.prompt, metadata?.composerContent]
+              : [metadata?.content, metadata?.prompt, metadata?.composerContent];
+    return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim();
+}
+
+function isStableCanvasMediaUrl(value: string) {
+    return value.startsWith("/api/reference-assets/") || value.startsWith("/api/generation-log-assets/");
 }
 
 export function createSession(): CanvasAssistantSession {

@@ -240,9 +240,9 @@ describe("admin models route", () => {
         const payload = await response.json();
 
         expect(response.status).toBe(200);
-        expect(payload.models).toHaveLength(29);
+        expect(payload.models).toHaveLength(26);
         expect(payload.models).toContain("seedream_5.0Pro");
-        expect(payload.models).toContain("klingo3");
+        expect(payload.models).toContain("KlingO3");
         expect(payload.catalogSupported).toBe(false);
         expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -272,7 +272,7 @@ describe("admin models route", () => {
         expect(payload.models).toEqual(expect.arrayContaining(["seedream_5.0Pro", "seedance-2.5"]));
         expect(payload.modelConfigs).toMatchObject({
             "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id" },
-            "seedance-2.5": { capability: "video", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id", supportsReferenceVideo: false },
+            "seedance-2.5": { capability: "video", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id", supportsReferenceVideo: true },
         });
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock).toHaveBeenCalledWith("https://yumeng.example.com/kyyReactApiServer/v2/model-center/models", expect.objectContaining({ headers: { authorization: "Bearer yumeng-secret" } }));

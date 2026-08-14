@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -62,6 +64,16 @@ describe("creative generation results", () => {
 
         expect(markup).toContain('data-results-count="1"');
         expect(markup).not.toContain("更多生成结果");
+    });
+
+    it("keeps the React-managed video source during Strict Mode effect cleanup", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-video-result.tsx"), "utf8");
+        const effectStart = source.indexOf("useEffect(() =>", source.indexOf("function useVideoPlayback"));
+        const cleanup = source.slice(effectStart, source.indexOf("const togglePlayback", effectStart));
+
+        expect(cleanup).toContain("video?.pause()");
+        expect(cleanup).not.toContain('removeAttribute("src")');
+        expect(cleanup).not.toContain("video.load()");
     });
 });
 

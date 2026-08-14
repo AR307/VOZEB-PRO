@@ -12,6 +12,7 @@ import { createVideoTask, transitionVideoTask, updateVideoTask, type VideoTask }
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { normalizeVideoAspectRatio, resolveUpstreamVideoDuration, resolveVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "@/lib/server/video-task-config";
+import { parseImageDimensions } from "@/lib/image-size";
 import { signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
@@ -29,6 +30,7 @@ import { resolvePublicRequestOrigin } from "@/lib/server/public-request-origin";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
 import { normalizeVideoGenerationReferences, regularVideoReferences, videoFrameReferences, type VideoGenerationReference } from "@/lib/video-reference-contract";
+import { assertYumengVideoReferences, buildYumengVideoRequest } from "@/lib/yumeng-model-center";
 
 const CREATE_PATHS = ["/video/generations", "/videos/generations", "/videos/videos", "/videos"];
 type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: VideoGenerationReference[]; source?: string; context?: GenerationTaskContext };
@@ -96,7 +98,7 @@ export async function POST(request: Request) {
                     capability: "video",
                     referenceCount: references.filter((reference) => reference.type === "image").length,
                     durationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
-                    aspectRatio: ratioValue(parameters.size),
+                    aspectRatio: normalizeVideoAspectRatio(parameters.size),
                 });
                 const globalPreset = globalAiOpcVideoPreset(channel.advancedConfig, channel.model);
                 if (geminiVideo) {
@@ -113,8 +115,9 @@ export async function POST(request: Request) {
                             : channel.advancedConfig,
                         references,
                     );
-                    assertVideoReferenceRoles(channel.advancedConfig, references, globalPreset?.videoReferenceRoles);
+                    if (channel.advancedConfig?.protocol !== "yumeng") assertVideoReferenceRoles(channel.advancedConfig, references, globalPreset?.videoReferenceRoles);
                     if (channel.advancedConfig?.protocol === "vozeb-recommended") assertVozebRecommendedVideoReferences(channel.model, references);
+                    if (channel.advancedConfig?.protocol === "yumeng") assertYumengVideoReferences(channel.model, references);
                     assertReferenceUrls(channel.advancedConfig, references, Boolean(globalPreset));
                 }
             } catch (error) {
@@ -204,11 +207,6 @@ export async function POST(request: Request) {
     return response || NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429 });
 }
 
-function ratioValue(value: unknown) {
-    const text = typeof value === "string" ? value.trim() : "";
-    return text || undefined;
-}
-
 export async function createUpstream(
     userId: string,
     origin: string,
@@ -242,7 +240,7 @@ export async function createUpstream(
         seconds: duration(raw.videoSeconds),
         ratio: ratio(raw.size),
         aspect_ratio: ratio(raw.size),
-        size: ratio(raw.size),
+        size: sizeValue(raw.size),
         resolution: resolution(raw.vquality),
         quality: resolution(raw.vquality),
         width: dimensions.width,
@@ -305,6 +303,21 @@ export async function createUpstream(
                   generateAudio,
                   references,
               })
+            : channel.advancedConfig?.protocol === "yumeng"
+              ? buildYumengVideoRequest({
+                    model: channel.model,
+                    prompt,
+                    duration: values.duration as number,
+                    aspectRatio: values.aspect_ratio as string,
+                    resolution: values.resolution as string,
+                    generateAudio,
+                    watermark: raw.videoWatermark === "true",
+                    images: requestImages,
+                    videos,
+                    audios,
+                    firstFrame: firstFrameUrl || undefined,
+                    lastFrame: lastFrameUrl || undefined,
+                })
             : globalPreset
               ? buildGlobalAiOpcVideoRequest(globalPreset, {
                     model: channel.model,
@@ -481,10 +494,16 @@ function resolution(value: unknown) {
     return text === "480" || text === "1080" ? `${text}p` : "720p";
 }
 function videoDimensions(size: unknown, quality: unknown) {
+    const exact = parseImageDimensions(String(size || ""));
+    if (exact) return exact;
     const [x, y] = ratio(size).split(":").map(Number);
     const edge = Number(resolution(quality).replace("p", "")) || 720;
     if (!x || !y) return { width: 1280, height: 720 };
     return x >= y ? { width: Math.round((edge * x) / y), height: edge } : { width: edge, height: Math.round((edge * y) / x) };
+}
+function sizeValue(value: unknown) {
+    const text = clean(value);
+    return parseImageDimensions(text) ? text.replace(/\s+/g, "") : ratio(value);
 }
 function billedPointsCost(value: unknown) {
     if (value === null || value === undefined || value === "") return undefined;

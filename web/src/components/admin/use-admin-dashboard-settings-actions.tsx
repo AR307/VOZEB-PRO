@@ -1,97 +1,18 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
-import type { TableColumnsType } from "antd";
-import Link from "next/link";
-import { BillingOperations } from "@/app/admin/billing/components/billing-operations";
-import { GenerationOperationsClient } from "@/app/admin/generation-operations/components/generation-operations-client";
-import {
-    formatAdminLogDuration,
-    formatAdminLogTime,
-    formatGenerationLogModel,
-    GenerationLogAssetPreview,
-    GenerationLogDetail,
-    GenerationLogMobileCard,
-    generationKindLabel,
-    generationSourceLabel,
-    generationStatusClass,
-    generationStatusLabel,
-} from "@/components/admin/admin-generation-log";
-import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
-import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
-import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
-import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
-import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
-import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
 import type { AdminSectionKey } from "@/components/admin/admin-sections";
-import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
-import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
-import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
+import { createDefaultChannelAdvancedConfig } from "@/components/admin/admin-system-channel-editor";
+import { toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import { channelProtocolDefinition, channelSupportsModelCatalog, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
-import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
-import {
-    ArrowRight,
-    Copy,
-    CreditCard,
-    CircleDollarSign,
-    Database,
-    Download,
-    ExternalLink,
-    Eye,
-    Gift,
-    Globe2,
-    Image as ImageIcon,
-    KeyRound,
-    Mail,
-    Menu,
-    PlugZap,
-    Plus,
-    ReceiptText,
-    RefreshCw,
-    Save,
-    Search,
-    Send,
-    ShieldCheck,
-    SlidersHorizontal,
-    Sparkles,
-    Trash2,
-    Upload,
-    UserCog,
-    UserRound,
-    WalletCards,
-} from "lucide-react";
-import dayjs from "dayjs";
 import { nanoid } from "nanoid";
+import type { ReactNode } from "react";
+import { useEffect, useRef } from "react";
 
-import { formatCreditAmount } from "@/constant/credits";
-import { normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
+import type { AuthSettings, PublicUser, PublicUserSummary, SiteFriendLink, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel } from "@/lib/auth/store";
 import { buildGlobalAiOpcSelection } from "@/lib/globalaiopc-catalog";
-import type {
-    AgentSkill,
-    AuthSettings,
-    CreatedCdkCode,
-    PublicAnnouncement,
-    PublicCdkCode,
-    PublicUser,
-    PublicUserSummary,
-    SiteFriendLink,
-    SiteShowcaseItem,
-    SiteSocialKey,
-    SystemChannelAdvancedConfig,
-    SystemModelChannel,
-    UserRole,
-    UserStatus,
-} from "@/lib/auth/store";
-import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
+import { normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
-import type { PaymentConfigSummary } from "@/lib/payment-config-types";
-import type { AdminBillingSummary } from "@/lib/admin-billing-types";
-import type { Prompt } from "@/services/api/prompts";
+import { clampInteger, createSystemChannel, requestAdminModels, type AdminModelsResult } from "./admin-dashboard-elements";
 
 export type AdminDashboardProps = {
     initialUsers: PublicUser[];
@@ -116,28 +37,9 @@ export const PROMPT_PAGE_SIZE = 20;
 export const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 export const CDK_PAGE_SIZE = 20;
 export const GENERATION_LOG_PAGE_SIZE = 20;
-import {
-    settingsStatusToneClass,
-    SettingsStatusTile,
-    SettingsAnchorItem,
-    FinanceFlowItem,
-    FinanceMiniRow,
-    createSystemChannel,
-    requestAdminModels,
-    type AdminModelsResult,
-    modelNameFromOption,
-    isCdkExpired,
-    cdkStatusLabel,
-    cdkStatusTone,
-    formatCreatedCdkExport,
-    downloadTextFile,
-    CdkRedemptionDetail,
-    splitTags,
-    clampInteger,
-} from "./admin-dashboard-elements";
 
-import type { AdminDashboardState } from "./use-admin-dashboard-state";
 import type { AdminDashboardDataActions } from "./use-admin-dashboard-data-actions";
+import type { AdminDashboardState } from "./use-admin-dashboard-state";
 
 export function useAdminDashboardSettingsActions({ state, data }: { state: AdminDashboardState; data: AdminDashboardDataActions }) {
     const { message, settings, setSettings, setMailTestLoading, mailTestTo, setFetchingModelId, customPointModel, setCustomPointModel } = state;
@@ -358,38 +260,6 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         return saveSettings({ site }, "友情链接已删除");
     };
 
-    const addHomeShowcaseItem = () => {
-        updateSite((site) => ({
-            ...site,
-            homeShowcaseMode: "custom",
-            homeShowcaseItems: [
-                ...(site.homeShowcaseItems || []),
-                {
-                    id: nanoid(),
-                    title: "首页展示提示词",
-                    coverUrl: "",
-                    prompt: "",
-                    tags: ["精选提示词"],
-                    category: "首页展示",
-                },
-            ].slice(0, 8),
-        }));
-    };
-
-    const updateHomeShowcaseItem = (id: string, patch: Partial<SiteShowcaseItem>) => {
-        updateSite((site) => ({
-            ...site,
-            homeShowcaseItems: (site.homeShowcaseItems || []).map((item) => (item.id === id ? { ...item, ...patch } : item)),
-        }));
-    };
-
-    const deleteHomeShowcaseItem = (id: string) => {
-        updateSite((site) => ({
-            ...site,
-            homeShowcaseItems: (site.homeShowcaseItems || []).filter((item) => item.id !== id),
-        }));
-    };
-
     const fetchModelsForChannel = async (channel: SystemModelChannel) => {
         if (!channelSupportsModelCatalog(channel)) {
             message.warning("当前协议没有可用的模型目录，请手动填写上游模型 ID");
@@ -467,9 +337,6 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         addFriendLink,
         updateFriendLink,
         deleteFriendLink,
-        addHomeShowcaseItem,
-        updateHomeShowcaseItem,
-        deleteHomeShowcaseItem,
         fetchModelsForChannel,
         fetchAllModels,
     };

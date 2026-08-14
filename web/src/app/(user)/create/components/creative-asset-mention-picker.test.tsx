@@ -40,6 +40,16 @@ describe("CreativeAssetMentionPicker", () => {
         expect(markup).toContain("overflow-y-auto");
         expect(markup).not.toContain('aria-label="引用素材类型"');
     });
+
+    it("uses the real video source as the thumbnail when no cover image exists", () => {
+        const video = { ...asset("video-no-cover", "video", 1), metadata: {} };
+        const markup = renderToStaticMarkup(<CreativeAssetMentionPicker assets={[video]} selectedAssetIds={[]} onSelect={() => undefined} />);
+
+        expect(markup).toContain("<video");
+        expect(markup).toContain('src="/media/video-no-cover.mp4"');
+        expect(markup).toContain('preload="metadata"');
+        expect(markup).toContain('aria-hidden="true"');
+    });
 });
 
 function asset(id: string, type: "image" | "video", ordinal: number): CreativeAsset {
@@ -51,7 +61,7 @@ function asset(id: string, type: "image" | "video", ordinal: number): CreativeAs
         type,
         status: "ready",
         title: `${type === "image" ? "图片" : "视频"}素材 ${ordinal}`,
-        serverUrl: `/media/${id}.webp`,
+        serverUrl: `/media/${id}.${type === "video" ? "mp4" : "webp"}`,
         metadata: type === "video" ? { coverUrl: `/media/${id}-cover.webp` } : {},
         createdAt: ordinal,
         updatedAt: ordinal,

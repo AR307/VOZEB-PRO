@@ -22,7 +22,7 @@ export async function POST(request: Request) {
         const body = await readJsonBody<MailTestBody>(request);
         const settings = await getAuthSettings();
         const mail = { ...settings.mail, ...(body.mail || {}) };
-        await sendSmtpTestMail({ mail, to: body.to });
+        await sendSmtpTestMail({ mail, to: body.to, siteTitle: settings.site.title });
         return NextResponse.json({ ok: true });
     } catch (error) {
         const message = error instanceof Error ? error.message : "测试邮件发送失败";

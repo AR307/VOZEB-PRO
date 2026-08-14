@@ -629,7 +629,7 @@ describe("Yumeng v2 model-center proxy", () => {
         );
 
         expect(response.status).toBe(200);
-        expect(fetchMock.mock.calls[0][0]).toBe("http://token.myairealm.com/kyyReactApiServer/v2/model-center/tasks");
+        expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
         expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer yumeng-secret");
     });
 
@@ -637,7 +637,7 @@ describe("Yumeng v2 model-center proxy", () => {
         const settings = await mocks.getAuthSettings();
         mocks.getAuthSettings.mockResolvedValue({
             ...settings,
-            systemChannels: settings.systemChannels.map((channel: { baseUrl: string }) => ({ ...channel, baseUrl: "http://token.myairealm.com/kyyReactApiServer" })),
+            systemChannels: settings.systemChannels.map((channel: { baseUrl: string }) => ({ ...channel, baseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer" })),
         });
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
 
@@ -651,7 +651,7 @@ describe("Yumeng v2 model-center proxy", () => {
         );
 
         expect(response.status).toBe(200);
-        expect(fetchMock.mock.calls[0][0]).toBe("http://token.myairealm.com/kyyReactApiServer/v2/model-center/tasks");
+        expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
     });
 });
 

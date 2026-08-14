@@ -26,7 +26,7 @@ export function formatAgentMessageText(text: string) {
     if (text.trim() === "创作计划与后台生成任务已全部完成。") return "创作任务已完成。";
     const planningBoundary = ["\n\n我的选择：", "\n\n已安排 "].map((value) => text.indexOf(value)).filter((index) => index >= 0);
     const visibleText = planningBoundary.length ? text.slice(0, Math.min(...planningBoundary)) : text;
-    return stripUpstreamDisplayDirectives(visibleText)
+    return formatAgentArtifactText(visibleText)
         .split("\n")
         .filter((line) => !/^「[^」]+」已生成(?:并返回画布)?。$/.test(line.trim()))
         .join("\n")
@@ -34,13 +34,18 @@ export function formatAgentMessageText(text: string) {
         .trim();
 }
 
+export function formatAgentArtifactText(value: string) {
+    if (!/:::writing\{[^}\r\n]*\}/.test(value)) return value.trim();
+    return value
+        .replace(/:::writing\{[^}\r\n]*\}([\s\S]*?):::/g, "$1")
+        .replace(/:::writing\{[^}\r\n]*\}[ \t]*(?:\r?\n)?/g, "")
+        .replace(/(?:\r?\n)?[ \t]*:::[ \t]*$/g, "")
+        .trim();
+}
+
 function isErrorPayload(value: string) {
     const text = value.trim();
     return text.startsWith("{") || /^(?:<!doctype\s+html|<html\b)/i.test(text);
-}
-
-function stripUpstreamDisplayDirectives(value: string) {
-    return value.replace(/:::writing\{[^}\r\n]*\}([\s\S]*?):::/g, "$1");
 }
 
 function actionableErrorMessage(value: string) {

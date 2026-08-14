@@ -38,6 +38,7 @@ import {
 import { canAccessAdminSection, type AdminSectionKey } from "@/components/admin/admin-sections";
 import { SiteLogo } from "@/components/layout/site-logo";
 import type { PublicUser } from "@/lib/auth/store";
+import { DEFAULT_SITE_TITLE } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 type AdminSection = { key: AdminSectionKey; label: string; description: string; shortDescription: string; icon: ReactNode };
@@ -46,6 +47,7 @@ type AdminSectionGroup = { title: string; items: AdminSection[] };
 export function AdminSectionNav({
     activeKey,
     onChange,
+    onIntent,
     mobileOpen,
     desktopCollapsed,
     onDesktopToggle,
@@ -55,6 +57,7 @@ export function AdminSectionNav({
 }: {
     activeKey: AdminSectionKey;
     onChange: (key: AdminSectionKey) => void;
+    onIntent?: (key: AdminSectionKey) => void;
     mobileOpen: boolean;
     desktopCollapsed: boolean;
     onDesktopToggle: () => void;
@@ -65,7 +68,7 @@ export function AdminSectionNav({
     const allowedGroups = adminSectionGroups.map((group) => ({ ...group, items: group.items.filter((section) => canAccessAdminSection(currentUser, section.key)) })).filter((group) => group.items.length);
     const activeGroup = allowedGroups.find((group) => group.items.some((section) => section.key === activeKey));
     const activeGroupTitle = activeGroup?.title;
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
@@ -87,6 +90,9 @@ export function AdminSectionNav({
                     title={desktopCollapsed ? section.label : undefined}
                     aria-label={section.label}
                     className={`admin-section-nav-item relative flex h-9 w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-sm transition ${active ? "is-active bg-zinc-100 font-medium text-zinc-950 dark:bg-zinc-900 dark:text-zinc-50" : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white"}`}
+                    onPointerEnter={() => onIntent?.(section.key)}
+                    onPointerDown={() => onIntent?.(section.key)}
+                    onFocus={() => onIntent?.(section.key)}
                     onClick={() => {
                         onChange(section.key);
                         onMobileClose();

@@ -1,12 +1,11 @@
 "use client";
 
-import { App, Button, Drawer, Input, Modal, Segmented, Select, Tooltip } from "antd";
-import { CircleCheck, ImagePlus, Link2, LoaderCircle, MessageSquareText, RotateCcw, Send, Square, X } from "lucide-react";
+import { App, Button, Drawer, Dropdown, Input, Modal, Popover, Segmented, Select, Tooltip } from "antd";
+import { ArrowUp, ChevronDown, History, ImagePlus, Link2, ListChecks, LoaderCircle, MessageSquarePlus, Pause, Play, RotateCcw, Square, X } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
-import type { TextAreaRef } from "antd/es/input/TextArea";
 
 import type { AgentMediaDownload } from "@/components/agent/agent-media-download";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
@@ -15,20 +14,39 @@ import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import { clipboardImageFiles } from "@/lib/clipboard-image-files";
-import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";
+import type { CreativeAsset, CreativeConversation, CreativeMessage } from "@/lib/creative-runtime-contract";
 import { CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { DramaAssetReference, DramaEpisode, DramaNamedAsset, DramaProject } from "@/lib/drama-project-contract";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
-import { controlCreativeAgentRun, createCreativeAgentRun, createCreativeConversation, listCreativeAssets, listCreativeMessages, uploadCreativeAsset, watchCreativeAgentRun } from "@/services/api/creative";
+import {
+    controlCreativeAgentRun,
+    createCreativeAgentRun,
+    createCreativeConversation,
+    getCreativeAgentRun,
+    listCreativeAgentRuns,
+    listCreativeAssets,
+    listCreativeConversationPage,
+    listCreativeMessages,
+    retryCreativeAgentTasks,
+    updateCreativeConversation,
+    uploadCreativeAsset,
+    watchCreativeAgentRun,
+    type CreativeAgentRun,
+} from "@/services/api/creative";
+import { deleteDramaAgentConversation } from "@/services/api/drama-projects";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { useDramaStore } from "../stores/use-drama-store";
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 import type { DramaProjectStage } from "./drama-project-sections";
+import { DramaAgentMentionPicker } from "./drama-agent-mention-picker";
+import { DramaAgentHistory } from "./drama-agent-history";
+import { collectDramaAgentMentionItems, dramaAgentMentionAtCursor, dramaAgentMentionCandidates, referencedDramaAgentItems, replaceDramaAgentMention, type DramaAgentMentionItem } from "./drama-agent-mention";
 
 type PendingDramaSubmission = {
     clientRequestId: string;
     conversationId?: string;
+    viewRevision: number;
     content: string;
     assetIds: string[];
     skillIds: string[];
@@ -55,40 +73,72 @@ export function DramaAgentPanel({
     onConversationChange: (conversationId: string) => void;
     selectedShotId?: string;
 }) {
-    const [permanent, setPermanent] = useState(false);
     const [activated, setActivated] = useState(open);
-
-    useEffect(() => {
-        const media = window.matchMedia("(min-width: 1366px)");
-        const update = () => setPermanent(media.matches);
-        update();
-        media.addEventListener("change", update);
-        return () => media.removeEventListener("change", update);
-    }, []);
+    const [desktop, setDesktop] = useState(false);
+    const [width, setWidth] = useState(404);
+    const [resizing, setResizing] = useState(false);
 
     useEffect(() => {
         if (open) setActivated(true);
     }, [open]);
 
+    useEffect(() => {
+        const media = window.matchMedia("(min-width: 1180px)");
+        const update = () => setDesktop(media.matches);
+        update();
+        media.addEventListener("change", update);
+        return () => media.removeEventListener("change", update);
+    }, []);
+
     if (!activated) return null;
 
+    const startResize = () => {
+        const move = (event: MouseEvent) => setWidth(Math.min(640, Math.max(348, window.innerWidth - event.clientX)));
+        const stop = () => {
+            setResizing(false);
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", stop);
+        };
+        setResizing(true);
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", stop, { once: true });
+    };
+
     const content = <DramaAgentContent project={project} episode={episode} stage={stage} selectedShotId={selectedShotId} onClose={() => onOpenChange(false)} onConversationChange={onConversationChange} />;
-    if (permanent) {
-        return open ? (
-            <aside className="hidden h-full min-h-0 w-[320px] shrink-0 border-l border-border bg-card min-[1366px]:block" aria-label="项目 Agent 面板" data-drama-agent-panel>
-                <div className="h-full min-h-0 overflow-hidden">{content}</div>
-            </aside>
-        ) : (
-            <aside className="hidden" aria-hidden="true">
+
+    if (!desktop)
+        return (
+            <Drawer
+                placement="right"
+                size={360}
+                open={open}
+                mask={false}
+                closable={false}
+                destroyOnHidden={false}
+                onClose={() => onOpenChange(false)}
+                rootClassName="drama-agent-drawer"
+                styles={{ wrapper: { maxWidth: "calc(100vw - 8px)" }, body: { padding: 0 } }}
+            >
                 {content}
-            </aside>
+            </Drawer>
         );
-    }
 
     return (
-        <Drawer title="项目 Agent" placement="right" size={420} open={open} closable={false} destroyOnHidden={false} onClose={() => onOpenChange(false)} styles={{ wrapper: { maxWidth: "100vw" }, body: { padding: 0 } }}>
-            {content}
-        </Drawer>
+        <div
+            className={`flex h-full min-h-0 shrink-0 overflow-hidden bg-card ${resizing ? "" : "transition-opacity duration-300 ease-out"} ${open ? "opacity-100" : "pointer-events-none opacity-0"}`}
+            style={{ width: open ? width : 0 }}
+            data-drama-agent-panel-frame
+            aria-hidden={!open}
+        >
+            <aside className={`relative h-full min-w-0 shrink-0 border-l border-border ${resizing ? "" : "transition-transform duration-300 ease-out"} ${open ? "translate-x-0" : "translate-x-8"}`} style={{ width: "100%" }} aria-label="项目 Agent 面板">
+                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onMouseDown={startResize} aria-label="调整项目 Agent 面板宽度" />
+                {content}
+            </aside>
+        </div>
     );
 }
 
@@ -99,6 +149,7 @@ function DramaAgentContent({
     selectedShotId,
     onClose,
     onConversationChange,
+    embedded = false,
 }: {
     project: DramaProject;
     episode: DramaEpisode;
@@ -106,8 +157,10 @@ function DramaAgentContent({
     selectedShotId?: string;
     onClose: () => void;
     onConversationChange: (conversationId: string) => void;
+    embedded?: boolean;
 }) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
+    const replaceProject = useDramaStore((state) => state.replaceProject);
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { logoUrl: "/logo.svg" };
     const { skills, skillsLoading, models } = useCreativeAgentOptions("drama");
     const [messages, setMessages] = useState<CreativeMessage[]>([]);
@@ -117,39 +170,89 @@ function DramaAgentContent({
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
     const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
     const [smartPlanning, setSmartPlanning] = useState(true);
+    const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+    const [historyOpen, setHistoryOpen] = useState(false);
+    const [conversations, setConversations] = useState<CreativeConversation[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(false);
+    const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+    const [historyHasMore, setHistoryHasMore] = useState(false);
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [runId, setRunId] = useState<string>();
+    const [runStatus, setRunStatus] = useState<CreativeAgentRun["status"]>();
     const streamRef = useRef<(() => void) | null>(null);
+    const assetRefreshRef = useRef<Promise<void> | null>(null);
+    const queuedAssetConversationRef = useRef<string | undefined>(undefined);
     const submittingRef = useRef(false);
     const failedSubmissionsRef = useRef(new Map<string, PendingDramaSubmission>());
     const endRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<TextAreaRef>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const caretRef = useRef(0);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const activeConversationIdRef = useRef(project.creativeConversationId);
+    const onConversationChangeRef = useRef(onConversationChange);
+    const conversationLoadRef = useRef(0);
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
     const selectedModels = models.filter((model) => selectedModelIds.includes(model.id));
     const selectedAssets = assets.filter((asset) => selectedAssetIds.includes(asset.id));
+    const mentionItems = useMemo(() => collectDramaAgentMentionItems(project, episode), [episode, project]);
+    const mentionCandidates = useMemo(() => dramaAgentMentionCandidates(mentionItems, mentionQuery || ""), [mentionItems, mentionQuery]);
+    const referencedProjectItems = useMemo(() => referencedDramaAgentItems(prompt, mentionItems), [mentionItems, prompt]);
     const stageGuide = DRAMA_AGENT_STAGE_GUIDES[stage];
-    const projectAssetCount = project.characters.length + project.scenes.length + project.props.length + project.clues.length;
 
     useEffect(() => {
         if (project.creativeConversationId) activeConversationIdRef.current = project.creativeConversationId;
     }, [project.creativeConversationId]);
 
+    useEffect(() => {
+        onConversationChangeRef.current = onConversationChange;
+    }, [onConversationChange]);
+
     const refresh = useCallback(async (conversationId = activeConversationIdRef.current) => {
-        if (!conversationId) return;
+        if (!conversationId) return { messages: [] as CreativeMessage[], assets: [] as CreativeAsset[] };
         const [nextMessages, nextAssets] = await Promise.all([listCreativeMessages(conversationId), listCreativeAssets(conversationId)]);
-        setMessages(nextMessages);
-        setAssets(nextAssets);
+        if (activeConversationIdRef.current === conversationId) {
+            setMessages(nextMessages);
+            setAssets(nextAssets);
+        }
+        return { messages: nextMessages, assets: nextAssets };
     }, []);
 
-    useEffect(() => {
-        setLoading(true);
-        void refresh().finally(() => setLoading(false));
-        return () => streamRef.current?.();
-    }, [refresh]);
+    const refreshHistory = useCallback(
+        async (offset = 0) => {
+            const page = await listCreativeConversationPage({ surface: "drama", source: "drama", projectId: project.id, offset, limit: 20 });
+            setConversations((current) => (offset ? Array.from(new Map([...current, ...page.conversations].map((item) => [item.id, item])).values()) : page.conversations));
+            setHistoryHasMore(page.hasMore);
+        },
+        [project.id],
+    );
+
+    const refreshAssets = useCallback((conversationId: string) => {
+        if (assetRefreshRef.current) {
+            queuedAssetConversationRef.current = conversationId;
+            return assetRefreshRef.current;
+        }
+        const load = async () => {
+            let nextConversationId: string | undefined = conversationId;
+            do {
+                const currentConversationId = nextConversationId;
+                queuedAssetConversationRef.current = undefined;
+                const nextAssets = await listCreativeAssets(currentConversationId);
+                if (activeConversationIdRef.current === currentConversationId) setAssets(nextAssets);
+                nextConversationId = queuedAssetConversationRef.current;
+            } while (nextConversationId);
+        };
+        const request = load().finally(() => {
+            if (assetRefreshRef.current === request) assetRefreshRef.current = null;
+        });
+        assetRefreshRef.current = request;
+        return request;
+    }, []);
+
+    const updateAssistant = useCallback((id: string, content?: string, status: CreativeMessage["status"] = "running") => {
+        setMessages((current) => current.map((item) => (item.id === id ? { ...item, ...(content ? { content } : {}), status, updatedAt: Date.now() } : item)));
+    }, []);
 
     useEffect(() => {
         endRef.current?.scrollIntoView({ block: "end" });
@@ -167,7 +270,7 @@ function DramaAgentContent({
 
     const ensureConversation = async () => {
         if (activeConversationIdRef.current) return activeConversationIdRef.current;
-        const conversation = await createCreativeConversation({ surface: "drama", source: "drama", projectId: project.id, title: `${project.title || "短剧"} Agent` });
+        const conversation = await createCreativeConversation({ surface: "drama", source: "drama", projectId: project.id, title: "新对话" });
         activeConversationIdRef.current = conversation.id;
         onConversationChange(conversation.id);
         return conversation.id;
@@ -178,7 +281,7 @@ function DramaAgentContent({
         if (unsupported) return message.error(`${unsupported.name} 不是支持的图片格式`);
         const oversized = files.find((file) => file.size > CREATIVE_UPLOAD_MAX_BYTES);
         if (oversized) return message.error(`${oversized.name} 超过 20MB`);
-        if (!files.length || uploading) return;
+        if (!files.length || uploading || loading) return;
         setUploading(true);
         try {
             const conversationId = await ensureConversation();
@@ -194,9 +297,200 @@ function DramaAgentContent({
         }
     };
 
-    const executeSubmission = async (submission: PendingDramaSubmission) => {
+    const watchRun = useCallback(
+        (run: CreativeAgentRun, assistantMessageId: string) => {
+            const viewRevision = conversationLoadRef.current;
+            const isCurrentRun = () => viewRevision === conversationLoadRef.current && activeConversationIdRef.current === run.conversationId;
+            activeConversationIdRef.current = run.conversationId;
+            streamRef.current?.();
+            setRunId(run.id);
+            setRunStatus(run.status);
+            setSending(true);
+            submittingRef.current = true;
+            streamRef.current = watchCreativeAgentRun(run.id, {
+                onProgress: (text) => {
+                    if (!isCurrentRun()) return;
+                    updateAssistant(assistantMessageId, text);
+                },
+                onTaskCompleted: () => void refreshAssets(run.conversationId).catch(() => undefined),
+                onStatus: (status) => {
+                    if (isCurrentRun()) setRunStatus(status);
+                },
+                onProjectHandoff: () => undefined,
+                onConnectionError: (text) => {
+                    if (!isCurrentRun()) return;
+                    updateAssistant(assistantMessageId, text);
+                    streamRef.current = null;
+                },
+                onTerminal: (status, text) => {
+                    if (!isCurrentRun()) return;
+                    updateAssistant(assistantMessageId, text, status === "completed" ? "completed" : status);
+                    setSending(false);
+                    submittingRef.current = false;
+                    setRunId(undefined);
+                    setRunStatus(status);
+                    streamRef.current = null;
+                    void refresh(run.conversationId);
+                },
+            });
+            return assistantMessageId;
+        },
+        [refresh, refreshAssets, updateAssistant],
+    );
+
+    const openConversation = useCallback(
+        async (conversationId: string, updateProject = true) => {
+            const requestId = ++conversationLoadRef.current;
+            streamRef.current?.();
+            streamRef.current = null;
+            submittingRef.current = false;
+            setSending(false);
+            setRunId(undefined);
+            setRunStatus(undefined);
+            setLoading(true);
+            setMessages([]);
+            setAssets([]);
+            setSelectedAssetIds([]);
+            activeConversationIdRef.current = conversationId;
+            if (updateProject) onConversationChangeRef.current(conversationId);
+            try {
+                const [loaded, runs] = await Promise.all([refresh(conversationId), listCreativeAgentRuns("drama", { activeOnly: true, projectId: project.id, conversationId })]);
+                if (requestId !== conversationLoadRef.current || activeConversationIdRef.current !== conversationId) return;
+                const activeRun = runs.find((run) => run.conversationId === conversationId && ["planning", "running", "paused"].includes(run.status));
+                if (activeRun) {
+                    const assistant = loaded.messages.find((item) => item.id === activeRun.assistantMessageId) || [...loaded.messages].reverse().find((item) => item.role === "assistant" && item.status === "running");
+                    watchRun(activeRun, assistant?.id || activeRun.assistantMessageId);
+                }
+                setHistoryOpen(false);
+                window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: "end" }));
+            } finally {
+                if (requestId === conversationLoadRef.current) setLoading(false);
+            }
+        },
+        [project.id, refresh, watchRun],
+    );
+
+    const newConversation = useCallback(async () => {
+        const requestId = ++conversationLoadRef.current;
+        const previousConversationId = activeConversationIdRef.current;
+        activeConversationIdRef.current = undefined;
+        streamRef.current?.();
+        streamRef.current = null;
+        submittingRef.current = false;
+        setHistoryOpen(false);
+        setLoading(true);
+        setMessages([]);
+        setAssets([]);
+        setSending(false);
+        setRunId(undefined);
+        setRunStatus(undefined);
+        let conversation: CreativeConversation;
         try {
-            const result = await createCreativeAgentRun({
+            conversation = await createCreativeConversation({ surface: "drama", source: "drama", projectId: project.id, title: "新对话" });
+        } catch (error) {
+            if (requestId !== conversationLoadRef.current) return;
+            message.error(error instanceof Error ? error.message : "新建项目 Agent 对话失败");
+            if (previousConversationId) await openConversation(previousConversationId, false);
+            else setLoading(false);
+            return;
+        }
+        if (requestId !== conversationLoadRef.current) return;
+        setPrompt("");
+        setMentionQuery(null);
+        setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
+        await openConversation(conversation.id);
+        window.requestAnimationFrame(() => inputRef.current?.focus());
+    }, [message, openConversation, project.id]);
+
+    const renameConversation = useCallback(
+        async (conversationId: string, title: string) => {
+            try {
+                const updated = await updateCreativeConversation(conversationId, { title });
+                setConversations((current) => current.map((item) => (item.id === conversationId ? updated : item)));
+                message.success("对话标题已修改");
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "对话标题修改失败");
+            }
+        },
+        [message],
+    );
+
+    const confirmDeleteConversation = useCallback(
+        (conversation: CreativeConversation) => {
+            modal.confirm({
+                title: "删除这条对话？",
+                content: `“${conversation.title || "新对话"}”的消息、任务和生成记录将永久删除。`,
+                okText: "删除",
+                okButtonProps: { danger: true },
+                cancelText: "取消",
+                centered: true,
+                onOk: async () => {
+                    try {
+                        const result = await deleteDramaAgentConversation(project.id, conversation.id);
+                        setConversations((current) => current.filter((item) => item.id !== conversation.id));
+                        if (activeConversationIdRef.current === conversation.id) {
+                            replaceProject(result.project);
+                            await openConversation(result.activeConversationId, false);
+                        }
+                        message.success("对话已删除");
+                    } catch (error) {
+                        message.error(error instanceof Error ? error.message : "对话删除失败");
+                        throw error;
+                    }
+                },
+            });
+        },
+        [message, modal, openConversation, project.id, replaceProject],
+    );
+
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        const conversationId = activeConversationIdRef.current;
+        const load = async () => {
+            if (!conversationId) {
+                setMessages([]);
+                setAssets([]);
+                setLoading(false);
+                return;
+            }
+            await openConversation(conversationId, false);
+            if (cancelled) return;
+        };
+        void load().catch((error) => {
+            if (cancelled) return;
+            setLoading(false);
+            message.error(friendlyAgentError(error, "项目 Agent 任务恢复失败，请稍后重试。"));
+        });
+        return () => {
+            cancelled = true;
+            streamRef.current?.();
+            streamRef.current = null;
+        };
+    }, [message, openConversation, project.id]);
+
+    const setHistoryVisibility = (nextOpen: boolean) => {
+        setHistoryOpen(nextOpen);
+        if (!nextOpen) return;
+        setHistoryLoading(true);
+        void refreshHistory()
+            .catch((error) => message.error(error instanceof Error ? error.message : "历史对话读取失败"))
+            .finally(() => setHistoryLoading(false));
+    };
+
+    const loadMoreHistory = () => {
+        if (historyLoadingMore || !historyHasMore) return;
+        setHistoryLoadingMore(true);
+        void refreshHistory(conversations.length)
+            .catch((error) => message.error(error instanceof Error ? error.message : "历史对话读取失败"))
+            .finally(() => setHistoryLoadingMore(false));
+    };
+
+    const executeSubmission = async (submission: PendingDramaSubmission) => {
+        const isCurrentView = () => submission.viewRevision === conversationLoadRef.current && activeConversationIdRef.current === submission.conversationId;
+        let result: Awaited<ReturnType<typeof createCreativeAgentRun>>;
+        try {
+            result = await createCreativeAgentRun({
                 clientRequestId: submission.clientRequestId,
                 surface: "drama",
                 conversationId: submission.conversationId,
@@ -207,53 +501,37 @@ function DramaAgentContent({
                 modelIds: submission.modelIds,
                 snapshot: submission.snapshot,
             });
-            failedSubmissionsRef.current.delete(submission.temporaryAssistantId);
-            activeConversationIdRef.current = result.run.conversationId;
-            if (result.run.conversationId !== project.creativeConversationId) onConversationChange(result.run.conversationId);
-            setRunId(result.run.id);
-            setMessages((current) =>
-                current.map((item) => {
-                    if (item.id === submission.temporaryUserId) return { ...item, id: result.run.inputMessageId, conversationId: result.run.conversationId, runId: result.run.id };
-                    if (item.id === submission.temporaryAssistantId) return { ...item, id: result.run.assistantMessageId, conversationId: result.run.conversationId, runId: result.run.id };
-                    return item;
-                }),
-            );
-            await refresh(result.run.conversationId);
-            streamRef.current?.();
-            streamRef.current = watchCreativeAgentRun(result.run.id, {
-                onProgress: () => void refresh(),
-                onTaskCompleted: () => void refresh(),
-                onStatus: () => undefined,
-                onProjectHandoff: () => undefined,
-                onConnectionError: () => {
-                    setSending(false);
-                    submittingRef.current = false;
-                    setRunId(undefined);
-                    void refresh();
-                },
-                onTerminal: () => {
-                    setSending(false);
-                    submittingRef.current = false;
-                    setRunId(undefined);
-                    streamRef.current = null;
-                    void refresh();
-                },
-            });
-            return true;
         } catch (error) {
+            if (!isCurrentView()) return false;
             failedSubmissionsRef.current.set(submission.temporaryAssistantId, submission);
             const content = friendlyAgentError(error, "项目 Agent 请求失败，请稍后重试。");
             setMessages((current) => current.map((item) => (item.id === submission.temporaryAssistantId ? { ...item, content, status: "failed", updatedAt: Date.now() } : item)));
             setSending(false);
             submittingRef.current = false;
             setRunId(undefined);
+            setRunStatus(undefined);
             return false;
         }
+        failedSubmissionsRef.current.delete(submission.temporaryAssistantId);
+        if (!isCurrentView()) return true;
+        activeConversationIdRef.current = result.run.conversationId;
+        if (result.run.conversationId !== project.creativeConversationId) onConversationChangeRef.current(result.run.conversationId);
+        setRunId(result.run.id);
+        setRunStatus(result.run.status);
+        setMessages((current) =>
+            current.map((item) => {
+                if (item.id === submission.temporaryUserId) return { ...item, id: result.run.inputMessageId, conversationId: result.run.conversationId, runId: result.run.id };
+                if (item.id === submission.temporaryAssistantId) return { ...item, id: result.run.assistantMessageId, conversationId: result.run.conversationId, runId: result.run.id };
+                return item;
+            }),
+        );
+        watchRun(result.run, result.run.assistantMessageId);
+        return true;
     };
 
     const submit = async () => {
         const content = prompt.trim();
-        if (!content || sending || submittingRef.current || uploading) return;
+        if (!content || sending || submittingRef.current || uploading || loading) return;
         submittingRef.current = true;
         setPrompt("");
         setSending(true);
@@ -265,13 +543,14 @@ function DramaAgentContent({
         const submission: PendingDramaSubmission = {
             clientRequestId: `drama-agent-${nanoid()}`,
             conversationId: activeConversationIdRef.current,
+            viewRevision: conversationLoadRef.current,
             content,
             assetIds,
             skillIds: selectedSkillId ? [selectedSkillId] : [],
             modelIds: smartPlanning ? [] : selectedModelIds,
             temporaryUserId,
             temporaryAssistantId,
-            snapshot: dramaSnapshot(project, episode, stage, selectedShotId),
+            snapshot: dramaSnapshot(project, episode, stage, selectedShotId, referencedProjectItems),
         };
         setMessages((current) => [
             ...current,
@@ -295,11 +574,45 @@ function DramaAgentContent({
 
     const retrySubmission = async (assistantMessageId: string) => {
         const submission = failedSubmissionsRef.current.get(assistantMessageId);
-        if (!submission || sending || submittingRef.current) return false;
+        const failedMessage = messages.find((item) => item.id === assistantMessageId);
+        if ((!submission && !failedMessage?.runId) || sending || submittingRef.current) return false;
         submittingRef.current = true;
         setSending(true);
         setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, content: "正在重新提交创作请求", status: "running", updatedAt: Date.now() } : item)));
-        return executeSubmission(submission);
+        if (failedMessage?.runId) {
+            try {
+                const run = await getCreativeAgentRun(failedMessage.runId);
+                const failedTaskIds = run.tasks.filter((task) => task.status === "failed").map((task) => task.id);
+                const result = failedTaskIds.length
+                    ? { run: await retryCreativeAgentTasks(failedMessage.runId, failedTaskIds, failedMessage.conversationId || activeConversationIdRef.current) }
+                    : await controlCreativeAgentRun(failedMessage.runId, "retry", failedMessage.conversationId || activeConversationIdRef.current);
+                await refresh(result.run.conversationId);
+                watchRun(result.run, result.run.assistantMessageId || assistantMessageId);
+                return true;
+            } catch (error) {
+                setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, content: friendlyAgentError(error, "项目 Agent 重试失败，请稍后重试。"), status: "failed", updatedAt: Date.now() } : item)));
+                setSending(false);
+                submittingRef.current = false;
+                setRunStatus("failed");
+                return false;
+            }
+        }
+        return executeSubmission(submission!);
+    };
+
+    const controlRun = async (action: "pause" | "resume" | "cancel") => {
+        if (!runId) return;
+        try {
+            const result = await controlCreativeAgentRun(runId, action, activeConversationIdRef.current);
+            setRunStatus(result.run.status);
+            if (action === "cancel") {
+                setSending(false);
+                submittingRef.current = false;
+                setRunId(undefined);
+            }
+        } catch (error) {
+            message.error(friendlyAgentError(error, "项目 Agent 控制失败，请稍后重试。"));
+        }
     };
 
     const toggleModel = (model: CreativeAgentModelOption) => {
@@ -315,58 +628,116 @@ function DramaAgentContent({
         setSmartPlanning(true);
     };
 
+    const fillStagePrompt = (prompt: string) => {
+        setPrompt(prompt);
+        setMentionQuery(null);
+        window.requestAnimationFrame(() => inputRef.current?.focus());
+    };
+
+    const selectMention = (item: DramaAgentMentionItem) => {
+        const result = replaceDramaAgentMention(prompt, caretRef.current, item.alias);
+        setPrompt(result.value);
+        setMentionQuery(null);
+        window.requestAnimationFrame(() => {
+            inputRef.current?.focus();
+            inputRef.current?.setSelectionRange(result.cursor, result.cursor);
+        });
+    };
+
     return (
         <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-            <div className="shrink-0 border-b border-border px-4 py-3.5">
-                <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex h-12 shrink-0 items-center border-b border-border px-3.5">
+                <div className="flex w-full min-w-0 items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2 font-medium">
                         <SiteLogo logoUrl={site.logoUrl} className="size-5" />
                         <span className="truncate">{stageGuide.label}</span>
                     </div>
-                    <Tooltip title="收起项目 Agent">
-                        <Button type="text" shape="circle" className="!size-8 !min-w-8" icon={<X className="size-4" />} onClick={onClose} aria-label="收起项目 Agent" />
-                    </Tooltip>
-                </div>
-                <p className="mt-1 break-words text-xs leading-5 text-muted-foreground">
-                    {projectAssetCount} 项资产 · {episode.shots.length} 个镜头 · 建议不会自动修改项目
-                </p>
-                <div className="mt-3 grid grid-cols-2 gap-1.5" data-drama-agent-quick-actions>
-                    {stageGuide.prompts.map((item) => (
-                        <button
-                            key={item.label}
-                            type="button"
-                            className="min-h-9 min-w-0 rounded-md border border-border bg-background px-2.5 py-1.5 text-left text-xs leading-4 text-muted-foreground transition hover:border-foreground/20 hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                            disabled={sending}
-                            onClick={() => {
-                                setPrompt(item.prompt);
-                                window.requestAnimationFrame(() => inputRef.current?.focus());
-                            }}
-                            aria-label={`Agent 快捷操作：${item.label}`}
+                    <div className="flex shrink-0 items-center gap-0.5">
+                        <Tooltip title="新建对话">
+                            <Button
+                                type="text"
+                                shape="circle"
+                                className="!size-8 !min-w-8"
+                                icon={<MessageSquarePlus className="size-4" />}
+                                disabled={loading}
+                                onClick={() => void newConversation().catch((error) => message.error(error instanceof Error ? error.message : "新建对话失败"))}
+                                aria-label="新建项目 Agent 对话"
+                            />
+                        </Tooltip>
+                        <Popover
+                            trigger="click"
+                            placement="bottomRight"
+                            arrow={false}
+                            open={historyOpen}
+                            onOpenChange={setHistoryVisibility}
+                            styles={{ container: { padding: 4, borderRadius: 10 } }}
+                            content={
+                                <DramaAgentHistory
+                                    items={conversations}
+                                    activeId={activeConversationIdRef.current}
+                                    loading={historyLoading}
+                                    hasMore={historyHasMore}
+                                    loadingMore={historyLoadingMore}
+                                    onOpen={(conversationId) => void openConversation(conversationId).catch((error) => message.error(error instanceof Error ? error.message : "对话恢复失败"))}
+                                    onRename={(conversationId, title) => void renameConversation(conversationId, title)}
+                                    onDelete={confirmDeleteConversation}
+                                    onLoadMore={loadMoreHistory}
+                                />
+                            }
                         >
-                            {item.label}
-                        </button>
-                    ))}
+                            <Tooltip title="历史对话">
+                                <Button
+                                    type="text"
+                                    shape="circle"
+                                    className={`!size-8 !min-w-8 ${historyOpen ? "!bg-primary/10 !text-primary" : ""}`}
+                                    icon={<History className="size-4" />}
+                                    aria-label="打开项目 Agent 历史对话"
+                                    aria-expanded={historyOpen}
+                                />
+                            </Tooltip>
+                        </Popover>
+                        {!embedded ? (
+                            <Tooltip title="收起项目 Agent">
+                                <Button type="text" shape="circle" className="!size-8 !min-w-8" icon={<X className="size-4" />} onClick={onClose} aria-label="收起项目 Agent" />
+                            </Tooltip>
+                        ) : null}
+                    </div>
                 </div>
             </div>
-            <div className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto px-4 py-4">
+            <div className="hide-scrollbar min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto px-3.5 py-3" data-drama-agent-message-scroll>
                 {loading ? (
-                    <div className="rounded-lg border border-border bg-muted/20 p-3.5" data-drama-agent-loading>
+                    <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground" data-drama-agent-loading>
                         <div className="flex items-center gap-2 text-sm font-medium">
                             <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
-                            正在恢复项目 Agent
+                            正在恢复对话
                         </div>
-                        <p className="mt-1.5 text-xs leading-5 text-muted-foreground">正在读取历史对话与当前阶段快照；后台运行不会因为面板收起而取消。</p>
-                        <AgentCapabilityList labels={stageGuide.prompts.map((item) => item.label)} />
                     </div>
                 ) : null}
                 {!loading && !messages.length ? (
-                    <div className="rounded-lg border border-dashed border-border bg-muted/15 p-4" data-drama-agent-empty>
-                        <span className="grid size-9 place-items-center rounded-md border border-border bg-background text-muted-foreground">
-                            <MessageSquareText className="size-4" />
-                        </span>
-                        <div className="mt-3 text-sm font-medium text-foreground">从当前阶段开始协作</div>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">Agent 已获得当前剧集、资产与镜头语义快照。点击上方检查项只会填入草稿，确认发送后才会运行，也不会自动修改项目。</p>
-                        <AgentCapabilityList labels={stageGuide.prompts.map((item) => item.label)} />
+                    <div data-drama-agent-empty data-drama-agent-quick-actions>
+                        <Dropdown
+                            trigger={["click"]}
+                            placement="bottomLeft"
+                            menu={{
+                                items: stageGuide.prompts.map((item, index) => ({ key: String(index), label: item.label })),
+                                onClick: ({ key }) => {
+                                    const item = stageGuide.prompts[Number(key)];
+                                    if (item) fillStagePrompt(item.prompt);
+                                },
+                            }}
+                        >
+                            <Button
+                                block
+                                className="!flex !h-8 !items-center !justify-start !gap-1.5 !px-2.5 !text-xs !text-muted-foreground hover:!border-foreground/20 hover:!text-foreground"
+                                icon={<ListChecks className="size-3.5" aria-hidden />}
+                                disabled={sending}
+                                aria-label="打开本阶段 Agent 建议"
+                            >
+                                <span className="min-w-0 flex-1 truncate text-left">本阶段建议</span>
+                                <span className="text-[11px] tabular-nums opacity-65">{stageGuide.prompts.length} 项</span>
+                                <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden />
+                            </Button>
+                        </Dropdown>
                     </div>
                 ) : null}
                 {messages.map((message) => {
@@ -381,7 +752,7 @@ function DramaAgentContent({
                                 {message.role === "assistant" && message.status === "completed" ? <AgentMarkdown>{displayContent}</AgentMarkdown> : <span className="whitespace-pre-wrap">{displayContent}</span>}
                             </div>
                             {messageAssets.length ? <DramaAgentAssets assets={messageAssets} project={project} episode={episode} /> : null}
-                            {message.role === "assistant" && message.status === "failed" && !message.runId ? (
+                            {message.role === "assistant" && message.status === "failed" ? (
                                 <Button
                                     type="text"
                                     size="small"
@@ -414,52 +785,92 @@ function DramaAgentContent({
                 })}
                 <div ref={endRef} />
             </div>
-            <div className="m-3 min-w-0 shrink-0 rounded-lg border border-border bg-background p-2 shadow-[0_8px_24px_rgba(15,23,42,.08)]">
+            <div className="mx-3 mb-3 mt-2 min-w-0 shrink-0 rounded-2xl border border-border bg-background px-3.5 pb-3.5 pt-3.5 shadow-sm" data-drama-agent-composer onWheelCapture={(event) => event.stopPropagation()}>
                 {selectedSkill ? <CreativeAgentSkillCard skill={selectedSkill} onRemove={() => setSelectedSkillId(undefined)} className="pb-1" /> : null}
-                {selectedAssets.length ? (
-                    <div className="thin-scrollbar flex gap-2 overflow-x-auto px-1 pb-2">
-                        {selectedAssets.map((asset) => {
-                            const url = asset.serverUrl || asset.remoteUrl || "";
-                            return (
-                                <div key={asset.id} className="group relative size-14 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
-                                    {url ? <AgentMediaPreview type="image" url={url} title={asset.title || "参考图"} className="size-full" /> : <ImagePlus className="m-auto size-4 text-muted-foreground" />}
-                                    <button
-                                        type="button"
-                                        className="absolute right-1 top-1 z-10 grid size-5 place-items-center rounded bg-background/90 text-muted-foreground shadow-sm hover:text-foreground"
-                                        onClick={() => setSelectedAssetIds((current) => current.filter((id) => id !== asset.id))}
-                                        aria-label={`移除参考图：${asset.title}`}
-                                    >
-                                        <X className="size-3" />
-                                    </button>
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : null}
-                <Input.TextArea
-                    ref={inputRef}
-                    value={prompt}
-                    autoSize={{ minRows: 2, maxRows: 5 }}
-                    placeholder="告诉 Agent 下一步要做什么"
-                    disabled={sending}
-                    variant="borderless"
-                    className="!min-w-0 !bg-transparent !px-2 !shadow-none"
-                    onChange={(event) => setPrompt(event.target.value)}
-                    onPaste={(event) => {
-                        const files = clipboardImageFiles(event.clipboardData);
-                        if (!files.length) return;
-                        event.preventDefault();
-                        void uploadImages(files);
-                    }}
-                    onPressEnter={(event) => {
-                        if (!event.shiftKey) {
-                            event.preventDefault();
-                            void submit();
-                        }
-                    }}
-                />
-                <div className="mt-1 flex min-w-0 items-center justify-between gap-2 border-t border-border pt-2">
-                    <div className="flex min-w-0 items-center gap-1">
+                <div className="flex min-w-0 items-start gap-2" data-drama-agent-input-row>
+                    {selectedAssets.length || !sending ? (
+                        <div className="hide-scrollbar flex max-w-[44%] shrink-0 items-start gap-1 overflow-x-auto overflow-y-hidden px-0.5 py-1" aria-label="本轮参考素材" aria-live="polite">
+                            {selectedAssets.map((asset) => {
+                                const url = asset.serverUrl || asset.remoteUrl || "";
+                                return (
+                                    <div key={asset.id} className="group relative size-10 shrink-0 overflow-visible rounded-md border border-border bg-muted">
+                                        <div className="size-full overflow-hidden rounded-[5px]">
+                                            {url ? <AgentMediaPreview type="image" url={url} title={asset.title || "参考图"} className="size-full" /> : <ImagePlus className="m-auto size-4 text-muted-foreground" />}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="absolute right-0 top-0 z-10 flex size-7 items-start justify-end rounded-full bg-transparent p-0.5 text-muted-foreground transition hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                                            onClick={() => setSelectedAssetIds((current) => current.filter((id) => id !== asset.id))}
+                                            aria-label={`移除参考图：${asset.title}`}
+                                        >
+                                            <span className="grid size-4 place-items-center rounded-full border border-border bg-background/95 shadow-sm">
+                                                <X className="size-2" />
+                                            </span>
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                            <Button
+                                type="text"
+                                className="!size-10 !min-w-10 !shrink-0 !rounded-lg !border !border-border !p-0"
+                                icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
+                                disabled={sending || loading}
+                                loading={uploading}
+                                onClick={() => fileInputRef.current?.click()}
+                                aria-label={selectedAssets.length ? "继续添加参考图" : "添加参考图"}
+                            />
+                        </div>
+                    ) : null}
+                    <Popover
+                        trigger={[]}
+                        placement="topLeft"
+                        autoAdjustOverflow={{ adjustX: 1, adjustY: 1 }}
+                        arrow={false}
+                        open={mentionQuery !== null}
+                        onOpenChange={(nextOpen) => {
+                            if (!nextOpen) setMentionQuery(null);
+                        }}
+                        styles={{ container: { padding: 0, borderRadius: 10, overflow: "hidden" } }}
+                        content={<DramaAgentMentionPicker items={mentionCandidates} selectedIds={new Set(referencedProjectItems.map((item) => item.id))} onSelect={selectMention} />}
+                    >
+                        <textarea
+                            ref={inputRef}
+                            value={prompt}
+                            rows={3}
+                            placeholder="告诉 Agent 下一步要做什么"
+                            disabled={sending || loading}
+                            className="hide-scrollbar min-h-20 min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-0 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
+                            onChange={(event) => {
+                                caretRef.current = event.target.selectionStart;
+                                setPrompt(event.target.value);
+                                setMentionQuery(dramaAgentMentionAtCursor(event.target.value, event.target.selectionStart)?.query ?? null);
+                            }}
+                            onClick={(event) => {
+                                caretRef.current = event.currentTarget.selectionStart;
+                                setMentionQuery(dramaAgentMentionAtCursor(event.currentTarget.value, event.currentTarget.selectionStart)?.query ?? null);
+                            }}
+                            onPaste={(event) => {
+                                const files = clipboardImageFiles(event.clipboardData);
+                                if (!files.length) return;
+                                event.preventDefault();
+                                void uploadImages(files);
+                            }}
+                            onKeyDown={(event) => {
+                                if (event.key === "Escape" && mentionQuery !== null) {
+                                    event.preventDefault();
+                                    setMentionQuery(null);
+                                    return;
+                                }
+                                if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey) return;
+                                event.preventDefault();
+                                if (mentionQuery !== null && mentionCandidates.length) return selectMention(mentionCandidates[0]);
+                                void submit();
+                            }}
+                        />
+                    </Popover>
+                </div>
+                <div className="mt-2 flex min-w-0 items-center gap-2.5 border-t border-border pt-2" data-drama-agent-toolbar>
+                    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden py-0.5">
                         <input
                             ref={fileInputRef}
                             hidden
@@ -471,7 +882,6 @@ function DramaAgentContent({
                                 event.target.value = "";
                             }}
                         />
-                        <Button type="text" shape="circle" className="!size-8 !min-w-8" icon={<ImagePlus className="size-4" />} loading={uploading} disabled={sending} onClick={() => fileInputRef.current?.click()} aria-label="上传参考图" />
                         <CreativeAgentControls
                             compact
                             skills={skills}
@@ -487,25 +897,19 @@ function DramaAgentContent({
                         />
                     </div>
                     {sending && runId ? (
-                        <Button danger shape="circle" icon={<Square className="size-3.5" />} onClick={() => void controlCreativeAgentRun(runId, "cancel")} aria-label="停止项目 Agent" />
+                        <div className="flex items-center gap-1">
+                            {runStatus === "paused" ? (
+                                <Button type="text" shape="circle" icon={<Play className="size-3.5" />} onClick={() => void controlRun("resume")} aria-label="继续项目 Agent" />
+                            ) : (
+                                <Button type="text" shape="circle" icon={<Pause className="size-3.5" />} onClick={() => void controlRun("pause")} aria-label="暂停项目 Agent" />
+                            )}
+                            <Button danger shape="circle" icon={<Square className="size-3.5" />} onClick={() => void controlRun("cancel")} aria-label="停止项目 Agent" />
+                        </div>
                     ) : (
-                        <Button type="primary" shape="circle" icon={<Send className="size-3.5" />} disabled={!prompt.trim() || uploading} onClick={() => void submit()} aria-label="发送给项目 Agent" />
+                        <Button type="primary" shape="circle" className="!size-10 !min-w-10 !shrink-0" icon={<ArrowUp className="size-4" />} disabled={!prompt.trim() || uploading || loading} onClick={() => void submit()} aria-label="发送给项目 Agent" />
                     )}
                 </div>
             </div>
-        </div>
-    );
-}
-
-function AgentCapabilityList({ labels }: { labels: string[] }) {
-    return (
-        <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs text-muted-foreground">
-            {labels.map((label) => (
-                <span key={label} className="flex min-w-0 items-start gap-1.5">
-                    <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
-                    <span className="min-w-0 leading-4">{label}</span>
-                </span>
-            ))}
         </div>
     );
 }
@@ -771,15 +1175,6 @@ const DRAMA_AGENT_STAGE_GUIDES: Record<DramaProjectStage, { label: string; promp
             { label: "建议下一步", prompt: "根据当前审核状态，只建议一个最值得立即执行的下一步，并说明完成标准。" },
         ],
     },
-    assets: {
-        label: "视觉资产协作",
-        prompts: [
-            { label: "检查阶段完成度", prompt: "检查当前视觉资产库是否具备进入分镜制作的条件，按资产类型列出完成度和阻塞项。" },
-            { label: "检查缺失资产", prompt: "对照当前集镜头检查角色、场景、道具和线索资产，列出缺失项与优先级。" },
-            { label: "检查一致性", prompt: "检查核心角色、场景和道具的视觉识别、配色、造型与基准图是否存在冲突。" },
-            { label: "建议下一步", prompt: "根据资产库与当前集需求，只建议一个最值得立即完善的资产，并说明完成标准。" },
-        ],
-    },
     storyboard: {
         label: "分镜协作",
         prompts: [
@@ -822,7 +1217,7 @@ function agentAssetSnapshot(asset: DramaNamedAsset) {
     };
 }
 
-function dramaSnapshot(project: DramaProject, episode: DramaEpisode, stage: DramaProjectStage, selectedShotId?: string) {
+function dramaSnapshot(project: DramaProject, episode: DramaEpisode, stage: DramaProjectStage, selectedShotId?: string, projectReferences: DramaAgentMentionItem[] = []) {
     return {
         currentStage: stage,
         project: {
@@ -844,6 +1239,7 @@ function dramaSnapshot(project: DramaProject, episode: DramaEpisode, stage: Dram
             reviewStatus: episode.reviewStatus,
         },
         selectedShotId,
+        currentTurnReferences: projectReferences.map(({ id, kind, title, alias }) => ({ id, kind, title, alias: `@${alias}` })),
         sourceAssets: project.sourceAssets?.map((asset) => ({
             id: asset.id,
             type: asset.type,

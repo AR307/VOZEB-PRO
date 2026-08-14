@@ -31,7 +31,10 @@ import {
     createCreativeRunBundle,
     CreativeStoreConflict,
     getCreativeConversationContext,
+    getCreativeConversation,
     getCreativeConversationsByIds,
+    getCreativeAsset,
+    getCreativeAssetsByIds,
     getCreativeRunByClientRequestId,
     listCreativeConversations,
     listCreativeMessages,
@@ -86,6 +89,15 @@ describe("creative runtime file provider", () => {
         expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("LIMIT $3"), ["run-one", 17, CREATIVE_RUN_EVENT_BATCH_SIZE]);
     });
 
+    it("queries PostgreSQL conversation history by project before pagination", async () => {
+        mocks.databaseProvider = "postgres";
+        mocks.query.mockResolvedValue({ rows: [] });
+
+        await expect(listCreativeConversations("user-one", { surface: "drama", source: "drama", projectId: "project-one", status: "active", limit: 21, offset: 4 })).resolves.toEqual([]);
+
+        expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("project_id = $4"), ["user-one", "drama", "drama", "project-one", "active", 21, 4]);
+    });
+
     it("loads only owned file conversations by unique stable ids", async () => {
         const owned = await createCreativeConversation("user", { surface: "canvas", projectId: "canvas-one", title: "Owned" });
         const foreign = await createCreativeConversation("other-user", { surface: "canvas", projectId: "canvas-one", title: "Foreign" });
@@ -117,6 +129,19 @@ describe("creative runtime file provider", () => {
 
         await expect(getCreativeConversationsByIds("user", [" conversation-one ", "conversation-one", "conversation-two"])).resolves.toMatchObject([{ id: "conversation-one", userId: "user", surface: "canvas", projectId: "canvas-one" }]);
         expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("WHERE user_id = $1 AND id = ANY($2::text[])"), ["user", ["conversation-one", "conversation-two"]]);
+    });
+
+    it("applies owner scope when loading a conversation or asset by id", async () => {
+        mocks.databaseProvider = "postgres";
+        mocks.query.mockResolvedValue({ rows: [] });
+
+        await expect(getCreativeConversation("conversation-one", "user-one")).resolves.toBeNull();
+        await expect(getCreativeAsset("asset-one", "user-one")).resolves.toBeNull();
+        await expect(getCreativeAssetsByIds([" asset-one ", "asset-one"], "user-one")).resolves.toEqual([]);
+
+        expect(mocks.query).toHaveBeenNthCalledWith(1, expect.stringContaining("id = $1 AND user_id = $2"), ["conversation-one", "user-one"]);
+        expect(mocks.query).toHaveBeenNthCalledWith(2, expect.stringContaining("id = $1 AND user_id = $2"), ["asset-one", "user-one"]);
+        expect(mocks.query).toHaveBeenNthCalledWith(3, expect.stringContaining("id = ANY($1::text[]) AND user_id = $2"), [["asset-one"], "user-one"]);
     });
 
     it("upserts a stable asset for the same run task and ordinal", async () => {
@@ -328,6 +353,14 @@ describe("creative runtime file provider", () => {
         await createCreativeConversation("user", { surface: "chat", source: "video-workbench", title: "Video" });
 
         expect(await listCreativeConversations("user", { surface: "chat", source: "agent", limit: 1 })).toEqual([agent]);
+    });
+
+    it("filters project conversations before applying pagination", async () => {
+        const first = await createCreativeConversation("user", { surface: "drama", source: "drama", projectId: "project-one", title: "第一条" });
+        await createCreativeConversation("user", { surface: "drama", source: "drama", projectId: "project-two", title: "其他项目" });
+        const second = await createCreativeConversation("user", { surface: "drama", source: "drama", projectId: "project-one", title: "第二条" });
+
+        expect(await listCreativeConversations("user", { surface: "drama", source: "drama", projectId: "project-one", limit: 2 })).toEqual([second, first]);
     });
 
     it("loads the newest page first and can page backward through long conversations", async () => {

@@ -3,7 +3,7 @@
 import { SlidersHorizontal } from "lucide-react";
 
 import { CreativeGenerationPreferences, generationPreferenceSummary, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
-import type { CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
+import { useCreativeComposerPopoverPlacement, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CreativeGenerationPreferences as GenerationPreferences } from "@/lib/creative-runtime-contract";
 import { boolConfig } from "@/lib/seedance-video";
@@ -27,6 +27,7 @@ type CanvasVideoSettingsPopoverProps = {
 
 export function CanvasVideoSettingsPopover({ config, metadata, references, onConfigChange, onMetadataChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const responsivePlacement = useCreativeComposerPopoverPlacement(placement);
     const preferences: GenerationPreferences = {
         mode: "video",
         video: {
@@ -51,7 +52,8 @@ export function CanvasVideoSettingsPopover({ config, metadata, references, onCon
             triggerIcon={<SlidersHorizontal className="size-4" />}
             triggerClassName={buttonClassName}
             triggerLabelClassName="whitespace-nowrap text-left !overflow-visible !text-clip"
-            placement={placement}
+            placement={responsivePlacement}
+            autoAdjustOverflow
             showCount={false}
             videoReferenceContent={<CanvasVideoReferenceSettings metadata={metadata} references={references} theme={theme} compact onChange={onMetadataChange} />}
             onChange={(patch) => applyVideoPreferencePatch(patch, onConfigChange)}

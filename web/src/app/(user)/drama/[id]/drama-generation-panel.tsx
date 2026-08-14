@@ -24,7 +24,7 @@ import { estimateEpisodePoints } from "./drama-shot-generation-utils";
 
 const actionButtonClass = "!h-9 !px-3 [&>span:last-child]:whitespace-nowrap";
 
-export function DramaGenerationPanel({ project, episode, onStageChange }: { project: DramaProject; episode: DramaEpisode; onStageChange: (stage: DramaProjectStage) => void }) {
+export function DramaGenerationPanel({ project, episode, onStageChange, onOpenAssets }: { project: DramaProject; episode: DramaEpisode; onStageChange: (stage: DramaProjectStage) => void; onOpenAssets: () => void }) {
     const { message } = App.useApp();
     const router = useRouter();
     const config = useEffectiveConfig();
@@ -215,7 +215,7 @@ export function DramaGenerationPanel({ project, episode, onStageChange }: { proj
                   ? `已登记 ${assetCount} 项资产，当前没有硬性引用阻塞`
                   : "当前镜头未要求参考图；建立基准资产可提升一致性",
             tone: readiness.missingReferenceShotIds.length ? ("blocked" as const) : assetCount ? ("done" as const) : ("optional" as const),
-            action: () => onStageChange(readiness.missingReferenceShotIds.length ? "storyboard" : "assets"),
+            action: readiness.missingReferenceShotIds.length ? () => onStageChange("storyboard") : onOpenAssets,
             actionLabel: readiness.missingReferenceShotIds.length ? "处理引用" : "查看资产",
         },
         {
@@ -243,110 +243,112 @@ export function DramaGenerationPanel({ project, episode, onStageChange }: { proj
     return (
         <div className="min-w-0" data-drama-generation-panel>
             <DramaStageHeader
-                step="05 · 镜头生成"
-                title="本集生产控制台"
+                step="04"
+                title="镜头生成"
                 description={status.description}
                 status={status.label}
                 tone={status.tone}
-                metrics={[
-                    { label: "镜头", value: `${readiness.completedVideoCount}/${readiness.totalShots}` },
-                    { label: "配音", value: readiness.voiceoverShotIds.length ? `${readiness.completedAudioCount}/${readiness.voiceoverShotIds.length}` : "无需" },
-                    { label: "预计", value: `${estimateEpisodePoints(config, project, episode.shots)} 积分` },
-                    { label: "实际", value: `${costSummary?.actualPoints || 0} 积分` },
-                    { label: "登记任务", value: costSummary?.taskCount || 0 },
-                ]}
+                metrics={
+                    readiness.totalShots
+                        ? [
+                              { label: "镜头", value: `${readiness.completedVideoCount}/${readiness.totalShots}` },
+                              { label: "配音", value: readiness.voiceoverShotIds.length ? `${readiness.completedAudioCount}/${readiness.voiceoverShotIds.length}` : "无需" },
+                              { label: "预计", value: `${estimateEpisodePoints(config, project, episode.shots)} 积分` },
+                              { label: "实际", value: `${costSummary?.actualPoints || 0} 积分` },
+                              { label: "任务", value: costSummary?.taskCount || 0 },
+                          ]
+                        : []
+                }
                 action={primaryAction}
             />
 
             {readiness.totalShots ? (
-                <div className="mt-4 flex items-center gap-3" aria-label="镜头完成进度">
+                <div className="mt-3 flex items-center gap-3" aria-label="镜头完成进度">
                     <Progress className="!m-0 min-w-0 flex-1" percent={readiness.progressPercent} showInfo={false} />
                     <span className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">{readiness.progressPercent}%</span>
                 </div>
             ) : null}
 
-            <section className="mt-5" aria-labelledby="drama-preflight-title" data-drama-generation-readiness>
-                <div className="flex items-end justify-between gap-3">
-                    <div>
-                        <h3 id="drama-preflight-title" className="text-sm font-semibold">
+            <section className="mt-2.5" aria-labelledby="drama-preflight-title" data-drama-generation-readiness>
+                <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                        <h3 id="drama-preflight-title" className="shrink-0 text-sm font-semibold">
                             生成前检查
                         </h3>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">阻塞项会说明原因，并带你回到真正需要处理的位置。</p>
+                        <p className="truncate text-xs text-muted-foreground">阻塞项会说明原因，并带你回到真正需要处理的位置。</p>
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{checklist.filter((item) => item.tone === "done" || item.tone === "optional").length}/4 可继续</span>
                 </div>
-                <div className="mt-3 grid overflow-hidden rounded-xl border border-border bg-card sm:grid-cols-2">
-                    {checklist.map(({ id, ...item }) => (
+                <div className={`mt-2 grid gap-1.5 ${readiness.totalShots ? "sm:grid-cols-2 xl:grid-cols-4" : "max-w-xl"}`}>
+                    {(readiness.totalShots ? checklist : checklist.slice(0, 1)).map(({ id, ...item }) => (
                         <ReadinessItem key={id} {...item} />
                     ))}
                 </div>
             </section>
 
-            <section className="mt-6 border-y border-border" aria-labelledby="drama-production-tools" data-drama-generation-tools>
-                <h3 id="drama-production-tools" className="sr-only">
-                    生产辅助工具
-                </h3>
-                <div className="grid lg:grid-cols-3 lg:divide-x lg:divide-border">
-                    <ToolGroup title="主生成" description="批量生成由顶部唯一主操作承接，避免重复触发任务。">
-                        <Button className={actionButtonClass} icon={<ScanSearch className="size-4" />} loading={reviewingVisuals} disabled={!episode.shots.some((shot) => shot.storyboardImageUrl)} onClick={() => void reviewVisuals()}>
-                            视觉复盘
-                        </Button>
-                    </ToolGroup>
-                    <ToolGroup title="后期处理" description={audioReady ? "配音与字幕按镜头结果继续处理。" : "AI 配音需后台先配置音频模型。"}>
-                        <Button
-                            className={actionButtonClass}
-                            icon={<Volume2 className="size-4" />}
-                            disabled={!audioReady || !audioCandidateShotIds.length}
-                            title={audioReady ? undefined : "请管理员先在后台设置默认音频模型"}
-                            onClick={() => queueAudio(project.id, episode.id, audioCandidateShotIds)}
-                        >
-                            批量配音
-                        </Button>
-                        <Button className={actionButtonClass} icon={<Captions className="size-4" />} disabled={!episode.shots.some((shot) => (shot.subtitle || shot.dialogue).trim())} onClick={() => setSubtitleOpen(true)}>
-                            字幕时间轴
-                        </Button>
-                    </ToolGroup>
-                    <ToolGroup title="交付导出" description="镜头结果可导出字幕和剪映草稿，成片完成后直接下载。">
-                        <Button className={actionButtonClass} icon={<Download className="size-4" />} disabled={!episode.shots.some((shot) => (shot.subtitle || shot.dialogue).trim())} onClick={downloadSubtitles}>
-                            导出 SRT
-                        </Button>
-                        <Button className={actionButtonClass} icon={<Download className="size-4" />} disabled={!episode.shots.some((shot) => shot.videoUrl)} onClick={() => setJianyingOpen(true)}>
-                            剪映草稿
-                        </Button>
-                    </ToolGroup>
-                </div>
-            </section>
+            {readiness.totalShots ? (
+                <section className="mt-3 border-y border-border" aria-labelledby="drama-production-tools" data-drama-generation-tools>
+                    <h3 id="drama-production-tools" className="sr-only">
+                        生产辅助工具
+                    </h3>
+                    <div className="grid lg:grid-cols-3 lg:divide-x lg:divide-border">
+                        <ToolGroup title="主生成" description="批量生成由顶部唯一主操作承接，避免重复触发任务。">
+                            <Button className={actionButtonClass} icon={<ScanSearch className="size-4" />} loading={reviewingVisuals} disabled={!episode.shots.some((shot) => shot.storyboardImageUrl)} onClick={() => void reviewVisuals()}>
+                                视觉复盘
+                            </Button>
+                        </ToolGroup>
+                        <ToolGroup title="后期处理" description={audioReady ? "配音与字幕按镜头结果继续处理。" : "AI 配音需后台先配置音频模型。"}>
+                            <Button
+                                className={actionButtonClass}
+                                icon={<Volume2 className="size-4" />}
+                                disabled={!audioReady || !audioCandidateShotIds.length}
+                                title={audioReady ? undefined : "请管理员先在后台设置默认音频模型"}
+                                onClick={() => queueAudio(project.id, episode.id, audioCandidateShotIds)}
+                            >
+                                批量配音
+                            </Button>
+                            <Button className={actionButtonClass} icon={<Captions className="size-4" />} disabled={!episode.shots.some((shot) => (shot.subtitle || shot.dialogue).trim())} onClick={() => setSubtitleOpen(true)}>
+                                字幕时间轴
+                            </Button>
+                        </ToolGroup>
+                        <ToolGroup title="交付导出" description="镜头结果可导出字幕和剪映草稿，成片完成后直接下载。">
+                            <Button className={actionButtonClass} icon={<Download className="size-4" />} disabled={!episode.shots.some((shot) => (shot.subtitle || shot.dialogue).trim())} onClick={downloadSubtitles}>
+                                导出 SRT
+                            </Button>
+                            <Button className={actionButtonClass} icon={<Download className="size-4" />} disabled={!episode.shots.some((shot) => shot.videoUrl)} onClick={() => setJianyingOpen(true)}>
+                                剪映草稿
+                            </Button>
+                        </ToolGroup>
+                    </div>
+                </section>
+            ) : null}
 
             {episode.visualReview ? <VisualReview project={project} episode={episode} /> : null}
             {renderTask ? <RenderTaskCard task={renderTask} onCancel={() => void cancelRender()} /> : null}
 
-            <section className="mt-6" aria-labelledby="drama-shot-task-title">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-                    <div>
-                        <h3 id="drama-shot-task-title" className="text-base font-semibold">
-                            镜头任务
-                        </h3>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">每个镜头独立显示分镜、视频和配音状态；失败时只重试目标镜头。</p>
-                    </div>
-                    {readiness.totalShots ? (
+            {episode.shots.length ? (
+                <section className="mt-3" aria-labelledby="drama-shot-task-title">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+                        <div>
+                            <h3 id="drama-shot-task-title" className="text-sm font-semibold">
+                                镜头任务
+                            </h3>
+                            <p className="mt-0.5 text-xs leading-5 text-muted-foreground">每个镜头独立显示分镜、视频和配音状态；失败时只重试目标镜头。</p>
+                        </div>
                         <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
                             <span>{readiness.completedVideoCount} 已完成</span>
                             <span>{readiness.activeShotIds.length} 处理中</span>
                             <span>{readiness.failedShotIds.length} 失败</span>
                         </div>
-                    ) : null}
-                </div>
+                    </div>
 
-                {episode.shots.length ? (
-                    <div className="mt-3 overflow-hidden rounded-xl border border-border bg-card" data-drama-shot-task-list>
+                    <div className="mt-2.5 overflow-hidden rounded-lg border border-border bg-card" data-drama-shot-task-list>
                         {episode.shots.map((shot) => (
                             <ShotTaskRow key={shot.id} project={project} episode={episode} shot={shot} audioReady={audioReady} onPreview={setPreviewMedia} onCancel={() => void cancelShot(shot)} onSendToAgent={() => sendToAgent(shot)} />
                         ))}
                     </div>
-                ) : (
-                    <GenerationEmptyState onStageChange={onStageChange} />
-                )}
-            </section>
+                </section>
+            ) : null}
 
             <DramaJianyingModal
                 open={jianyingOpen}
@@ -370,25 +372,29 @@ function ReadinessItem({ title, detail, tone, action, actionLabel }: { title: st
     const Icon = tone === "done" ? CircleCheck : tone === "blocked" ? CircleAlert : CircleDashed;
     const iconClass = tone === "done" ? "text-emerald-600 dark:text-emerald-300" : tone === "blocked" ? "text-amber-600 dark:text-amber-300" : "text-muted-foreground";
     return (
-        <div className="flex min-w-0 items-start gap-3 border-b border-border p-3 last:border-b-0 sm:min-h-24 sm:p-4 sm:[&:nth-last-child(-n+2)]:border-b-0 sm:[&:nth-child(odd)]:border-r">
-            <Icon className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
-            <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">{title}</div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
-            </div>
-            <Button type="link" size="small" className="!-mr-1 !h-7 !shrink-0 !px-1 !text-xs" onClick={action}>
-                {actionLabel}
-            </Button>
-        </div>
+        <button
+            type="button"
+            className="group flex h-12 min-w-0 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-left transition hover:border-foreground/20 hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/35"
+            onClick={action}
+            title={`${title}：${detail}`}
+            aria-label={`${title}，${actionLabel}`}
+        >
+            <Icon className={`size-4 shrink-0 ${iconClass}`} />
+            <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium">{title}</span>
+                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{detail}</span>
+            </span>
+            <span className="shrink-0 text-[11px] text-muted-foreground transition group-hover:text-foreground">{actionLabel}</span>
+        </button>
     );
 }
 
 function ToolGroup({ title, description, children }: { title: string; description: string; children: ReactNode }) {
     return (
-        <div className="min-w-0 border-b border-border py-4 last:border-b-0 lg:border-b-0 lg:px-5 lg:first:pl-0 lg:last:pr-0">
+        <div className="min-w-0 border-b border-border py-3 last:border-b-0 lg:border-b-0 lg:px-4 lg:first:pl-0 lg:last:pr-0">
             <div className="text-sm font-semibold">{title}</div>
-            <p className="mt-1 min-h-10 text-xs leading-5 text-muted-foreground">{description}</p>
-            <div className="mt-3 flex min-w-0 flex-wrap gap-2">{children}</div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+            <div className="mt-2 flex min-w-0 flex-wrap gap-2">{children}</div>
         </div>
     );
 }
@@ -574,35 +580,6 @@ function ShotErrors({ shot }: { shot: DramaShot }) {
             ))}
         </div>
     ) : null;
-}
-
-function GenerationEmptyState({ onStageChange }: { onStageChange: (stage: DramaProjectStage) => void }) {
-    return (
-        <div className="mt-3 rounded-xl border border-dashed border-border bg-card/55 px-4 py-7 sm:px-6" data-drama-generation-empty>
-            <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0">
-                    <span className="grid size-10 place-items-center rounded-lg border border-border bg-background text-muted-foreground">
-                        <Film className="size-4" />
-                    </span>
-                    <h4 className="mt-3 font-semibold">还没有可以进入生成队列的镜头</h4>
-                    <p className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">先完成剧本提取与内容审核，系统会创建稳定镜头 ID、视觉提示词和资产引用，再由这里统一排队生成。</p>
-                </div>
-                <div className="grid shrink-0 gap-2 text-xs text-muted-foreground sm:grid-cols-3 md:grid-cols-1">
-                    {["1. 填写并提取剧本", "2. 审核镜头事实", "3. 生成视觉方案"].map((item) => (
-                        <span key={item} className="rounded-md border border-border bg-background px-3 py-2">
-                            {item}
-                        </span>
-                    ))}
-                </div>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-                <Button type="primary" icon={<ArrowRight className="size-4" />} onClick={() => onStageChange("script")}>
-                    返回剧本
-                </Button>
-                <Button onClick={() => onStageChange("review")}>查看内容审核</Button>
-            </div>
-        </div>
-    );
 }
 
 function generationStageStatus(readiness: ReturnType<typeof summarizeDramaGeneration>, renderTask: DramaRenderTask | null): { label: string; description: string; tone: "neutral" | "ready" | "attention" | "running" } {

@@ -1077,8 +1077,8 @@ test("creative workspaces remain usable without horizontal overflow in light and
                 expect(Math.abs((closedLayout[0]?.width || 0) - (closedLayout[1]?.width || 0))).toBeLessThanOrEqual(1);
             }
 
-            await page.getByRole("button", { name: "切换到视觉资产" }).click();
-            await expect(page.getByRole("heading", { name: "视觉资产" })).toBeVisible();
+            await page.getByRole("button", { name: "打开项目资产" }).click();
+            await expect(page.locator("[data-drama-assets-library]")).toBeVisible();
             await expect(page.getByRole("button", { name: "新建角色" })).toBeVisible();
             await page.getByRole("button", { name: "新建角色" }).click();
             const assetDrawer = page.getByRole("dialog", { name: "新建角色" });
@@ -1090,9 +1090,9 @@ test("creative workspaces remain usable without horizontal overflow in light and
             await expect(page.getByRole("heading", { name: "内容审核" })).toBeVisible();
 
             await page.getByRole("button", { name: "切换到镜头生成" }).click();
-            await expect(page.getByRole("heading", { name: "本集生产控制台" })).toBeVisible();
+            await expect(page.getByRole("heading", { name: "镜头生成" })).toBeVisible();
             await expect(page.locator("[data-drama-generation-readiness]")).toBeVisible();
-            await expect(page.locator("[data-drama-generation-empty]")).toBeVisible();
+            await expect(page.locator("[data-drama-generation-panel]")).toBeVisible();
             const generationLayout = await page.locator("[data-drama-generation-panel]").evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
             expect(generationLayout.scrollWidth).toBeLessThanOrEqual(generationLayout.clientWidth + 1);
 
@@ -1147,10 +1147,15 @@ test("creative workspaces remain usable without horizontal overflow in light and
                     scrollWidth: element.scrollWidth,
                 };
             });
-            expect(quickLayout.display).toBe("grid");
-            expect(quickLayout.columns).toHaveLength(2);
+            expect(quickLayout.display).toBe("block");
+            expect(quickLayout.columns).toHaveLength(1);
             expect(quickLayout.inside).toBe(true);
             expect(quickLayout.scrollWidth).toBeLessThanOrEqual(quickLayout.clientWidth + 1);
+            await agentSurface.getByRole("button", { name: "打开本阶段 Agent 建议" }).click();
+            const stageSuggestionMenu = page.getByRole("menu");
+            await expect(stageSuggestionMenu).toBeVisible();
+            await expect(stageSuggestionMenu.getByRole("menuitem")).toHaveCount(4);
+            await page.keyboard.press("Escape");
             await agentSurface.getByRole("button", { name: "收起项目 Agent" }).click();
             await expect(page.getByRole("button", { name: "打开项目 Agent" })).toBeVisible();
         }

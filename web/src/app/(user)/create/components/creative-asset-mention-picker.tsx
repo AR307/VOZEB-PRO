@@ -117,20 +117,34 @@ function AssetPreview({ asset }: { asset: CreativeAsset }) {
     const url = asset.serverUrl || asset.remoteUrl;
     if (asset.type === "image" && url) return <img src={imagePreviewUrl(url, 240)} alt="" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" />;
     const coverUrl = asset.type === "video" && typeof asset.metadata.coverUrl === "string" ? asset.metadata.coverUrl : "";
-    if (asset.type === "video" && coverUrl) {
-        return (
-            <>
-                <img src={imagePreviewUrl(coverUrl, 240)} alt="" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" />
-                <span className="pointer-events-none absolute bottom-1 left-1 grid size-5 place-items-center rounded-full bg-black/55 text-white">
-                    <Play className="ml-0.5 size-2.5 fill-current" />
-                </span>
-            </>
-        );
-    }
-    const Icon = asset.type === "video" ? FileVideo : asset.type === "audio" ? FileAudio : asset.type === "text" ? FileText : ImageIcon;
+    if (asset.type === "video") return <VideoAssetPreview url={url} coverUrl={coverUrl} />;
+    const Icon = asset.type === "audio" ? FileAudio : asset.type === "text" ? FileText : ImageIcon;
     return (
         <span className="grid size-full place-items-center text-[#66717e] dark:text-[#aab3bf]">
             <Icon className="size-5" />
         </span>
+    );
+}
+
+function VideoAssetPreview({ url, coverUrl }: { url?: string; coverUrl: string }) {
+    const [coverFailed, setCoverFailed] = useState(false);
+    const [videoFailed, setVideoFailed] = useState(false);
+    const showCover = Boolean(coverUrl) && !coverFailed;
+    const showVideo = !showCover && Boolean(url) && !videoFailed;
+    return (
+        <>
+            {showCover ? <img src={imagePreviewUrl(coverUrl, 240)} alt="" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" onError={() => setCoverFailed(true)} /> : null}
+            {showVideo ? <video src={url} muted playsInline preload="metadata" aria-hidden="true" className="size-full bg-black object-cover transition-transform duration-200 group-hover:scale-[1.03]" onError={() => setVideoFailed(true)} /> : null}
+            {!showCover && !showVideo ? (
+                <span className="grid size-full place-items-center text-[#66717e] dark:text-[#aab3bf]">
+                    <FileVideo className="size-5" />
+                </span>
+            ) : null}
+            {showCover || showVideo ? (
+                <span className="pointer-events-none absolute bottom-1 left-1 grid size-5 place-items-center rounded-full bg-black/55 text-white">
+                    <Play className="ml-0.5 size-2.5 fill-current" />
+                </span>
+            ) : null}
+        </>
     );
 }

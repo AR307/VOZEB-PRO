@@ -1,4 +1,4 @@
-import type { SiteFriendLink, SiteShowcaseMode, SiteSocialSettings } from "@/lib/auth/store-types";
+import type { SiteFriendLink, SiteSocialSettings } from "@/lib/auth/store-types";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
 
 export type HomeSiteSettings = {
@@ -8,7 +8,6 @@ export type HomeSiteSettings = {
     footerCopyright: string;
     termsUrl: string;
     privacyUrl: string;
-    homeShowcaseMode: SiteShowcaseMode;
     friendLinks: SiteFriendLink[];
     socials: SiteSocialSettings;
 };

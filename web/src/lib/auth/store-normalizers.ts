@@ -6,6 +6,7 @@ import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image
 import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
 import { deriveLogicalModelsConfig, normalizeDefaultModelsConfig, normalizeLogicalModelsConfig } from "@/lib/model-routing-config";
+import { applyChannelProtocol } from "@/lib/channel-protocol-registry";
 import { resolveConfiguredModelPointCost } from "@/lib/model-point-cost";
 import { normalizeSystemChannelAdvancedConfig } from "./store-normalizers-channel";
 import {
@@ -36,8 +37,6 @@ import {
     type StoredCdkCode,
     type PublicAnnouncement,
     type SiteSettings,
-    type SiteShowcaseMode,
-    type SiteShowcaseItem,
     type SiteFriendLink,
     type SiteSocialKey,
     type SiteSocialSettings,
@@ -238,13 +237,14 @@ export function countActiveFullAdmins(db: AuthDatabase, excludingUserId?: string
 export function normalizeSettings(settings: AuthSettings): AuthSettings {
     const systemChannels = Array.isArray(settings.systemChannels) ? settings.systemChannels.map(normalizeSystemChannel).filter((channel) => channel.name || channel.baseUrl || channel.models.length) : [];
     const logicalModels = normalizeLogicalModels(settings.logicalModels, systemChannels);
+    const site = normalizeSiteSettings(settings.site);
     return {
-        site: normalizeSiteSettings(settings.site),
+        site,
         registrationEnabled: Boolean(settings.registrationEnabled),
         emailRegistrationEnabled: Boolean(settings.emailRegistrationEnabled),
         freeDailyPointsEnabled: settings.freeDailyPointsEnabled !== false,
         freeDailyPoints: normalizePoints(settings.freeDailyPoints, 0),
-        mail: normalizeMailSettings(settings.mail),
+        mail: normalizeMailSettings(settings.mail, site.title),
         allowUserApiConfig: false,
         modelPointCosts: normalizeModelPointCosts(settings.modelPointCosts),
         generationPointMultipliers: normalizeGenerationPointMultipliers(settings.generationPointMultipliers),
@@ -451,60 +451,39 @@ export function normalizeDataLifecycle(settings: Partial<DataLifecycleSettings> 
 
 export function normalizeSiteSettings(settings: Partial<SiteSettings> | undefined): SiteSettings {
     const title = normalizeText(settings?.title, DEFAULT_SITE_SETTINGS.title, 40);
-    const seoTitle = normalizeText(settings?.seoTitle, title, 72);
+    const seoTitle = normalizeBrandDefault(settings?.seoTitle, DEFAULT_SITE_SETTINGS.seoTitle, title, title, 72);
     return {
         title,
         logoUrl: normalizeLogoUrl(settings?.logoUrl),
         iconUrl: normalizeSiteIconUrl(settings?.iconUrl),
         seoTitle,
         seoDescription: normalizeText(settings?.seoDescription, DEFAULT_SITE_SETTINGS.seoDescription, 180),
-        seoKeywords: normalizeText(settings?.seoKeywords, DEFAULT_SITE_SETTINGS.seoKeywords, 240),
-        footerCopyright: normalizeText(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, 120),
+        seoKeywords: normalizeBrandDefault(settings?.seoKeywords, DEFAULT_SITE_SETTINGS.seoKeywords, title, DEFAULT_SITE_SETTINGS.seoKeywords.replace(DEFAULT_SITE_SETTINGS.title, title), 240),
+        footerCopyright: normalizeBrandDefault(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, title, DEFAULT_SITE_SETTINGS.footerCopyright.replace(DEFAULT_SITE_SETTINGS.title, title), 120),
         termsUrl: normalizeLinkUrl(settings?.termsUrl, DEFAULT_SITE_SETTINGS.termsUrl),
         termsVersion: normalizeText(settings?.termsVersion, DEFAULT_SITE_SETTINGS.termsVersion, 80),
         privacyUrl: normalizeLinkUrl(settings?.privacyUrl, DEFAULT_SITE_SETTINGS.privacyUrl),
         privacyVersion: normalizeText(settings?.privacyVersion, DEFAULT_SITE_SETTINGS.privacyVersion, 80),
-        homeShowcaseMode: settings?.homeShowcaseMode === "custom" ? "custom" : "random",
-        homeShowcaseItems: normalizeSiteShowcaseItems(settings?.homeShowcaseItems),
-        friendLinks: normalizeSiteFriendLinks(settings?.friendLinks),
+        friendLinks: normalizeSiteFriendLinks(settings?.friendLinks, title),
         socials: normalizeSiteSocials(settings?.socials),
     };
 }
 
-export function normalizeSiteShowcaseItems(settings: unknown): SiteShowcaseItem[] {
-    if (!Array.isArray(settings)) return [];
-    return settings
-        .map((item, index) => {
-            const value = item as Partial<SiteShowcaseItem>;
-            const title = normalizeText(value.title, "", 80);
-            const prompt = normalizeText(value.prompt, "", 3000);
-            if (!title || !prompt) return null;
-            return {
-                id: normalizeText(value.id, `showcase-${index + 1}`, 80),
-                title,
-                coverUrl: normalizeLinkUrl(value.coverUrl, ""),
-                prompt,
-                tags: normalizeShowcaseTags(value.tags),
-                category: normalizeText(value.category, "精选展示", 40),
-            };
-        })
-        .filter((item): item is SiteShowcaseItem => Boolean(item))
-        .slice(0, 8);
+function normalizeBrandDefault(value: unknown, defaultValue: string, siteTitle: string, fallback: string, maxLength: number) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text || (siteTitle !== DEFAULT_SITE_SETTINGS.title && text === defaultValue)) return fallback.slice(0, maxLength);
+    return normalizeText(text, fallback, maxLength);
 }
 
-export function normalizeShowcaseTags(value: unknown): string[] {
-    const raw = Array.isArray(value) ? value : String(value || "").split(/[,，\n]/);
-    return Array.from(new Set(raw.map((tag) => String(tag || "").trim()).filter(Boolean))).slice(0, 4);
-}
-
-export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
+export function normalizeSiteFriendLinks(settings: unknown, siteTitle = DEFAULT_SITE_SETTINGS.title): SiteFriendLink[] {
     const links = Array.isArray(settings) ? settings : DEFAULT_SITE_FRIEND_LINKS;
     return links
         .map((link, index) => {
             const value = link as Partial<SiteFriendLink>;
+            const defaultHomeLink = value.id === "vozeb-pro-home" && value.url?.replace(/\/$/, "") === "https://www.vozeb.com";
             return {
                 id: normalizeText(value.id, `friend-${index + 1}`, 80),
-                label: normalizeText(value.url?.replace(/\/$/, "") === "https://www.vozeb.com" ? "VOZEB PRO" : value.label, "友情链接", 32),
+                label: normalizeText(defaultHomeLink && (!value.label || value.label === DEFAULT_SITE_SETTINGS.title) ? siteTitle : value.label, "友情链接", 32),
                 url: normalizeLinkUrl(value.url, ""),
                 enabled: value.enabled !== false,
             };
@@ -540,7 +519,7 @@ function normalizeSiteSocialUrl(key: SiteSocialKey, value: unknown) {
     return normalizeLinkUrl(url, "");
 }
 
-export function normalizeMailSettings(settings: Partial<MailSettings> | undefined): MailSettings {
+export function normalizeMailSettings(settings: Partial<MailSettings> | undefined, siteTitle = DEFAULT_SITE_SETTINGS.title): MailSettings {
     const port = Math.max(1, Math.min(65535, Math.floor(Number(settings?.port) || DEFAULT_MAIL_SETTINGS.port)));
     return {
         provider: normalizeText(settings?.provider, DEFAULT_MAIL_SETTINGS.provider, 40),
@@ -550,7 +529,7 @@ export function normalizeMailSettings(settings: Partial<MailSettings> | undefine
         username: normalizeText(settings?.username, DEFAULT_MAIL_SETTINGS.username, 160),
         password: normalizeSecretText(settings?.password, DEFAULT_MAIL_SETTINGS.password, 512),
         fromEmail: normalizeText(settings?.fromEmail, DEFAULT_MAIL_SETTINGS.fromEmail, 160),
-        fromName: normalizeText(settings?.fromName, DEFAULT_MAIL_SETTINGS.fromName, 60),
+        fromName: normalizeText(!settings?.fromName || settings.fromName === DEFAULT_MAIL_SETTINGS.fromName ? siteTitle : settings.fromName, siteTitle, 60),
     };
 }
 
@@ -620,7 +599,7 @@ export function normalizeLinkUrl(value: unknown, fallback: string) {
 }
 
 export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): SystemModelChannel {
-    return {
+    const normalized: SystemModelChannel = {
         id: channel.id?.trim() || randomUUID(),
         name: repairKnownMojibakeText(channel.name?.trim() || "") || "通用接口",
         baseUrl: channel.baseUrl?.trim() || "",
@@ -631,6 +610,7 @@ export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): Sy
         enabled: channel.enabled !== false,
         advancedConfig: normalizeSystemChannelAdvancedConfig(channel.advancedConfig),
     };
+    return normalized.advancedConfig?.protocol === "yumeng" ? applyChannelProtocol(normalized, "yumeng") : normalized;
 }
 
 export function normalizePoints(value: unknown, fallback: number) {

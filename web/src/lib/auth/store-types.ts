@@ -296,21 +296,8 @@ export type SiteSettings = {
     termsVersion: string;
     privacyUrl: string;
     privacyVersion: string;
-    homeShowcaseMode: SiteShowcaseMode;
-    homeShowcaseItems: SiteShowcaseItem[];
     friendLinks: SiteFriendLink[];
     socials: SiteSocialSettings;
-};
-
-export type SiteShowcaseMode = "random" | "custom";
-
-export type SiteShowcaseItem = {
-    id: string;
-    title: string;
-    coverUrl: string;
-    prompt: string;
-    tags: string[];
-    category: string;
 };
 
 export type SiteFriendLink = {

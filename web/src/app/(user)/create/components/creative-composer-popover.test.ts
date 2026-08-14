@@ -11,6 +11,8 @@ describe("creative composer popover positioning", () => {
     it("centers narrow popovers and only shifts them horizontally", () => {
         expect(resolveCreativeComposerPopoverPlacement("bottomLeft", true)).toBe("bottom");
         expect(resolveCreativeComposerPopoverPlacement("topLeft", true)).toBe("top");
+        expect(resolveCreativeComposerPopoverPlacement("topRight", true)).toBe("top");
+        expect(resolveCreativeComposerPopoverPlacement("bottomRight", true)).toBe("bottom");
         expect(creativeComposerPopoverOverflow("bottom")).toEqual({ adjustX: 1, adjustY: 0 });
     });
 });

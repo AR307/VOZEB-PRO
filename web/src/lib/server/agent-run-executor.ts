@@ -52,7 +52,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const usesMemoryCandidates = !directModelSelection && claimed.surface === "chat" && claimed.referencedAssetIds.length === 0;
         const [settings, loadedExplicitAssets, conversationContext, memoryAssets] = await Promise.all([
             getAuthSettings(),
-            getCreativeAssetsByIds(claimed.referencedAssetIds),
+            getCreativeAssetsByIds(claimed.referencedAssetIds, claimed.userId),
             directModelSelection ? Promise.resolve(undefined) : getCreativeConversationContext(claimed.conversationId, claimed.userId, claimed.id),
             usesMemoryCandidates ? listRecentCreativeMediaAssets(claimed.conversationId, claimed.userId, 6) : Promise.resolve([]),
         ]);

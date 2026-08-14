@@ -72,9 +72,9 @@ export default async function RootLayout({
         <html lang="zh-CN" suppressHydrationWarning className="font-sans">
             <head>
                 <script id="theme-bootstrap" nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
-                <link rel="icon" href="/favicon.ico" />
-                <link rel="shortcut icon" href="/favicon.ico" />
-                <link rel="apple-touch-icon" href="/favicon.ico" />
+                <link rel="icon" href="/api/site-icon" />
+                <link rel="shortcut icon" href="/api/site-icon" />
+                <link rel="apple-touch-icon" href="/api/site-icon" />
             </head>
             <body
                 className="bg-background text-foreground antialiased"

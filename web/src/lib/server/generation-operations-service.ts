@@ -19,7 +19,8 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
     const searchUserIds = options.search?.trim() && getDatabaseProvider() === "file" ? await findPublicUserIdsByKeyword(options.search) : [];
     const [result, agentPerformance] = await Promise.all([listStoredGenerationTaskRecords({ ...options, searchUserIds, includeAll: false }), summarizeStoredAgentPerformance({ ...options, searchUserIds })]);
     const agentRunIds = result.items.filter((record) => record.type === "agent").map((record) => record.id);
-    const [settings, users, childRecords] = await Promise.all([settingsPromise, getPublicUsersByIds(result.items.map((record) => record.userId)), listStoredGenerationTaskRecordsByRunIds(agentRunIds)]);
+    const pageUserIds = Array.from(new Set(result.items.map((record) => record.userId)));
+    const [settings, users, childRecords] = await Promise.all([settingsPromise, getPublicUsersByIds(pageUserIds), listStoredGenerationTaskRecordsByRunIds(agentRunIds, pageUserIds)]);
     const usersById = new Map(users.map((user) => [user.id, user]));
     const childrenByRunId = new Map<string, StoredGenerationTaskRecord[]>();
     for (const child of childRecords) {

@@ -134,7 +134,16 @@ function imageTask(baseUrl: string, model: string, protocol: string, advancedCon
         config: { baseUrl, apiKey: "fixture-key", apiFormat: "openai", model, channelId: `fixture-${protocol}`, ...(advancedConfig ? { advancedConfig } : {}) },
         candidateConfigs: [],
         prompt: "create a blue protocol test image",
-        references: edit ? [{ id: "reference", name: "reference.png", type: "image/png", dataUrl: protocol === "yumeng" || protocol === "sub2api" || protocol === "custom" ? "https://cdn.example.com/reference.png" : PNG_DATA_URL }] : [],
+        references: edit
+            ? [
+                  {
+                      id: "reference",
+                      name: "reference.png",
+                      type: "image/png",
+                      dataUrl: protocol === "yumeng" ? `${origin}/media/fixture.png` : protocol === "sub2api" || protocol === "custom" ? "https://cdn.example.com/reference.png" : PNG_DATA_URL,
+                  },
+              ]
+            : [],
     };
 }
 

@@ -1,122 +1,19 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
-import type { TableColumnsType } from "antd";
-import Link from "next/link";
-import { BillingOperations } from "@/app/admin/billing/components/billing-operations";
-import { GenerationOperationsClient } from "@/app/admin/generation-operations/components/generation-operations-client";
-import {
-    formatAdminLogDuration,
-    formatAdminLogTime,
-    formatGenerationLogModel,
-    GenerationLogAssetPreview,
-    GenerationLogDetail,
-    GenerationLogMobileCard,
-    generationKindLabel,
-    generationSourceLabel,
-    generationStatusClass,
-    generationStatusLabel,
-} from "@/components/admin/admin-generation-log";
-import { GenerationConcurrencyPanel, GenerationCostControlPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
 import { DataLifecyclePanel } from "@/components/admin/admin-data-lifecycle-settings";
-import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
-import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
-import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
-import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
-import type { AdminSectionKey } from "@/components/admin/admin-sections";
+import { GenerationConcurrencyPanel, GenerationCostControlPanel, GenerationDefaultsPanel } from "@/components/admin/admin-generation-settings";
+import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { buildAdminSettingsPatch, resolveAdminSettingsAccess } from "@/components/admin/admin-settings-access";
-import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
-import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
-import {
-    ArrowRight,
-    Copy,
-    CreditCard,
-    CircleDollarSign,
-    Database,
-    Download,
-    ExternalLink,
-    Eye,
-    Globe2,
-    Image as ImageIcon,
-    KeyRound,
-    Mail,
-    Menu,
-    PlugZap,
-    Plus,
-    ReceiptText,
-    RefreshCw,
-    Save,
-    Search,
-    Send,
-    ShieldCheck,
-    SlidersHorizontal,
-    Sparkles,
-    Trash2,
-    Upload,
-    UserCog,
-    UserRound,
-    WalletCards,
-} from "lucide-react";
-import dayjs from "dayjs";
-import { nanoid } from "nanoid";
+import { SiteLogoPreview, SiteSettingStatus, siteSocialItems } from "@/components/admin/admin-site-preview";
+import { Button, Input, InputNumber, Switch, Tag } from "antd";
+import { Database, Globe2, Image as ImageIcon, Mail, Plus, Save, Search, Send, SlidersHorizontal, Sparkles, Trash2, Upload, UserCog } from "lucide-react";
 
-import { imagePreviewUrl } from "@/lib/media-image-url";
-import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
-import type { AgentSkill, AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, SiteFriendLink, SiteShowcaseItem, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel, UserRole, UserStatus } from "@/lib/auth/store";
-import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
-import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
-import type { PaymentConfigSummary } from "@/lib/payment-config-types";
-import type { AdminBillingSummary } from "@/lib/admin-billing-types";
-import type { Prompt } from "@/services/api/prompts";
-
+import { SettingsAnchorItem, SettingsStatusTile } from "./admin-dashboard-elements";
 import type { AdminDashboardController } from "./use-admin-dashboard-controller";
-import {
-    settingsStatusToneClass,
-    SettingsStatusTile,
-    SettingsAnchorItem,
-    FinanceFlowItem,
-    FinanceMiniRow,
-    createSystemChannel,
-    suggestedChannelModels,
-    requestAdminModels,
-    modelNameFromOption,
-    isCdkExpired,
-    cdkStatusLabel,
-    cdkStatusTone,
-    formatCreatedCdkExport,
-    downloadTextFile,
-    CdkRedemptionDetail,
-    splitTags,
-    clampInteger,
-} from "./admin-dashboard-elements";
-import { PROMPT_PAGE_SIZE, PROMPT_SEARCH_DEBOUNCE_MS, CDK_PAGE_SIZE, GENERATION_LOG_PAGE_SIZE } from "./use-admin-dashboard-controller";
 
 export function AdminSiteSection({ controller }: { controller: AdminDashboardController }) {
-    const {
-        logoInputRef,
-        iconInputRef,
-        settings,
-        settingsLoading,
-        activeSection,
-        saveSettings,
-        updateSiteSetting,
-        getLatestSiteSettings,
-        uploadSiteIcon,
-        updateSiteSocialSetting,
-        addFriendLink,
-        updateFriendLink,
-        deleteFriendLink,
-        addHomeShowcaseItem,
-        updateHomeShowcaseItem,
-        deleteHomeShowcaseItem,
-    } = controller;
+    const { logoInputRef, iconInputRef, settings, settingsLoading, activeSection, saveSettings, updateSiteSetting, getLatestSiteSettings, updateSiteSocialSetting, addFriendLink, updateFriendLink, deleteFriendLink } = controller;
     if (activeSection !== "site") return null;
     return (
         <Panel>
@@ -135,7 +32,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                         <SectionTitle icon={<Globe2 className="size-4" />} title="基础信息" />
                         <div className="grid gap-4 md:grid-cols-2">
                             <LabeledControl label="网站标题">
-                                <Input value={settings.site.title} maxLength={40} placeholder="VOZEB PRO" onChange={(event) => updateSiteSetting("title", event.target.value)} />
+                                <Input value={settings.site.title} maxLength={40} placeholder="例如：无限创作" onChange={(event) => updateSiteSetting("title", event.target.value)} />
                             </LabeledControl>
                             <LabeledControl label="Logo URL">
                                 <div className="flex gap-2">
@@ -168,90 +65,15 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                     <Input.TextArea value={settings.site.seoDescription} maxLength={180} rows={4} placeholder="用于搜索结果和社交分享摘要" onChange={(event) => updateSiteSetting("seoDescription", event.target.value)} />
                                 </LabeledControl>
                                 <LabeledControl label="SEO 关键词">
-                                    <Input value={settings.site.seoKeywords} maxLength={240} placeholder="VOZEB PRO,AI Agent,AI 绘图,AI 视频,画布,短剧" onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)} />
+                                    <Input
+                                        value={settings.site.seoKeywords}
+                                        maxLength={240}
+                                        placeholder={`${settings.site.title || "网站名称"},AI Agent,AI 绘图,AI 视频,画布,短剧`}
+                                        onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)}
+                                    />
                                 </LabeledControl>
                             </div>
                         </div>
-                    </div>
-
-                    <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                                <SectionTitle icon={<Sparkles className="size-4" />} title="首页提示词展示" />
-                                <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">控制首页“随机灵感图 / 精选灵感图”区域。随机模式会从公共提示词库抽取，自定义模式展示下方内容。</div>
-                            </div>
-                            <div className="w-full sm:w-[272px] sm:shrink-0">
-                                <Segmented
-                                    block
-                                    size="small"
-                                    className="w-full [&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-w-0 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!px-2 [&_.ant-segmented-item-label]:!text-center"
-                                    value={settings.site.homeShowcaseMode || "random"}
-                                    onChange={(value) => updateSiteSetting("homeShowcaseMode", value as AuthSettings["site"]["homeShowcaseMode"])}
-                                    options={[
-                                        { label: "随机提示词", value: "random" },
-                                        { label: "后台自定义", value: "custom" },
-                                    ]}
-                                />
-                            </div>
-                        </div>
-
-                        {settings.site.homeShowcaseMode === "custom" ? (
-                            <div className="mt-5 space-y-3">
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                    <div className="text-xs text-stone-500 dark:text-stone-400">建议至少填写 4 条，封面 URL 可留空，首页会自动使用渐变占位。</div>
-                                    <Button icon={<Plus className="size-4" />} disabled={(settings.site.homeShowcaseItems || []).length >= 8} onClick={addHomeShowcaseItem}>
-                                        添加展示
-                                    </Button>
-                                </div>
-                                <div className="grid gap-3">
-                                    {(settings.site.homeShowcaseItems || []).map((item, index) => (
-                                        <div key={item.id} className="grid gap-3 rounded-lg border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950/60 md:grid-cols-[168px_minmax(0,1fr)]">
-                                            <div className="overflow-hidden rounded-lg border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
-                                                {item.coverUrl ? (
-                                                    <img src={imagePreviewUrl(item.coverUrl, 640)} alt="" className="aspect-[4/3] w-full object-cover" referrerPolicy="no-referrer" />
-                                                ) : (
-                                                    <div className="flex aspect-[4/3] items-center justify-center bg-[linear-gradient(135deg,#f8fafc,#dff5ff_45%,#111827)] text-xs text-stone-500 dark:bg-[linear-gradient(135deg,#0f172a,#164e63_45%,#020617)] dark:text-stone-300">
-                                                        无封面
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div className="min-w-0 space-y-3">
-                                                <div className="flex items-center justify-between gap-3">
-                                                    <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">展示 {index + 1}</div>
-                                                    <Button size="small" danger icon={<Trash2 className="size-3.5" />} aria-label="删除首页展示" title="删除首页展示" onClick={() => deleteHomeShowcaseItem(item.id)} />
-                                                </div>
-                                                <div className="grid gap-3 md:grid-cols-2">
-                                                    <Input value={item.title} maxLength={80} placeholder="展示标题" onChange={(event) => updateHomeShowcaseItem(item.id, { title: event.target.value })} />
-                                                    <Input value={item.category} maxLength={40} placeholder="分类，例如 首页展示" onChange={(event) => updateHomeShowcaseItem(item.id, { category: event.target.value })} />
-                                                </div>
-                                                <Input value={item.coverUrl} maxLength={2000} placeholder="封面 URL，可留空" onChange={(event) => updateHomeShowcaseItem(item.id, { coverUrl: event.target.value })} />
-                                                <Input
-                                                    value={(item.tags || []).join("，")}
-                                                    maxLength={120}
-                                                    placeholder="标签，用逗号分隔"
-                                                    onChange={(event) =>
-                                                        updateHomeShowcaseItem(item.id, {
-                                                            tags: event.target.value
-                                                                .split(/[,，]/)
-                                                                .map((tag) => tag.trim())
-                                                                .filter(Boolean),
-                                                        })
-                                                    }
-                                                />
-                                                <Input.TextArea value={item.prompt} rows={3} maxLength={3000} placeholder="提示词内容" onChange={(event) => updateHomeShowcaseItem(item.id, { prompt: event.target.value })} />
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {!settings.site.homeShowcaseItems?.length ? (
-                                        <div className="rounded-md border border-dashed border-stone-200 px-3 py-8 text-center text-sm text-stone-500 dark:border-stone-800">暂无自定义展示，点击“添加展示”开始配置。</div>
-                                    ) : null}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="mt-5 rounded-lg border border-dashed border-stone-200 bg-white px-4 py-5 text-sm leading-6 text-stone-600 dark:border-stone-800 dark:bg-stone-950/60 dark:text-stone-300">
-                                当前使用公共提示词库随机展示。首页接近该区域时才会加载随机内容，避免拖慢首屏。
-                            </div>
-                        )}
                     </div>
 
                     <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
@@ -261,7 +83,12 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                         </div>
                         <div className="mt-5 space-y-4">
                             <LabeledControl label="版权所有">
-                                <Input value={settings.site.footerCopyright} maxLength={120} placeholder="© 2026 VOZEB PRO. All rights reserved." onChange={(event) => updateSiteSetting("footerCopyright", event.target.value)} />
+                                <Input
+                                    value={settings.site.footerCopyright}
+                                    maxLength={120}
+                                    placeholder={`© 2026 ${settings.site.title || "网站名称"}. All rights reserved.`}
+                                    onChange={(event) => updateSiteSetting("footerCopyright", event.target.value)}
+                                />
                             </LabeledControl>
                             <div className="grid gap-4 md:grid-cols-2">
                                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_96px] gap-3">
@@ -341,7 +168,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                             <div className="flex items-center gap-3">
                                 <SiteLogoPreview logoUrl={settings.site.logoUrl} />
                                 <div className="min-w-0">
-                                    <div className="truncate text-lg font-semibold">{settings.site.title || "VOZEB PRO"}</div>
+                                    <div className="truncate text-lg font-semibold">{settings.site.title || "网站名称"}</div>
                                     <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">首页导航品牌</div>
                                 </div>
                             </div>
@@ -352,7 +179,6 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                         </div>
                     </div>
                     <SiteSettingStatus site={settings.site} />
-                    <SiteShowcasePreview site={settings.site} onAdd={addHomeShowcaseItem} />
                 </div>
             </div>
         </Panel>
@@ -494,7 +320,7 @@ export function AdminSettingsSection({ controller }: { controller: AdminDashboar
                                                     <Input value={settings.mail.fromEmail} placeholder="默认使用邮箱账号" onChange={(event) => updateMailSetting("fromEmail", event.target.value)} />
                                                 </LabeledControl>
                                                 <LabeledControl label="发件名称">
-                                                    <Input value={settings.mail.fromName} placeholder="VOZEB PRO" onChange={(event) => updateMailSetting("fromName", event.target.value)} />
+                                                    <Input value={settings.mail.fromName} placeholder={settings.site.title || "网站名称"} onChange={(event) => updateMailSetting("fromName", event.target.value)} />
                                                 </LabeledControl>
                                             </div>
                                             <LabeledControl label="测试收件邮箱">

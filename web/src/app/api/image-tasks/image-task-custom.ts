@@ -1,6 +1,7 @@
 import type { ImageTask } from "@/lib/server/image-task-store";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
+import { buildYumengImageRequest, resolveYumengImageResolution } from "@/lib/yumeng-model-center";
 
 import { publicImageReferenceRequestUrl } from "./image-task-openai";
 import { IMAGE_TASK_POLL_INTERVAL_MS, type ImageApiResponse, type ImageTaskResult } from "./image-task-types";
@@ -44,7 +45,7 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         prompt: withSystemPrompt(config, task.prompt),
         size,
         aspect_ratio: imageRequestAspectRatio(config.size || "auto"),
-        resolution: advanced.protocol === "yumeng" ? yumengImageResolution(config.quality) : config.quality || "auto",
+        resolution: advanced.protocol === "yumeng" ? resolveYumengImageResolution(config.model, config.quality) : config.quality || "auto",
         width,
         height,
         quality: config.quality || "auto",
@@ -52,7 +53,10 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         image: images[0] || "",
         images,
     };
-    const payload = buildProviderRequest(advanced.requestTemplate, values, values);
+    const payload =
+        advanced.protocol === "yumeng"
+            ? buildYumengImageRequest({ model: config.model, prompt: values.prompt, images, aspectRatio: values.aspect_ratio, resolution: values.resolution, size })
+            : buildProviderRequest(advanced.requestTemplate, values, values);
     const url = taskUrl(config, task.kind === "edit" ? advanced.editPath || advanced.createPath : advanced.createPath, origin);
     const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
     headers.set("content-type", "application/json");
@@ -69,13 +73,6 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl: baseUrl, pollBaseUrl: baseUrl } };
         return pollCustomImageTask(task, taskId, baseUrl, cookie);
     });
-}
-
-function yumengImageResolution(value: string | undefined) {
-    const quality = value?.trim().toLowerCase();
-    if (quality === "high" || quality === "4k") return "4K";
-    if (quality === "medium" || quality === "3k") return "3K";
-    return "2K";
 }
 
 export function resolveDeclarativeImageSize(config: Pick<ImageTask["config"], "quality" | "size" | "advancedConfig">) {

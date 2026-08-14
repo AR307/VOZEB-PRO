@@ -3,7 +3,7 @@ import { App } from "antd";
 import { describe, expect, it, vi } from "vitest";
 
 import { agentMediaDownloadName } from "./agent-media-download";
-import { formatAgentMessageText } from "./agent-message-format";
+import { formatAgentArtifactText, formatAgentMessageText } from "./agent-message-format";
 import { agentMediaPreviewPopupStyles, AgentMediaPreview } from "./agent-media-preview";
 import { AgentMessageActions } from "./agent-message-actions";
 
@@ -77,5 +77,6 @@ describe("agent message controls", () => {
         expect(formatAgentMessageText('已完成 1 个创作任务。\n\n「狗提示词」已完成：\n:::writing{variant="document" id="58391"}\n一只温暖友善的狗，真实毛发，柔和自然光。\n:::\n可继续调整。')).toBe(
             "已完成 1 个创作任务。\n\n「狗提示词」已完成：\n\n一只温暖友善的狗，真实毛发，柔和自然光。\n\n可继续调整。",
         );
+        expect(formatAgentArtifactText(':::writing{variant="document" id="58391" title="《潮汐写给远方的信》"}\n# 潮汐写给远方的信\n\n等你回来。:::')).toBe("# 潮汐写给远方的信\n\n等你回来。");
     });
 });

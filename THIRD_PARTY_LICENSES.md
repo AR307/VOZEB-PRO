@@ -4,7 +4,7 @@
 
 ## Web 应用
 
-共 414 个运行时依赖记录。
+共 464 个运行时依赖记录。
 
 | 包 | 版本 | 许可证 | 项目主页 |
 | --- | --- | --- | --- |
@@ -182,6 +182,37 @@
 | @swc/helpers | 0.5.15 | Apache-2.0 | [链接](https://swc.rs) |
 | @tanstack/query-core | 5.101.4 | MIT | [链接](https://tanstack.com/query) |
 | @tanstack/react-query | 5.101.4 | MIT | [链接](https://tanstack.com/query) |
+| @tiptap/core | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-blockquote | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-bold | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-bubble-menu | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-bullet-list | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-code | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-code-block | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-document | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-dropcursor | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-floating-menu | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-gapcursor | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-hard-break | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-heading | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-highlight | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-horizontal-rule | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-italic | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-link | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-list | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-list-item | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-list-keymap | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-ordered-list | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-paragraph | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-strike | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-text | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-text-align | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-text-style | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extension-underline | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/extensions | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/pm | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/react | 3.30.0 | MIT | [链接](https://tiptap.dev) |
+| @tiptap/starter-kit | 3.30.0 | MIT | [链接](https://tiptap.dev) |
 | @tokenizer/inflate | 0.4.1 | MIT | [链接](https://github.com/Borewit/tokenizer-inflate#readme) |
 | @tokenizer/token | 0.3.0 | MIT | [链接](https://github.com/Borewit/tokenizer-token#readme) |
 | @types/debug | 4.1.13 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/debug) |
@@ -195,6 +226,7 @@
 | @types/react | 19.2.18 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react) |
 | @types/react-dom | 19.2.4 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-dom) |
 | @types/unist | 2.0.11, 3.0.3 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist) |
+| @types/use-sync-external-store | 0.0.6 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/use-sync-external-store) |
 | @ungap/structured-clone | 1.3.3 | ISC | [链接](https://github.com/ungap/structured-clone#readme) |
 | agent-base | 6.0.2 | MIT | [链接](https://github.com/TooTallNate/node-agent-base#readme) |
 | antd | 6.5.3 | MIT | [链接](https://ant.design) |
@@ -243,6 +275,7 @@
 | escape-string-regexp | 5.0.0 | MIT | [链接](https://github.com/sindresorhus/escape-string-regexp#readme) |
 | estree-util-is-identifier-name | 3.0.0 | MIT | [链接](https://github.com/syntax-tree/estree-util-is-identifier-name#readme) |
 | extend | 3.0.2 | MIT | [链接](https://github.com/justmoon/node-extend#readme) |
+| fast-equals | 5.4.1 | MIT | [链接](https://github.com/planttheidea/fast-equals#readme) |
 | fflate | 0.8.3 | MIT | [链接](https://101arrowz.github.io/fflate) |
 | file-saver | 2.0.5 | MIT | [链接](https://github.com/eligrey/FileSaver.js#readme) |
 | file-type | 22.0.1 | MIT | [链接](https://github.com/sindresorhus/file-type#readme) |
@@ -281,6 +314,7 @@
 | json2mq | 0.2.0 | MIT | [链接](https://github.com/akiran/json2mq) |
 | json5 | 2.2.3 | MIT | [链接](http://json5.org/) |
 | lines-and-columns | 1.2.4 | MIT | [链接](https://github.com/eventualbuddha/lines-and-columns#readme) |
+| linkifyjs | 4.3.3 | MIT | [链接](https://linkify.js.org) |
 | longest-streak | 3.1.0 | MIT | [链接](https://github.com/wooorm/longest-streak#readme) |
 | lru-cache | 5.1.1 | ISC | [链接](https://github.com/isaacs/node-lru-cache#readme) |
 | lucide-react | 1.28.0 | ISC | [链接](https://lucide.dev) |
@@ -338,6 +372,7 @@
 | nanoid | 3.3.17, 6.0.0 | MIT | [链接](https://github.com/ai/nanoid#readme) |
 | next | 16.2.12 | MIT | [链接](https://nextjs.org) |
 | node-releases | 2.0.50 | MIT | [链接](https://github.com/chicoxyzzy/node-releases#readme) |
+| orderedmap | 2.1.1 | MIT | [链接](https://github.com/marijnh/orderedmap#readme) |
 | otpauth | 9.5.1 | MIT | [链接](https://github.com/hectorm/otpauth) |
 | parent-module | 1.0.1 | MIT | [链接](https://github.com/sindresorhus/parent-module#readme) |
 | parse-entities | 4.0.2 | MIT | [链接](https://github.com/wooorm/parse-entities#readme) |
@@ -362,6 +397,19 @@
 | postgres-date | 1.0.7 | MIT | [链接](https://github.com/bendrucker/postgres-date#readme) |
 | postgres-interval | 1.2.0 | MIT | [链接](https://github.com/bendrucker/postgres-interval#readme) |
 | property-information | 7.2.0 | MIT | [链接](https://github.com/wooorm/property-information#readme) |
+| prosemirror-changeset | 2.4.1 | MIT | - |
+| prosemirror-commands | 1.7.2 | MIT | - |
+| prosemirror-dropcursor | 1.8.3 | MIT | - |
+| prosemirror-gapcursor | 1.4.1 | MIT | [链接](https://github.com/prosemirror/prosemirror-gapcursor#readme) |
+| prosemirror-history | 1.5.0 | MIT | [链接](https://github.com/prosemirror/prosemirror-history#readme) |
+| prosemirror-inputrules | 1.5.1 | MIT | [链接](https://github.com/prosemirror/prosemirror-inputrules#readme) |
+| prosemirror-keymap | 1.2.3 | MIT | [链接](https://github.com/prosemirror/prosemirror-keymap#readme) |
+| prosemirror-model | 1.25.11 | MIT | - |
+| prosemirror-schema-list | 1.5.1 | MIT | [链接](https://github.com/prosemirror/prosemirror-schema-list#readme) |
+| prosemirror-state | 1.4.4 | MIT | [链接](https://github.com/prosemirror/prosemirror-state#readme) |
+| prosemirror-tables | 1.8.5 | MIT | [链接](https://github.com/ProseMirror/prosemirror-tables#readme) |
+| prosemirror-transform | 1.12.0 | MIT | [链接](https://github.com/prosemirror/prosemirror-transform#readme) |
+| prosemirror-view | 1.42.2 | MIT | - |
 | proxy-from-env | 2.1.0 | MIT | [链接](https://github.com/Rob--W/proxy-from-env#readme) |
 | radix-ui | 1.6.7 | MIT | [链接](https://radix-ui.com/primitives) |
 | react | 19.2.8 | MIT | [链接](https://react.dev/) |
@@ -377,6 +425,7 @@
 | remark-stringify | 11.0.0 | MIT | [链接](https://remark.js.org) |
 | resolve | 1.22.12 | MIT | [链接](https://github.com/browserify/resolve#readme) |
 | resolve-from | 4.0.0 | MIT | [链接](https://github.com/sindresorhus/resolve-from#readme) |
+| rope-sequence | 1.3.4 | MIT | [链接](https://github.com/marijnh/rope-sequence#readme) |
 | scheduler | 0.27.0 | MIT | [链接](https://react.dev/) |
 | scroll-into-view-if-needed | 3.1.0 | MIT | [链接](https://scroll-into-view.dev) |
 | semver | 6.3.1, 7.8.5 | ISC | [链接](https://github.com/npm/node-semver#readme) |
@@ -417,6 +466,7 @@
 | use-sync-external-store | 1.6.0 | MIT | [链接](https://github.com/facebook/react#readme) |
 | vfile | 6.0.3 | MIT | [链接](https://github.com/vfile/vfile#readme) |
 | vfile-message | 4.0.3 | MIT | [链接](https://github.com/vfile/vfile-message#readme) |
+| w3c-keyname | 2.2.8 | MIT | [链接](https://github.com/marijnh/w3c-keyname#readme) |
 | xtend | 4.0.2 | MIT | [链接](https://github.com/Raynos/xtend) |
 | yallist | 3.1.1 | ISC | [链接](https://github.com/isaacs/yallist#readme) |
 | yaml | 1.10.3, 2.9.0 | ISC | [链接](https://eemeli.org/yaml/) |

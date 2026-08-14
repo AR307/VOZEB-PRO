@@ -1,14 +1,14 @@
 "use client";
 
 import { App, Button, Dropdown, Popover, Tooltip } from "antd";
-import { Check, Clapperboard, Clock3, Copy, Download, Edit3, ExternalLink, FileAudio2, Film, Info, Link2, LoaderCircle, MoreHorizontal, PanelsTopLeft } from "lucide-react";
+import { Check, Clapperboard, Clock3, Copy, Download, ExternalLink, FileAudio2, Film, Info, Link2, MoreHorizontal, PanelsTopLeft, RotateCw } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { downloadAgentMedia, type AgentMediaDownload } from "@/components/agent/agent-media-download";
 import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
-import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
+import { formatAgentArtifactText, formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -18,6 +18,7 @@ import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
 import { userAvatarFallback } from "@/lib/user-avatar";
+import { DEFAULT_SITE_TITLE } from "@/lib/site-brand";
 import type { MaterializedCreativeProject } from "@/services/creative-project-handoff";
 import { getCreativeAgentRun, type CreativeAgentRun } from "@/services/api/creative";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
@@ -39,7 +40,7 @@ export function CreativeMessages({
     runDetails,
     materializingProjectId,
     onMaterializeProject,
-    onEditMessage,
+    onRetryMessage,
     selectedAssetIds,
     onToggleAsset,
     hasOlder,
@@ -55,7 +56,7 @@ export function CreativeMessages({
     runDetails: Record<string, CreativeAgentRun>;
     materializingProjectId?: string;
     onMaterializeProject: (handoff: CreativeProjectHandoff) => Promise<MaterializedCreativeProject>;
-    onEditMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
+    onRetryMessage: (message: CreativeMessage, run?: CreativeAgentRun) => Promise<boolean | void>;
     selectedAssetIds: string[];
     onToggleAsset: (id: string) => void;
     hasOlder?: boolean;
@@ -64,7 +65,7 @@ export function CreativeMessages({
     followLatest?: boolean;
 }) {
     const endRef = useRef<HTMLDivElement>(null);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
     const user = usePublicSessionStore((state) => state.payload?.user || null);
     const models = useCreativeAgentModels();
     const avatarUrl = user?.avatarUrl?.trim();
@@ -105,12 +106,12 @@ export function CreativeMessages({
 
     useEffect(() => {
         if (followLatest) endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
-    }, [assets.length, followLatest, lastMessageId]);
+    }, [assets.length, followLatest, lastMessageId, loading]);
 
     if (loading) return <div className="grid flex-1 place-items-center text-sm text-stone-400">正在读取会话...</div>;
 
     return (
-        <div className="mx-auto w-full max-w-[1120px] space-y-3 px-3 pb-3 pt-5 sm:space-y-8 sm:px-8 sm:pt-7">
+        <div className="mx-auto w-full max-w-[1120px] space-y-3 px-3 pb-3 pt-5 sm:space-y-8 sm:px-8 sm:pt-7" data-testid="creative-message-list">
             {hasOlder ? (
                 <div className="flex justify-center">
                     <Button type="text" loading={olderLoading} onClick={onLoadOlder}>
@@ -136,7 +137,7 @@ export function CreativeMessages({
                             projectErrors={projectErrors}
                             materializingProjectId={materializingProjectId}
                             onMaterializeProject={onMaterializeProject}
-                            onEditMessage={onEditMessage}
+                            onRetryMessage={onRetryMessage}
                             selectedAssetIds={selectedAssetIds}
                             onToggleAsset={onToggleAsset}
                         />
@@ -149,7 +150,7 @@ export function CreativeMessages({
                 const displayContent = item.status === "failed" ? friendlyAgentError(item.content) : formatAgentMessageText(item.content);
                 const textAssetContent = itemAssets
                     .filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim())
-                    .map((asset) => asset.textContent!.trim())
+                    .map((asset) => formatAgentArtifactText(asset.textContent!))
                     .join("\n\n");
                 const downloads = agentAssetDownloads(itemAssets);
                 const run = item.runId ? runDetails[item.runId] : undefined;
@@ -160,7 +161,9 @@ export function CreativeMessages({
                         {item.role === "assistant" ? <CreativeAssistantAvatar className="mt-0" logoUrl={site.logoUrl} /> : null}
                         <div className={cn("min-w-0", item.role === "user" ? "max-w-[520px] text-right" : "min-w-0 flex-1")}>
                             {item.role === "user" && itemAssets.length ? <CreativeRoundReferenceStrip assets={itemAssets} /> : null}
-                            {textAssetContent && item.role === "assistant" && item.status === "completed" ? null : (
+                            {item.role === "assistant" && item.status === "running" ? (
+                                <CreativeGenerationWaiting run={run} message={item} />
+                            ) : textAssetContent && item.role === "assistant" && item.status === "completed" ? null : (
                                 <div
                                     className={cn(
                                         "break-words text-[15px] leading-7",
@@ -170,7 +173,6 @@ export function CreativeMessages({
                                         item.status === "cancelled" && "text-stone-400",
                                     )}
                                 >
-                                    {item.role === "assistant" && item.status === "running" ? <LoaderCircle className="mr-2 inline size-4 animate-spin text-stone-400" /> : null}
                                     {item.role === "assistant" && item.status === "completed" ? <AgentMarkdown>{displayContent}</AgentMarkdown> : <span className="whitespace-pre-wrap">{displayContent}</span>}
                                 </div>
                             )}
@@ -185,7 +187,7 @@ export function CreativeMessages({
                                     onMaterialize={() => void onMaterializeProject(handoff).catch(() => undefined)}
                                 />
                             ) : null}
-                            {item.role === "assistant" && failedRound ? <EditRetryAction onEdit={() => onEditMessage(failedRound.user, failedRound.run)} detail={failedTasks.length ? `${failedTasks.length} 项生成失败` : undefined} /> : null}
+                            {item.role === "assistant" && failedRound ? <RetryAction onRetry={() => onRetryMessage(failedRound.assistant, failedRound.run)} detail={failedTasks.length ? `${failedTasks.length} 项生成失败` : undefined} /> : null}
                             {item.role !== "user" && item.status !== "running" ? <AgentMessageActions text={textAssetContent || (downloads.length ? "" : displayContent)} downloads={downloads.length ? [] : downloads} /> : null}
                         </div>
                         {item.role === "user" ? <CreativeUserAvatar className="mt-2 !size-8" avatarUrl={avatarUrl} fallback={avatarFallback} label={user?.displayName || user?.username || "用户"} /> : null}
@@ -208,7 +210,7 @@ function CreativeMediaRound({
     projectErrors,
     materializingProjectId,
     onMaterializeProject,
-    onEditMessage,
+    onRetryMessage,
     selectedAssetIds,
     onToggleAsset,
 }: {
@@ -222,7 +224,7 @@ function CreativeMediaRound({
     projectErrors: Record<string, string>;
     materializingProjectId?: string;
     onMaterializeProject: (handoff: CreativeProjectHandoff) => Promise<MaterializedCreativeProject>;
-    onEditMessage: (message: CreativeMessage, run?: CreativeAgentRun) => void;
+    onRetryMessage: (message: CreativeMessage, run?: CreativeAgentRun) => Promise<boolean | void>;
     selectedAssetIds: string[];
     onToggleAsset: (id: string) => void;
 }) {
@@ -272,7 +274,7 @@ function CreativeMediaRound({
                         ) : null}
                         <div data-testid="creative-result-group" className="mt-3 flex w-fit max-w-full flex-col items-start">
                             {isFailedMediaRound ? (
-                                <CreativeGenerationFailure message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent} onEdit={() => onEditMessage(userMessage, run)} />
+                                <CreativeGenerationFailure message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent} onRetry={() => onRetryMessage(assistantMessage, run)} />
                             ) : assistantMessage.status === "running" ? (
                                 <CreativeGenerationWaiting run={run} message={assistantMessage} />
                             ) : showAssistantText ? (
@@ -317,7 +319,7 @@ function CreativeMediaRound({
                                 onMaterialize={() => void onMaterializeProject(handoff).catch(() => undefined)}
                             />
                         ) : null}
-                        {!isFailedMediaRound && failedTasks.length ? <EditRetryAction onEdit={() => onEditMessage(userMessage, run)} detail={`${failedTasks.length} 项生成失败`} /> : null}
+                        {!isFailedMediaRound && failedTasks.length ? <RetryAction onRetry={() => onRetryMessage(assistantMessage, run)} detail={`${failedTasks.length} 项生成失败`} /> : null}
                     </div>
                 </div>
             </div>
@@ -486,13 +488,14 @@ function CreativeRoundActions({ outputAssets, activeAsset, run, selectedAssetIds
     const mode = creativeRunMode(run);
     const optimizedPrompt = creativeResultPrompt(activeAsset, outputAssets, run);
     const menuItems = [
+        { key: "copy-prompt", label: copyingPrompt ? "正在复制提示词" : "复制提示词", icon: <Copy className="size-4" />, disabled: copyingPrompt },
         ...(primaryDownload ? [{ key: "copy-link", label: "复制链接", icon: <Link2 className="size-4" /> }] : []),
         ...(referenceAction ? [{ key: "reference", label: referenceAction.referenced ? "取消引用" : "引用结果", icon: <Link2 className="size-4" /> }] : []),
     ];
     const actionClass =
-        "!flex !h-8 !min-w-0 !items-center !justify-center !gap-1.5 !rounded-md !border !border-[#e4e7ec] !bg-white !px-2.5 !text-[11px] !font-medium !text-[#667085] !shadow-none hover:!border-[#d0d5dd] hover:!bg-[#f8f9fb] hover:!text-[#344054] disabled:!border-[#edf0f2] disabled:!bg-[#f8f9fa] disabled:!text-[#b3bac4] dark:!border-[#343a43] dark:!bg-[#181b20] dark:!text-[#aab2bc] dark:hover:!border-[#4a525c] dark:hover:!bg-[#22262c] dark:hover:!text-white dark:disabled:!border-[#2a2f36] dark:disabled:!bg-[#1a1d22] dark:disabled:!text-[#5f6873]";
+        "!flex !h-8 !min-w-0 !items-center !justify-center !gap-1.5 !overflow-hidden !whitespace-nowrap !rounded-md !border !border-[#e4e7ec] !bg-white !px-2.5 !text-[11px] !font-medium !text-[#667085] !shadow-none hover:!border-[#d0d5dd] hover:!bg-[#f8f9fb] hover:!text-[#344054] disabled:!border-[#edf0f2] disabled:!bg-[#f8f9fa] disabled:!text-[#b3bac4] dark:!border-[#343a43] dark:!bg-[#181b20] dark:!text-[#aab2bc] dark:hover:!border-[#4a525c] dark:hover:!bg-[#22262c] dark:hover:!text-white dark:disabled:!border-[#2a2f36] dark:disabled:!bg-[#1a1d22] dark:disabled:!text-[#5f6873]";
     const downloadButton = (
-        <Button className={actionClass} disabled={!downloads.length} icon={<Download className="size-3.5" />}>
+        <Button className={cn(actionClass, "!w-full")} disabled={!downloads.length} icon={<Download className="size-3.5" />}>
             {mode === "video" ? "下载视频" : "下载"}
         </Button>
     );
@@ -513,10 +516,7 @@ function CreativeRoundActions({ outputAssets, activeAsset, run, selectedAssetIds
         }
     };
     return (
-        <div data-active-asset-id={activeAsset?.id} className="mt-2 flex w-fit max-w-full flex-wrap items-center gap-1.5" aria-label="本轮创作操作">
-            <Button className={actionClass} loading={copyingPrompt} icon={<Copy className="size-3.5" />} onClick={() => void copyOptimizedPrompt()}>
-                复制提示词
-            </Button>
+        <div data-active-asset-id={activeAsset?.id} className={cn("mt-2 grid w-max items-center gap-1.5", mode === "video" ? "grid-cols-[94px_32px]" : "grid-cols-[72px_32px]")} aria-label="本轮创作操作">
             {allDownloads.length > 1 ? (
                 <Dropdown
                     trigger={["click"]}
@@ -531,7 +531,7 @@ function CreativeRoundActions({ outputAssets, activeAsset, run, selectedAssetIds
                     {downloadButton}
                 </Dropdown>
             ) : (
-                <Button className={actionClass} disabled={!downloads.length} icon={<Download className="size-3.5" />} onClick={() => downloadAgentMedia(downloads)}>
+                <Button className={cn(actionClass, "!w-full")} disabled={!downloads.length} icon={<Download className="size-3.5" />} onClick={() => downloadAgentMedia(downloads)}>
                     {mode === "video" ? "下载视频" : "下载"}
                 </Button>
             )}
@@ -541,6 +541,7 @@ function CreativeRoundActions({ outputAssets, activeAsset, run, selectedAssetIds
                     menu={{
                         items: menuItems,
                         onClick: ({ key }) => {
+                            if (key === "copy-prompt") void copyOptimizedPrompt();
                             if (key === "copy-link" && primaryDownload) void copyText(primaryDownload.url, "链接已复制");
                             if (key === "reference" && referenceAction) onToggleAsset(referenceAction.assetId);
                         },
@@ -564,8 +565,9 @@ function assetsForAssistant(message: CreativeMessage, assetsByMessage: Map<strin
     return [...(assetsByMessage.get(message.id) || []), ...(message.runId ? assetsByMessage.get(message.runId) || [] : [])].filter((asset, index, list) => list.findIndex((current) => current.id === asset.id) === index);
 }
 
-function CreativeGenerationFailure({ message, onEdit }: { message: string; onEdit: () => void }) {
+function CreativeGenerationFailure({ message, onRetry }: { message: string; onRetry: () => Promise<boolean | void> }) {
     const displayMessage = friendlyAgentError(message, "创作任务执行失败");
+    const [retrying, setRetrying] = useState(false);
     return (
         <div data-testid="creative-generation-failure" className="max-w-[620px] py-1">
             <div className="min-w-0">
@@ -573,11 +575,12 @@ function CreativeGenerationFailure({ message, onEdit }: { message: string; onEdi
                 <Button
                     type="default"
                     className="!mt-3 !h-9 !rounded-[10px] !border-[#ffd4d5] !bg-white !px-4 !text-sm !font-medium !text-[#e22b2e] hover:!border-[#ffb7b8] hover:!bg-[#fff8f8] hover:!text-[#c51f22] dark:!border-[#6b3438] dark:!bg-transparent dark:!text-[#ff9a9c] dark:hover:!border-[#9a4a4e] dark:hover:!bg-[#321e20]"
-                    icon={<Edit3 className="size-4" />}
-                    onClick={onEdit}
-                    aria-label="编辑提示词后重试"
+                    icon={<RotateCw className="size-4" />}
+                    loading={retrying}
+                    onClick={() => void runRetry(onRetry, setRetrying)}
+                    aria-label="直接重试本次创作"
                 >
-                    编辑重试
+                    直接重试
                 </Button>
             </div>
         </div>
@@ -589,7 +592,8 @@ function messageAssetIds(message: CreativeMessage) {
     return Array.isArray(value) ? Array.from(new Set(value.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map((id) => id.trim()))) : [];
 }
 
-function EditRetryAction({ onEdit, detail }: { onEdit: () => void; detail?: string }) {
+function RetryAction({ onRetry, detail }: { onRetry: () => Promise<boolean | void>; detail?: string }) {
+    const [retrying, setRetrying] = useState(false);
     return (
         <div className="mt-2 flex max-w-full items-center gap-2">
             {detail ? <span className="text-xs text-red-600 dark:text-red-300">{detail}</span> : null}
@@ -597,13 +601,24 @@ function EditRetryAction({ onEdit, detail }: { onEdit: () => void; detail?: stri
                 type="text"
                 size="small"
                 className="!h-8 !rounded-md !px-2 !text-xs !font-medium !text-red-700 hover:!bg-red-50 hover:!text-red-800 dark:!text-red-300 dark:hover:!bg-red-950/30 dark:hover:!text-red-200"
-                icon={<Edit3 className="size-3.5" />}
-                onClick={onEdit}
+                icon={<RotateCw className="size-3.5" />}
+                loading={retrying}
+                onClick={() => void runRetry(onRetry, setRetrying)}
+                aria-label="直接重试本次创作"
             >
-                编辑重试
+                直接重试
             </Button>
         </div>
     );
+}
+
+async function runRetry(retry: () => Promise<boolean | void>, setRetrying: (value: boolean) => void) {
+    setRetrying(true);
+    try {
+        await retry();
+    } finally {
+        setRetrying(false);
+    }
 }
 
 function creativeRoundFailed(message: CreativeMessage, run?: CreativeAgentRun) {
@@ -669,7 +684,7 @@ function CreativeAssetResults({
                     {textAssets.map((asset, index) => (
                         <section key={asset.id} aria-label={`文本产物：${asset.title || index + 1}`} className="min-w-0 border-l border-stone-200 pl-3.5 text-[15px] leading-7 dark:border-stone-700 sm:pl-4">
                             <div className="mb-1.5 text-xs font-medium text-stone-500 dark:text-stone-400">{asset.title || `文本结果 ${index + 1}`}</div>
-                            <AgentMarkdown>{asset.textContent!.trim()}</AgentMarkdown>
+                            <AgentMarkdown>{formatAgentArtifactText(asset.textContent!)}</AgentMarkdown>
                         </section>
                     ))}
                 </div>

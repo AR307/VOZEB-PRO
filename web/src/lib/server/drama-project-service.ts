@@ -1,9 +1,12 @@
 import { nanoid } from "nanoid";
 
 import type { CreateDramaProjectInput, DramaAssetProfile, DramaAssetReference, DramaEpisode, DramaNamedAsset, DramaProject, DramaShot, DramaShotContinuity, DramaUtterance, DramaVideoMode } from "@/lib/drama-project-contract";
+import { dramaRichContentToPlainText, normalizeDramaScriptRichContent } from "@/lib/drama-script-rich-content";
 import { normalizeDramaImageSize } from "@/lib/drama-image-size";
 import { resolveDramaShotDuration } from "@/lib/server/drama-shot-config";
-import { createCreativeConversation, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
+import { listAgentRuns } from "@/lib/server/agent-run-store";
+import { CreativeEntityDeletionConflict, deleteDramaConversationAggregate } from "@/lib/server/creative-entity-deletion-store";
+import { createCreativeConversation, getCreativeConversation, listCreativeConversations, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
 import { createDramaProject, deleteDramaProject, DramaProjectStoreError, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
@@ -131,6 +134,41 @@ export async function deleteDramaProjectForUser(userId: string, id: string) {
     if (current) await deleteUserLocalMediaAssets(userId, collectLocalMediaStorageKeys(current));
 }
 
+export async function deleteDramaAgentConversationForUser(userId: string, projectIdValue: string, conversationIdValue: unknown) {
+    const project = await getDramaProjectForUser(userId, projectIdValue);
+    const conversationId = cleanText(conversationIdValue);
+    if (!conversationId) throw new DramaProjectServiceError("请选择要删除的对话", 400);
+    const conversation = await getCreativeConversation(conversationId, userId);
+    if (!conversation || conversation.surface !== "drama" || conversation.projectId !== project.id) throw new DramaProjectServiceError("Agent 对话与当前短剧项目不匹配", 409);
+
+    const activeRuns = await listAgentRuns({ userId, conversationId, surface: "drama", statuses: ["planning", "running", "paused"], limit: 1 });
+    if (activeRuns.length) throw new DramaProjectServiceError("运行中的对话需先停止任务再删除", 409);
+
+    let replacementConversationId: string | undefined;
+    let createdReplacement = false;
+    if (project.creativeConversationId === conversationId) {
+        const candidates = await listCreativeConversations(userId, { surface: "drama", source: "drama", projectId: project.id, status: "active", limit: 2 });
+        let replacement = candidates.find((item) => item.id !== conversationId);
+        if (!replacement) {
+            replacement = await createCreativeConversation(userId, { surface: "drama", source: "drama", projectId: project.id, title: "新对话" });
+            createdReplacement = true;
+        }
+        replacementConversationId = replacement.id;
+    }
+
+    let result: Awaited<ReturnType<typeof deleteDramaConversationAggregate>>;
+    try {
+        result = await deleteDramaConversationAggregate(userId, project.id, conversationId, replacementConversationId);
+    } catch (error) {
+        if (createdReplacement && replacementConversationId) await updateCreativeConversation(replacementConversationId, userId, { status: "archived" }).catch(() => null);
+        if (error instanceof CreativeEntityDeletionConflict) throw new DramaProjectServiceError(error.message, 409);
+        throw error;
+    }
+    await deleteUserLocalMediaAssets(userId, result.mediaStorageKeys);
+    const updatedProject = result.dramaProject || project;
+    return { deleted: result.deletedConversations > 0, activeConversationId: updatedProject.creativeConversationId || "", project: updatedProject };
+}
+
 function normalizeCreateInput(value: unknown): Required<Omit<CreateDramaProjectInput, "sourceAssets" | "sourceHandoffId">> & Pick<CreateDramaProjectInput, "sourceAssets" | "sourceHandoffId"> {
     const input = object(value);
     const title = cleanText(input.title);
@@ -195,10 +233,13 @@ function normalizeEpisode(value: unknown): DramaEpisode | null {
                   error: optionalText(render.error),
               }
             : undefined;
+    const script = cleanText(input.script);
+    const scriptRichContent = normalizeDramaScriptRichContent(input.scriptRichContent);
     return {
         id,
         title: cleanText(input.title) || "未命名剧集",
-        script: cleanText(input.script),
+        script: scriptRichContent ? dramaRichContentToPlainText(scriptRichContent).trim() : script,
+        scriptRichContent,
         outline: cleanText(input.outline),
         hook: cleanText(input.hook),
         nextPreview: cleanText(input.nextPreview),

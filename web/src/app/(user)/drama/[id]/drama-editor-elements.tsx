@@ -43,28 +43,28 @@ export function DramaStageHeader({
     className?: string;
 }) {
     return (
-        <header className={`border-b border-border pb-4 sm:pb-5 ${className}`} data-drama-stage-header>
-            <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
-                <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
-                        <span className="uppercase tracking-[0.16em] text-muted-foreground">{step}</span>
-                        <span className={`inline-flex h-6 items-center rounded-md border px-2 ${stageToneClass[tone]}`}>{status}</span>
+        <header className={`border-b border-border/80 pb-3 ${className}`} data-drama-stage-header>
+            <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">{step}</span>
+                        <h2 className="truncate text-base font-semibold leading-6 sm:text-[17px]">{title}</h2>
+                        <span className={`inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[11px] font-medium ${stageToneClass[tone]}`}>{status}</span>
                     </div>
-                    <h2 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2>
-                    <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
+                    <p className="sr-only">{description}</p>
                     {metrics.length ? (
-                        <dl className="mt-3 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground sm:text-sm">
-                            {metrics.map((item) => (
-                                <div key={item.label} className="flex min-w-0 items-baseline gap-1.5">
-                                    <dt>{item.label}</dt>
-                                    <dd className="font-medium tabular-nums text-foreground">{item.value}</dd>
+                        <dl className="mt-1.5 flex min-w-0 flex-wrap items-center gap-y-1 text-[11px] leading-4 text-muted-foreground" data-drama-stage-metrics>
+                            {metrics.map((item, index) => (
+                                <div key={item.label} className={`flex min-w-0 items-baseline gap-1.5 pr-3 ${index ? "border-l border-border/80 pl-3" : ""}`}>
+                                    <dt className="whitespace-nowrap">{item.label}</dt>
+                                    <dd className="whitespace-nowrap font-medium tabular-nums text-foreground">{item.value}</dd>
                                 </div>
                             ))}
                         </dl>
                     ) : null}
                 </div>
                 {action || secondaryAction ? (
-                    <div className="flex w-full shrink-0 flex-col-reverse gap-2 sm:w-auto sm:flex-row lg:pt-1">
+                    <div className="flex w-full shrink-0 flex-col-reverse gap-1.5 sm:w-auto sm:flex-row sm:items-center">
                         {secondaryAction}
                         {action}
                     </div>

@@ -444,12 +444,15 @@ test("canvas Agent toolbar stays ordered and its generation settings fit narrow 
                 .toMatchObject({ leftToolGaps: [4, 4, 8], parameterAfterModel: 8 });
             await expect
                 .poll(() =>
-                    trigger.locator("span").first().evaluate((element) => ({
-                        text: element.textContent || "",
-                        clipped: element.scrollWidth > element.clientWidth,
-                        overflow: getComputedStyle(element).overflow,
-                        textOverflow: getComputedStyle(element).textOverflow,
-                    })),
+                    trigger
+                        .locator("span")
+                        .first()
+                        .evaluate((element) => ({
+                            text: element.textContent || "",
+                            clipped: element.scrollWidth > element.clientWidth,
+                            overflow: getComputedStyle(element).overflow,
+                            textOverflow: getComputedStyle(element).textOverflow,
+                        })),
                 )
                 .toMatchObject({ clipped: false, overflow: "visible", textOverflow: "clip" });
 

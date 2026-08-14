@@ -207,7 +207,16 @@ function imageTask(channel: ReturnType<typeof configureProxyChannel>, edit: bool
         config: { ...channel.config, quality: "high" },
         candidateConfigs: [],
         prompt: "create a blue protocol test image",
-        references: edit ? [{ id: "reference", name: "reference.png", type: "image/png", dataUrl: ["yumeng", "sub2api", "custom"].includes(protocol) ? "https://cdn.example.com/reference.png" : PNG_DATA_URL }] : [],
+        references: edit
+            ? [
+                  {
+                      id: "reference",
+                      name: "reference.png",
+                      type: "image/png",
+                      dataUrl: protocol === "yumeng" ? `${fixtureOrigin}/media/fixture.png` : ["sub2api", "custom"].includes(protocol) ? "https://cdn.example.com/reference.png" : PNG_DATA_URL,
+                  },
+              ]
+            : [],
     };
 }
 

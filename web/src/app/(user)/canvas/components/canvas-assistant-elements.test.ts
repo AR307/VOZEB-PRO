@@ -79,7 +79,7 @@ describe("Canvas Agent current-turn references", () => {
         const chatSource = await readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-agent-chat-ui.tsx"), "utf8");
         const controlsSource = await readFile(resolve(process.cwd(), "src/components/agent/creative-agent-controls.tsx"), "utf8");
         const assistantSource = await readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-assistant-panel.tsx"), "utf8");
-        const settingsSource = await readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-agent-generation-settings.tsx"), "utf8");
+        const settingsSource = await readFile(resolve(process.cwd(), "src/components/agent/compact-agent-generation-settings.tsx"), "utf8");
         const inputRow = chatSource.slice(chatSource.indexOf("data-canvas-agent-input-row"), chatSource.indexOf("data-canvas-agent-toolbar"));
         const toolbar = chatSource.slice(chatSource.indexOf('className="mt-2 flex min-w-0'), chatSource.indexOf("export function AgentPanelTabs"));
         const controls = controlsSource.slice(controlsSource.indexOf("const mutedStyle"), controlsSource.indexOf("function capabilityLabel"));
@@ -141,7 +141,7 @@ describe("Canvas Agent current-turn references", () => {
 
     it("keeps an uploaded canvas image as a stable Run reference URL", () => {
         expect(
-            compactMetadata({
+            compactMetadata(CanvasNodeType.Image, {
                 content: "/api/reference-assets/permanent/2026/07/28/images/person.png",
                 storageKey: "permanent/2026/07/28/images/person.png",
                 mimeType: "image/png",
@@ -151,11 +151,47 @@ describe("Canvas Agent current-turn references", () => {
 
     it("preserves the generation-media scope instead of rebuilding the image as a reference upload", () => {
         expect(
-            compactMetadata({
+            compactMetadata(CanvasNodeType.Image, {
                 content: "/api/generation-log-assets/permanent/2026/07/28/images/person.png",
                 storageKey: "permanent/2026/07/28/images/person.png",
             }),
         ).toMatchObject({ url: "/api/generation-log-assets/permanent/2026/07/28/images/person.png" });
+    });
+
+    it("keeps media prompts but never serializes data or blob media bodies", () => {
+        const largePayload = `data:image/png;base64,${"canvas-binary-marker".repeat(40_000)}`;
+        const large = compactMetadata(CanvasNodeType.Image, { content: largePayload, prompt: "保留人物并改成夜景", status: "success", model: "image-model" });
+        const small = compactMetadata(CanvasNodeType.Image, { content: "data:image/png;base64,short", prompt: "保留人物并改成夜景", status: "success", model: "image-model" });
+
+        expect(large).toEqual(small);
+        expect(large).toEqual({ content: "保留人物并改成夜景", size: undefined, naturalWidth: undefined, naturalHeight: undefined, url: undefined });
+        expect(JSON.stringify(large)).not.toContain("canvas-binary-marker");
+        expect(compactMetadata(CanvasNodeType.Video, { content: "blob:http://localhost/video", prompt: "镜头缓慢推进" })).toMatchObject({ content: "镜头缓慢推进", url: undefined });
+    });
+
+    it("keeps text and exact config content while removing unused scene fields", () => {
+        const snapshot = compactSnapshot({
+            projectId: "canvas-one",
+            title: "画布",
+            imageSize: "1:1",
+            nodes: [
+                { id: "text", type: CanvasNodeType.Text, title: "文案", position: { x: 120, y: 240 }, width: 320, height: 180, metadata: { content: "完整文本内容", status: "success", model: "text-model" } },
+                { id: "config", type: CanvasNodeType.Config, title: "生成配置", position: { x: 480, y: 240 }, width: 340, height: 220, metadata: { composerContent: "生成电影感海报", size: "1824x1024", generationMode: "image" } },
+            ],
+            connections: [],
+            selectedNodeIds: ["text"],
+            viewport: { x: 100, y: 200, k: 0.75 },
+        });
+
+        expect(snapshot.nodes).toEqual([
+            { id: "text", type: CanvasNodeType.Text, title: "文案", width: 320, height: 180, metadata: { content: "完整文本内容", size: undefined, naturalWidth: undefined, naturalHeight: undefined, url: undefined } },
+            { id: "config", type: CanvasNodeType.Config, title: "生成配置", width: 340, height: 220, metadata: { content: "生成电影感海报", size: "1824x1024", naturalWidth: undefined, naturalHeight: undefined, url: undefined } },
+        ]);
+        expect(snapshot).not.toHaveProperty("viewport");
+        expect(snapshot.nodes[0]).not.toHaveProperty("position");
+        expect(snapshot.nodes[0].metadata).not.toHaveProperty("status");
+        expect(snapshot.nodes[0].metadata).not.toHaveProperty("model");
+        expect(snapshot.nodes[1].metadata).not.toHaveProperty("generationMode");
     });
 
     it("keeps the current custom image dimensions in the backend Run snapshot", () => {

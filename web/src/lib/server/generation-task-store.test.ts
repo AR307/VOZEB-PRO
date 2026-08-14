@@ -127,6 +127,14 @@ describe("mutateStoredGenerationTask", () => {
         await expect(withGenerationConcurrencyLimit("user", "image", 60_000, 1, async () => "image-retry")).resolves.toBe("image-retry");
     });
 
+    it("excludes the existing task identity when resuming or retrying the same aggregate", async () => {
+        const now = Date.now();
+        mocks.records = [{ id: "agent-run", userId: "user", type: "agent", status: "running", payload: {}, executionPhase: "created", createdAt: now, updatedAt: now, expiresAt: now + 60_000 }];
+
+        await expect(withGenerationConcurrencyLimit("user", "agent", 60_000, 1, async () => "retried", "agent-run")).resolves.toBe("retried");
+        await expect(withGenerationConcurrencyLimit("user", "agent", 60_000, 1, async () => "other-run")).resolves.toBeNull();
+    });
+
     it("restores a safe review reason for a legacy uncertain submission", async () => {
         const now = Date.now();
         mocks.records = [
@@ -258,11 +266,25 @@ describe("listStoredGenerationTaskRecords", () => {
         mocks.records = [
             { id: "agent-one", userId: "user", type: "agent", status: "running", runId: "agent-one", payload: {}, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
             { id: "child-one", userId: "user", type: "image", status: "success", runId: "agent-one", payload: { pointsCost: 2 }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
+            { id: "child-wrong-owner", userId: "other", type: "image", status: "success", runId: "agent-one", payload: { pointsCost: 9 }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
             { id: "child-other", userId: "user", type: "video", status: "success", runId: "agent-two", payload: { pointsCost: 4 }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
         ];
 
-        await expect(listStoredGenerationTaskRecordsByRunIds(["agent-one"])).resolves.toEqual([expect.objectContaining({ id: "child-one", runId: "agent-one" })]);
+        await expect(listStoredGenerationTaskRecordsByRunIds(["agent-one"], ["user"])).resolves.toEqual([expect.objectContaining({ id: "child-one", runId: "agent-one" })]);
         expect(generationTaskPointsCost({ plannerAudit: { pointsCost: 1.25 } })).toBe(1.25);
+    });
+
+    it("pushes Agent run and owner scopes into the PostgreSQL child-task query", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [] } as never);
+
+        await listStoredGenerationTaskRecordsByRunIds(["agent-one"], ["user-one"]);
+
+        const [query, params] = vi.mocked(postgresQuery).mock.calls[0] || [];
+        expect(String(query)).toContain("run_id = ANY($1::text[])");
+        expect(String(query)).toContain("user_id = ANY($2::text[])");
+        expect(params).toEqual([["agent-one"], ["user-one"]]);
+        vi.mocked(postgresQuery).mockReset();
     });
 
     it("pushes PostgreSQL filters, pagination and aggregate summary into database queries", async () => {

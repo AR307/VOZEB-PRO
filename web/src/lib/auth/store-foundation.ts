@@ -33,8 +33,6 @@ import {
     type StoredCdkCode,
     type PublicAnnouncement,
     type SiteSettings,
-    type SiteShowcaseMode,
-    type SiteShowcaseItem,
     type SiteFriendLink,
     type SiteSocialKey,
     type SiteSocialSettings,
@@ -95,8 +93,6 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
     termsVersion: "1.0",
     privacyUrl: "/privacy",
     privacyVersion: "1.0",
-    homeShowcaseMode: "random",
-    homeShowcaseItems: [],
     friendLinks: DEFAULT_SITE_FRIEND_LINKS,
     socials: DEFAULT_SITE_SOCIALS,
 };

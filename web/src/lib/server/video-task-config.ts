@@ -1,12 +1,20 @@
+import { parseImageDimensions } from "@/lib/image-size";
 import type { VideoGenerationReference } from "@/lib/video-reference-contract";
 
 export function resolveVideoGenerationParameters(raw: Record<string, unknown>, defaults: { imageSize: string; videoQuality: string; videoSeconds: number }) {
     return {
         ...raw,
-        size: normalizeVideoAspectRatio(text(raw.size), defaults.imageSize),
+        size: normalizeVideoSize(text(raw.size), defaults.imageSize),
         vquality: text(raw.vquality) || defaults.videoQuality,
         videoSeconds: resolveVideoDuration(raw.videoSeconds, defaults.videoSeconds),
     };
+}
+
+export function normalizeVideoSize(value: unknown, fallback = "16:9") {
+    const textValue = text(value);
+    const dimensions = parseImageDimensions(textValue);
+    if (dimensions) return `${dimensions.width}x${dimensions.height}`;
+    return normalizeVideoAspectRatio(textValue, fallback);
 }
 
 export function resolveUpstreamVideoDuration(value: unknown, fallback: number, policy: { durationRange?: string; minDurationSeconds?: number; maxDurationSeconds?: number } = {}) {

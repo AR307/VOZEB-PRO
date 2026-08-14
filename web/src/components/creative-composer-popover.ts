@@ -4,16 +4,16 @@ export type CreativeComposerPopoverPlacement = "topLeft" | "top" | "topRight" | 
 
 const horizontalViewportOverflow = { adjustX: 1, adjustY: 0 } as const;
 
-export function resolveCreativeComposerPopoverPlacement(placement: "topLeft" | "bottomLeft", narrowViewport: boolean): CreativeComposerPopoverPlacement {
+export function resolveCreativeComposerPopoverPlacement(placement: CreativeComposerPopoverPlacement, narrowViewport: boolean): CreativeComposerPopoverPlacement {
     if (!narrowViewport) return placement;
-    return placement === "bottomLeft" ? "bottom" : "top";
+    return placement.startsWith("bottom") ? "bottom" : "top";
 }
 
 export function creativeComposerPopoverOverflow(placement: CreativeComposerPopoverPlacement) {
     return placement === "top" || placement === "bottom" ? horizontalViewportOverflow : false;
 }
 
-export function useCreativeComposerPopoverPlacement(placement: "topLeft" | "bottomLeft") {
+export function useCreativeComposerPopoverPlacement(placement: CreativeComposerPopoverPlacement) {
     const [narrowViewport, setNarrowViewport] = useState(false);
 
     useEffect(() => {

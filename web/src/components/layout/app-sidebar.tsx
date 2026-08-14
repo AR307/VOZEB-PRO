@@ -7,19 +7,21 @@ import { usePathname, useRouter } from "next/navigation";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
+import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: NavigationToolSlug; expanded: boolean }) {
     const pathname = usePathname();
     const router = useRouter();
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
+    const siteTitle = resolveSiteTitle(site.title);
     const helpActive = pathname.startsWith("/help");
 
     return (
         <aside className={cn("hidden h-full shrink-0 flex-col border-r border-[#eaecf0] bg-white text-[#111827] transition-[width] duration-200 lg:flex dark:border-[#292d33] dark:bg-[#111316] dark:text-[#f3f5f7]", expanded ? "w-44" : "w-[72px]")}>
-            <Link href="/create" className={cn("flex h-16 shrink-0 items-center border-b border-[#eaecf0] px-3 dark:border-[#292d33]", expanded ? "justify-start px-5" : "justify-center")} aria-label={site.title || "VOZEB PRO"}>
+            <Link href="/create" className={cn("flex h-16 shrink-0 items-center border-b border-[#eaecf0] px-3 dark:border-[#292d33]", expanded ? "justify-start px-5" : "justify-center")} aria-label={siteTitle}>
                 <SiteLogo logoUrl={site.logoUrl} className="size-8" />
-                {expanded ? <span className="ml-3 min-w-0 truncate text-[15px] font-semibold">{site.title || "VOZEB PRO"}</span> : null}
+                {expanded ? <span className="ml-3 min-w-0 truncate text-[15px] font-semibold">{siteTitle}</span> : null}
             </Link>
 
             <nav className={cn("hide-scrollbar min-h-0 flex-1 overflow-y-auto py-5", expanded ? "px-3" : "px-2")} aria-label="工作空间导航">

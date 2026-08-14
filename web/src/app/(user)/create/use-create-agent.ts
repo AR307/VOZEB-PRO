@@ -16,6 +16,7 @@ import {
     listCreativeConversationPage,
     listCreativeMessages,
     retryCreativeAgentTask,
+    retryCreativeAgentTasks,
     updateCreativeConversation,
     uploadCreativeAsset,
     watchCreativeAgentRun,
@@ -524,7 +525,24 @@ export function useCreateAgent() {
             const expectedConversationId = activeConversationRef.current;
             const generation = conversationGenerationRef.current;
             if (!expectedConversationId) return;
-            const result = await retryCreativeAgentTask(runId, taskId);
+            const result = await retryCreativeAgentTask(runId, taskId, expectedConversationId);
+            if (!isCurrentConversation(expectedConversationId, generation) || result.conversationId !== expectedConversationId) return;
+            setRunDetails((current) => ({ ...current, [runId]: result }));
+            const assistantMessage = messages.find((item) => item.runId === runId && item.role === "assistant");
+            if (assistantMessage) {
+                updateAssistant(assistantMessage.id, "正在重新生成失败任务…");
+                watchRun(result, assistantMessage.id, generation);
+            }
+        },
+        [isCurrentConversation, messages, updateAssistant, watchRun],
+    );
+
+    const retryTasks = useCallback(
+        async (runId: string, taskIds: string[]) => {
+            const expectedConversationId = activeConversationRef.current;
+            const generation = conversationGenerationRef.current;
+            if (!expectedConversationId || !taskIds.length) return;
+            const result = await retryCreativeAgentTasks(runId, taskIds, expectedConversationId);
             if (!isCurrentConversation(expectedConversationId, generation) || result.conversationId !== expectedConversationId) return;
             setRunDetails((current) => ({ ...current, [runId]: result }));
             const assistantMessage = messages.find((item) => item.runId === runId && item.role === "assistant");
@@ -589,6 +607,7 @@ export function useCreateAgent() {
         cancel,
         control,
         retryTask,
+        retryTasks,
         retryRun,
         retrySubmission,
         openConversation,

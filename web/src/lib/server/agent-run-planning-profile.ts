@@ -1,5 +1,6 @@
 import type { CreativeGenerationPreferences, CreativeSurface } from "@/lib/creative-runtime-contract";
 import type { AgentSkillWorkspace } from "@/lib/auth/store";
+import { canvasSnapshotPlanningFacts } from "./agent-run-canvas-snapshot";
 
 type PlanningRun = {
     surface: CreativeSurface;
@@ -28,9 +29,10 @@ const COMPLEX_RE = /短剧|分镜|故事板|多物料|完整方案|全套|角色
 
 export function resolveAgentPlanningProfile(run: PlanningRun): AgentPlanningProfile {
     const prompt = run.prompt.trim();
-    const selectedTypes = selectedNodeTypes(run.snapshot);
+    const canvasFacts = run.surface === "canvas" ? canvasSnapshotPlanningFacts(run.snapshot) : undefined;
+    const selectedTypes = new Set(canvasFacts?.selectedNodeTypes || []);
     const capabilities = run.generationPreferences?.mode ? new Set(["text", run.generationPreferences.mode]) : inferCapabilities(run.surface, prompt, selectedTypes);
-    const complex = run.surface === "drama" || COMPLEX_RE.test(prompt) || (run.surface === "canvas" && snapshotNodeCount(run.snapshot) > 10);
+    const complex = run.surface === "drama" || COMPLEX_RE.test(prompt) || (run.surface === "canvas" && (canvasFacts?.nodeCount || 0) > 10);
     const multi = complex || MULTI_RE.test(prompt);
     const complexity = complex ? "complex" : multi ? "multi" : "ordinary";
     return {
@@ -72,34 +74,4 @@ function skillWorkspaces(surface: CreativeSurface, capabilities: Set<string>) {
         workspaces.add("image");
     }
     return workspaces;
-}
-
-function selectedNodeTypes(snapshot: unknown) {
-    const source = record(snapshot);
-    const selected = new Set(strings(source.selectedNodeIds));
-    return new Set(
-        records(source.nodes)
-            .filter((node) => selected.has(text(node.id)))
-            .map((node) => text(node.type)),
-    );
-}
-
-function snapshotNodeCount(snapshot: unknown) {
-    return records(record(snapshot).nodes).length;
-}
-
-function record(value: unknown): Record<string, unknown> {
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function records(value: unknown) {
-    return Array.isArray(value) ? value.map(record) : [];
-}
-
-function strings(value: unknown) {
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [];
-}
-
-function text(value: unknown) {
-    return typeof value === "string" ? value.trim() : "";
 }

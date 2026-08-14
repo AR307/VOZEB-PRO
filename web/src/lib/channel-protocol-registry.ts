@@ -1,7 +1,7 @@
 import type { ApiCallFormat, LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelAuthMode, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store-types";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { SEEDANCE_SPECIAL_MODELS } from "@/lib/seedance-special";
-import { YUMENG_MODEL_CENTER_CREATE_PATH, YUMENG_MODEL_CENTER_MODELS, YUMENG_MODEL_CENTER_QUERY_PATH } from "@/lib/yumeng-model-center";
+import { normalizeYumengModelCenterBaseUrl, YUMENG_DEFAULT_IMAGE_OPERATION, YUMENG_DEFAULT_VIDEO_OPERATION, YUMENG_MODEL_CENTER_BASE_URL, YUMENG_MODEL_CENTER_MODELS } from "@/lib/yumeng-model-center";
 
 type ProtocolOperation = Omit<SystemChannelModelConfig, "capability" | "source" | "protocol" | "apiFormat"> & {
     capability: LogicalModelCapability;
@@ -119,44 +119,6 @@ const stableDiffusionOperation: ProtocolOperation = {
     supportsReferenceImage: true,
 };
 
-const yumengImageOperation: ProtocolOperation = {
-    capability: "image",
-    createPath: YUMENG_MODEL_CENTER_CREATE_PATH,
-    editPath: YUMENG_MODEL_CENTER_CREATE_PATH,
-    queryPath: YUMENG_MODEL_CENTER_QUERY_PATH,
-    requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","size":"{{size}}","watermark":false}',
-    resultField: "result_url / image_url",
-    statusField: "status",
-    referenceRule: "新版模型中心只接受上游可访问的参考图片 URL，使用 reference_images 字符串数组。",
-    supportsReferenceImage: true,
-};
-
-const yumengVideoOperation: ProtocolOperation = {
-    capability: "video",
-    createPath: YUMENG_MODEL_CENTER_CREATE_PATH,
-    imageToVideoPath: YUMENG_MODEL_CENTER_CREATE_PATH,
-    queryPath: YUMENG_MODEL_CENTER_QUERY_PATH,
-    requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}"}',
-    resultField: "result_url / video_url",
-    statusField: "status",
-    durationRange: "4-30 秒，具体范围以模型文档为准",
-    referenceRule: "新版模型中心使用 reference_images 与 reference_audios 字符串数组；参考素材必须是上游可访问的 URL，不支持参考视频。",
-    supportsReferenceImage: true,
-    supportsReferenceVideo: false,
-    supportsReferenceAudio: true,
-};
-
-const yumengStableVideoOperation: ProtocolOperation = {
-    ...yumengVideoOperation,
-    requestTemplate:
-        '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","reference_videos":"{{videos}}","reference_audios":"{{audios}}","duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","first_image":"{{first_frame}}","last_image":"{{last_frame}}"}',
-    durationRange: "4-15 秒",
-    referenceRule: "videos_stable 系列使用 reference_images、reference_videos、reference_audios、first_image 与 last_image；参考素材必须是上游可访问的 URL。",
-    supportsReferenceVideo: true,
-};
-
-const yumengBuiltInModels = YUMENG_MODEL_CENTER_MODELS.map((model) => (model.id === "videos_stable" || model.id === "videos_stable_fast" ? { ...model, operation: yumengStableVideoOperation } : model));
-
 export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] = [
     {
         id: "openai",
@@ -175,10 +137,11 @@ export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] =
         description: "昱梦新版模型中心协议，统一提交和查询图片、视频异步任务。",
         apiFormat: "openai",
         authMode: "bearer",
+        defaultBaseUrl: YUMENG_MODEL_CENTER_BASE_URL,
         modelCatalogPaths: [],
-        builtInModels: yumengBuiltInModels,
+        builtInModels: YUMENG_MODEL_CENTER_MODELS,
         capabilities: ["image", "video"],
-        operations: { image: yumengImageOperation, video: yumengVideoOperation },
+        operations: { image: YUMENG_DEFAULT_IMAGE_OPERATION, video: YUMENG_DEFAULT_VIDEO_OPERATION },
         strict: true,
     },
     {
@@ -410,7 +373,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
     const primaryAdvanced = primary ? Object.fromEntries(Object.entries(primary).filter(([key]) => key !== "capability")) : {};
     return {
         ...channel,
-        baseUrl: channel.baseUrl.trim() || definition.defaultBaseUrl || "",
+        baseUrl: protocol === "yumeng" ? normalizeYumengModelCenterBaseUrl(channel.baseUrl) : channel.baseUrl.trim() || definition.defaultBaseUrl || "",
         apiFormat: definition.apiFormat,
         models,
         advancedConfig: {

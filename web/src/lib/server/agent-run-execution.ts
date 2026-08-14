@@ -9,7 +9,8 @@ import { requestStructuredText, type TextPlanningCandidate } from "@/lib/server/
 import { registerAgentTaskAssets } from "@/lib/server/agent-run-assets";
 import { buildAgentProjectHandoff } from "@/lib/server/agent-run-project-handoff";
 import { getAgentRun, updateAgentRunById, updateAgentRunTaskById, type AgentRun, type AgentRunChildTask, type AgentRunReference, type AgentRunTask } from "@/lib/server/agent-run-store";
-import { assetAccessUrl, creativeAssetContext, resolveTaskReferences, selectedCanvasNodeIds } from "@/lib/server/agent-run-surface-policy";
+import { assetAccessUrl, creativeAssetContext, resolveTaskReferences } from "@/lib/server/agent-run-surface-policy";
+import { selectedCanvasNodeIds } from "@/lib/server/agent-run-canvas-snapshot";
 import { agentChildTaskTerminal, agentTaskCopies, resolveAgentTaskCount, resolveAgentVideoSeconds, validateAgentTaskResult, type AgentPlan } from "@/lib/server/agent-run-validation";
 import { agentRunCompletionReply, agentRunFailureMessage, resultSummary } from "@/lib/server/agent-run-messages";
 import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
@@ -582,10 +583,10 @@ export async function resumeDispatchedTask(run: AgentRun, task: AgentRunTask, ta
 }
 
 export async function withDependencyContext(runId: string, task: AgentRunTask): Promise<AgentRunTask> {
-    if (!task.dependencies.length) return task;
     const run = await getAgentRun(runId);
+    if (!run || !task.dependencies.length) return task;
     const dependencies = run?.tasks.filter((item) => task.dependencies.includes(item.id) && item.status === "completed") || [];
-    const dependencyAssets = await getCreativeAssetsByIds(Array.from(new Set(dependencies.flatMap((item) => item.assetIds || []))));
+    const dependencyAssets = await getCreativeAssetsByIds(Array.from(new Set(dependencies.flatMap((item) => item.assetIds || []))), run?.userId);
     const dependencyReferences = dependencyAssets.flatMap((asset) => {
         const url = assetAccessUrl(asset);
         if (!url || !acceptsMediaReference(task.type, asset.type)) return [];

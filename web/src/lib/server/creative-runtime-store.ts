@@ -71,33 +71,37 @@ export async function createCreativeConversation(userId: string, input: { surfac
     return conversation;
 }
 
-export async function listCreativeConversations(userId: string, input: { surface?: CreativeSurface; source?: CreativeConversationSource; status?: CreativeConversation["status"]; limit?: number; offset?: number } = {}) {
+export async function listCreativeConversations(userId: string, input: { surface?: CreativeSurface; source?: CreativeConversationSource; projectId?: string; status?: CreativeConversation["status"]; limit?: number; offset?: number } = {}) {
     const limit = boundedLimit(input.limit, 50);
     const offset = Math.max(0, Math.floor(Number(input.offset) || 0));
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery(
             `SELECT * FROM creative_conversations
-             WHERE user_id = $1 AND ($2::text IS NULL OR surface = $2) AND ($3::text IS NULL OR source = $3) AND ($4::text IS NULL OR status = $4)
-             ORDER BY updated_at DESC, id ASC LIMIT $5 OFFSET $6`,
-            [userId, input.surface || null, input.source || null, input.status || null, limit, offset],
+             WHERE user_id = $1 AND ($2::text IS NULL OR surface = $2) AND ($3::text IS NULL OR source = $3)
+               AND ($4::text IS NULL OR project_id = $4) AND ($5::text IS NULL OR status = $5)
+             ORDER BY updated_at DESC, id ASC LIMIT $6 OFFSET $7`,
+            [userId, input.surface || null, input.source || null, input.projectId || null, input.status || null, limit, offset],
         );
         return result.rows.map(mapConversation);
     }
     const db = await readRuntimeFile();
     return db.conversations
-        .filter((item) => item.userId === userId && (!input.surface || item.surface === input.surface) && (!input.source || item.source === input.source) && (!input.status || item.status === input.status))
+        .filter(
+            (item) =>
+                item.userId === userId && (!input.surface || item.surface === input.surface) && (!input.source || item.source === input.source) && (!input.projectId || item.projectId === input.projectId) && (!input.status || item.status === input.status),
+        )
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(offset, offset + limit);
 }
 
-export async function getCreativeConversation(id: string) {
+export async function getCreativeConversation(id: string, userId: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery("SELECT * FROM creative_conversations WHERE id = $1", [id]);
+        const result = await postgresQuery("SELECT * FROM creative_conversations WHERE id = $1 AND user_id = $2", [id, userId]);
         return result.rows[0] ? mapConversation(result.rows[0]) : null;
     }
-    return (await readRuntimeFile()).conversations.find((item) => item.id === id) || null;
+    return (await readRuntimeFile()).conversations.find((item) => item.id === id && item.userId === userId) || null;
 }
 
 export async function getCreativeConversationsByIds(userId: string, ids: string[]) {
@@ -299,24 +303,25 @@ export async function listRecentCreativeMediaAssets(conversationId: string, user
         .slice(0, boundedLimit);
 }
 
-export async function getCreativeAsset(id: string) {
+export async function getCreativeAsset(id: string, userId: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery("SELECT * FROM creative_assets WHERE id = $1", [id]);
+        const result = await postgresQuery("SELECT * FROM creative_assets WHERE id = $1 AND user_id = $2", [id, userId]);
         return result.rows[0] ? mapAsset(result.rows[0]) : null;
     }
-    return (await readRuntimeFile()).assets.find((item) => item.id === id) || null;
+    return (await readRuntimeFile()).assets.find((item) => item.id === id && item.userId === userId) || null;
 }
 
-export async function getCreativeAssetsByIds(ids: string[]) {
-    if (!ids.length) return [];
+export async function getCreativeAssetsByIds(ids: string[], userId: string) {
+    const uniqueIds = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+    if (!uniqueIds.length) return [];
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery("SELECT * FROM creative_assets WHERE id = ANY($1::text[]) AND status <> 'deleted'", [ids]);
+        const result = await postgresQuery("SELECT * FROM creative_assets WHERE id = ANY($1::text[]) AND user_id = $2 AND status <> 'deleted'", [uniqueIds, userId]);
         return result.rows.map(mapAsset);
     }
-    const wanted = new Set(ids);
-    return (await readRuntimeFile()).assets.filter((item) => wanted.has(item.id) && item.status !== "deleted");
+    const wanted = new Set(uniqueIds);
+    return (await readRuntimeFile()).assets.filter((item) => wanted.has(item.id) && item.userId === userId && item.status !== "deleted");
 }
 
 export async function createCreativeRunBundle<T extends AgentRunBase>(userId: string, input: CreateRunBundleInput<T>) {

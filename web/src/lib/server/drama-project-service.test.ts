@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => {
     return {
         DramaProjectStoreError: MockDramaProjectStoreError,
         createCreativeConversation: vi.fn(),
+        deleteDramaConversationAggregate: vi.fn(),
+        getCreativeConversation: vi.fn(),
+        listCreativeConversations: vi.fn(),
+        listAgentRuns: vi.fn(),
         updateCreativeConversation: vi.fn(),
         createDramaProject: vi.fn(),
         deleteDramaProject: vi.fn(),
@@ -28,7 +32,17 @@ const mocks = vi.hoisted(() => {
     };
 });
 
-vi.mock("@/lib/server/creative-runtime-store", () => ({ createCreativeConversation: mocks.createCreativeConversation, updateCreativeConversation: mocks.updateCreativeConversation }));
+vi.mock("@/lib/server/agent-run-store", () => ({ listAgentRuns: mocks.listAgentRuns }));
+vi.mock("@/lib/server/creative-entity-deletion-store", () => ({
+    CreativeEntityDeletionConflict: class CreativeEntityDeletionConflict extends Error {},
+    deleteDramaConversationAggregate: mocks.deleteDramaConversationAggregate,
+}));
+vi.mock("@/lib/server/creative-runtime-store", () => ({
+    createCreativeConversation: mocks.createCreativeConversation,
+    getCreativeConversation: mocks.getCreativeConversation,
+    listCreativeConversations: mocks.listCreativeConversations,
+    updateCreativeConversation: mocks.updateCreativeConversation,
+}));
 vi.mock("@/lib/server/drama-project-store", () => ({
     DramaProjectStoreError: mocks.DramaProjectStoreError,
     createDramaProject: mocks.createDramaProject,
@@ -45,7 +59,7 @@ vi.mock("@/lib/server/drama-project-version-store", () => ({
 }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
-import { createDramaProjectForUser, deleteDramaProjectForUser, DramaProjectServiceError, restoreDramaProjectVersionForUser, updateDramaProjectForUser } from "./drama-project-service";
+import { createDramaProjectForUser, deleteDramaAgentConversationForUser, deleteDramaProjectForUser, DramaProjectServiceError, restoreDramaProjectVersionForUser, updateDramaProjectForUser } from "./drama-project-service";
 import { DramaProjectStoreError } from "./drama-project-store";
 
 describe("drama project service updates", () => {
@@ -54,6 +68,10 @@ describe("drama project service updates", () => {
         mocks.updateDramaProject.mockImplementation(async (_userId: string, value: DramaProject) => value);
         mocks.createCreativeConversation.mockResolvedValue({ id: "conversation-new" });
         mocks.updateCreativeConversation.mockResolvedValue({ id: "conversation-new", status: "archived" });
+        mocks.getCreativeConversation.mockResolvedValue({ id: "conversation-one", userId: "user-one", surface: "drama", source: "drama", projectId: "drama-one", status: "active" });
+        mocks.listCreativeConversations.mockResolvedValue([{ id: "conversation-one" }, { id: "conversation-two" }]);
+        mocks.listAgentRuns.mockResolvedValue([]);
+        mocks.deleteDramaConversationAggregate.mockResolvedValue({ deletedConversations: 1, mediaStorageKeys: ["permanent/agent.png"], dramaProject: { ...project("2026-07-19T08:00:03.000Z", "项目"), creativeConversationId: "conversation-two" } });
         mocks.findDramaProjectBySourceHandoffId.mockResolvedValue(null);
         mocks.listDramaProjectSummaries.mockResolvedValue([]);
         mocks.createDramaProjectVersion.mockResolvedValue({ id: "version-new", projectId: "drama-one", version: 2, reason: "恢复前自动快照", createdAt: new Date().toISOString() });
@@ -194,6 +212,26 @@ describe("drama project service updates", () => {
 
         expect(mocks.updateCreativeConversation).toHaveBeenCalledWith("conversation-one", "user-one", { status: "archived" });
         expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalled();
+    });
+
+    it("deletes a project-owned drama conversation and returns the replacement project", async () => {
+        mocks.getDramaProject.mockResolvedValue({ ...project("2026-07-19T08:00:02.000Z", "项目"), creativeConversationId: "conversation-one" });
+
+        await expect(deleteDramaAgentConversationForUser("user-one", "drama-one", "conversation-one")).resolves.toMatchObject({ deleted: true, activeConversationId: "conversation-two" });
+
+        expect(mocks.listAgentRuns).toHaveBeenCalledWith({ userId: "user-one", conversationId: "conversation-one", surface: "drama", statuses: ["planning", "running", "paused"], limit: 1 });
+        expect(mocks.deleteDramaConversationAggregate).toHaveBeenCalledWith("user-one", "drama-one", "conversation-one", "conversation-two");
+        expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["permanent/agent.png"]);
+    });
+
+    it("rejects deleting a running or unrelated drama conversation", async () => {
+        mocks.getDramaProject.mockResolvedValue({ ...project("2026-07-19T08:00:02.000Z", "项目"), creativeConversationId: "conversation-one" });
+        mocks.listAgentRuns.mockResolvedValueOnce([{ id: "run-one" }]);
+
+        await expect(deleteDramaAgentConversationForUser("user-one", "drama-one", "conversation-one")).rejects.toMatchObject({ status: 409, message: "运行中的对话需先停止任务再删除" });
+        mocks.getCreativeConversation.mockResolvedValueOnce({ id: "conversation-other", userId: "user-one", surface: "drama", source: "drama", projectId: "drama-other" });
+        await expect(deleteDramaAgentConversationForUser("user-one", "drama-one", "conversation-other")).rejects.toMatchObject({ status: 409, message: "Agent 对话与当前短剧项目不匹配" });
+        expect(mocks.deleteDramaConversationAggregate).not.toHaveBeenCalled();
     });
 
     it("restores an older snapshot after saving the current project", async () => {

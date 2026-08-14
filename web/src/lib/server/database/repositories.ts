@@ -174,53 +174,33 @@ class SettingsRepository {
     }
 
     async updateSettings(input: Partial<Omit<AppSettingsRecord, "id" | "createdAt" | "updatedAt">>) {
-        const row = await this.db.query(
-            `
-            UPDATE app_settings SET
-                site = COALESCE($1, site),
-                registration_enabled = COALESCE($2, registration_enabled),
-                email_registration_enabled = COALESCE($3, email_registration_enabled),
-                free_daily_points_enabled = COALESCE($4, free_daily_points_enabled),
-                mail = COALESCE($5, mail),
-                allow_user_api_config = COALESCE($6, allow_user_api_config),
-                model_point_costs = COALESCE($7, model_point_costs),
-                generation_point_multipliers = COALESCE($8, generation_point_multipliers),
-                generation_cost_control = COALESCE($9, generation_cost_control),
-                data_lifecycle = COALESCE($10, data_lifecycle),
-                entitlements_enabled = COALESCE($11, entitlements_enabled),
-                default_plan_id = COALESCE($12, default_plan_id),
-                generation_concurrency = COALESCE($13, generation_concurrency),
-                generation_defaults = COALESCE($14, generation_defaults),
-                payment_config = COALESCE($15, payment_config),
-                logical_models = COALESCE($16, logical_models),
-                default_models = COALESCE($17, default_models),
-                agent_skills = COALESCE($18, agent_skills),
-                free_daily_points = COALESCE($19, free_daily_points)
-            WHERE id = 'default'
-            RETURNING *
-            `,
-            [
-                jsonParam(input.site),
-                input.registrationEnabled,
-                input.emailRegistrationEnabled,
-                input.freeDailyPointsEnabled,
-                jsonParam(input.mail),
-                input.allowUserApiConfig,
-                jsonParam(input.modelPointCosts),
-                jsonParam(input.generationPointMultipliers),
-                jsonParam(input.generationCostControl),
-                jsonParam(input.dataLifecycle),
-                input.entitlementsEnabled,
-                input.defaultPlanId,
-                jsonParam(input.generationConcurrency),
-                jsonParam(input.generationDefaults),
-                jsonParam(input.paymentConfig),
-                jsonParam(input.logicalModels),
-                jsonParam(input.defaultModels),
-                jsonParam(input.agentSkills),
-                input.freeDailyPoints,
-            ],
-        );
+        const assignments: string[] = [];
+        const values: unknown[] = [];
+        const add = (column: string, value: unknown) => {
+            values.push(value);
+            assignments.push(`${column} = $${values.length}`);
+        };
+        if (input.site !== undefined) add("site", jsonParam(input.site));
+        if (input.registrationEnabled !== undefined) add("registration_enabled", input.registrationEnabled);
+        if (input.emailRegistrationEnabled !== undefined) add("email_registration_enabled", input.emailRegistrationEnabled);
+        if (input.freeDailyPointsEnabled !== undefined) add("free_daily_points_enabled", input.freeDailyPointsEnabled);
+        if (input.mail !== undefined) add("mail", jsonParam(input.mail));
+        if (input.allowUserApiConfig !== undefined) add("allow_user_api_config", input.allowUserApiConfig);
+        if (input.modelPointCosts !== undefined) add("model_point_costs", jsonParam(input.modelPointCosts));
+        if (input.generationPointMultipliers !== undefined) add("generation_point_multipliers", jsonParam(input.generationPointMultipliers));
+        if (input.generationCostControl !== undefined) add("generation_cost_control", jsonParam(input.generationCostControl));
+        if (input.dataLifecycle !== undefined) add("data_lifecycle", jsonParam(input.dataLifecycle));
+        if (input.entitlementsEnabled !== undefined) add("entitlements_enabled", input.entitlementsEnabled);
+        if (input.defaultPlanId !== undefined) add("default_plan_id", input.defaultPlanId);
+        if (input.generationConcurrency !== undefined) add("generation_concurrency", jsonParam(input.generationConcurrency));
+        if (input.generationDefaults !== undefined) add("generation_defaults", jsonParam(input.generationDefaults));
+        if (input.paymentConfig !== undefined) add("payment_config", jsonParam(input.paymentConfig));
+        if (input.logicalModels !== undefined) add("logical_models", jsonParam(input.logicalModels));
+        if (input.defaultModels !== undefined) add("default_models", jsonParam(input.defaultModels));
+        if (input.agentSkills !== undefined) add("agent_skills", jsonParam(input.agentSkills));
+        if (input.freeDailyPoints !== undefined) add("free_daily_points", input.freeDailyPoints);
+        if (!assignments.length) throw new Error("Settings update requires at least one field");
+        const row = await this.db.query(`UPDATE app_settings SET ${assignments.join(", ")} WHERE id = 'default' RETURNING *`, values);
         return mapSettings(row.rows[0]);
     }
 

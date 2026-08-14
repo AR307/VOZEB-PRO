@@ -25,7 +25,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
     withJsonDataFileLocks: vi.fn(async (_names: string[], callback: () => Promise<unknown>) => callback()),
 }));
 
-import { CreativeEntityDeletionConflict, deleteCanvasAssistantConversationAggregates, deleteCanvasProjectAggregates, deleteCreativeConversationAggregates } from "./creative-entity-deletion-store";
+import { CreativeEntityDeletionConflict, deleteCanvasAssistantConversationAggregates, deleteCanvasProjectAggregates, deleteCreativeConversationAggregates, deleteDramaConversationAggregate } from "./creative-entity-deletion-store";
 
 describe("creative entity deletion file provider", () => {
     beforeEach(() => {
@@ -105,6 +105,30 @@ describe("creative entity deletion file provider", () => {
 
         await expect(deleteCanvasAssistantConversationAggregates("user-one", "canvas-one", ["conversation-one"])).rejects.toBeInstanceOf(CreativeEntityDeletionConflict);
         await expect(deleteCanvasAssistantConversationAggregates("user-one", "canvas-one", ["conversation-two"])).rejects.toBeInstanceOf(CreativeEntityDeletionConflict);
+    });
+
+    it("atomically switches a drama project before deleting its active Agent conversation", async () => {
+        const runtime = file<{ conversations: Array<Record<string, unknown>> }>("creative-runtime.json");
+        runtime.conversations[0] = { ...runtime.conversations[0], surface: "drama", source: "drama", projectId: "drama-one" };
+        runtime.conversations[1] = { ...runtime.conversations[1], surface: "drama", source: "drama", projectId: "drama-one" };
+        const drama = file<{ projects: Array<{ userId: string; project: Record<string, unknown> }> }>("drama-projects.json");
+        drama.projects.push({ userId: "user-one", project: dramaProject("conversation-one") });
+
+        const result = await deleteDramaConversationAggregate("user-one", "drama-one", "conversation-one", "conversation-two");
+
+        expect(result).toMatchObject({ deletedConversations: 1, dramaProject: { creativeConversationId: "conversation-two" } });
+        expect(file<{ projects: Array<{ project: { creativeConversationId: string } }> }>("drama-projects.json").projects[0].project.creativeConversationId).toBe("conversation-two");
+        expect(file<{ conversations: Array<{ id: string }> }>("creative-runtime.json").conversations.map((item) => item.id)).toEqual(["conversation-two"]);
+    });
+
+    it("rejects drama conversations and replacements from another project", async () => {
+        const runtime = file<{ conversations: Array<Record<string, unknown>> }>("creative-runtime.json");
+        runtime.conversations[0] = { ...runtime.conversations[0], surface: "drama", source: "drama", projectId: "drama-other" };
+        runtime.conversations[1] = { ...runtime.conversations[1], surface: "drama", source: "drama", projectId: "drama-other" };
+        const drama = file<{ projects: Array<{ userId: string; project: Record<string, unknown> }> }>("drama-projects.json");
+        drama.projects.push({ userId: "user-one", project: dramaProject("conversation-one") });
+
+        await expect(deleteDramaConversationAggregate("user-one", "drama-one", "conversation-one", "conversation-two")).rejects.toBeInstanceOf(CreativeEntityDeletionConflict);
     });
 
     it("uses one PostgreSQL transaction with owner-scoped entity deletes", async () => {
@@ -224,10 +248,32 @@ function seedFiles() {
             { userId: "user-one", project: { id: "canvas-two", creativeConversationId: "conversation-two", nodes: [] } },
         ],
     });
+    mocks.files.set("drama-projects.json", { version: 1, projects: [] });
     mocks.files.set("local-media-assets.json", {
         version: 1,
         assets: [{ ownerUserId: "user-one", storageKey: "permanent/registered.png", conversationId: "conversation-one", taskId: "run-one" }],
     });
+}
+
+function dramaProject(creativeConversationId: string) {
+    return {
+        id: "drama-one",
+        title: "短剧",
+        summary: "",
+        style: "电影感",
+        ratio: "9:16",
+        status: "active",
+        creativeConversationId,
+        activeEpisodeId: "episode-one",
+        characters: [],
+        scenes: [],
+        props: [],
+        clues: [],
+        defaultVideoMode: "storyboard",
+        episodes: [{ id: "episode-one", title: "第 1 集", script: "", outline: "", hook: "", nextPreview: "", sourceRange: "", reviewStatus: "draft", shots: [] }],
+        createdAt: "2026-08-13T00:00:00.000Z",
+        updatedAt: "2026-08-13T00:00:00.000Z",
+    };
 }
 
 function file<T>(name: string) {

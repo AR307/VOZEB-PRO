@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeVideoAspectRatio, resolveUpstreamVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "./video-task-config";
+import { normalizeVideoAspectRatio, normalizeVideoSize, resolveUpstreamVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "./video-task-config";
 
 describe("resolveVideoGenerationParameters", () => {
     const defaults = { imageSize: "9:16", videoQuality: "1080", videoSeconds: 10 };
@@ -48,10 +48,12 @@ describe("resolveVideoGenerationParameters", () => {
         expect(resolveUpstreamVideoDuration(-1, 5, { durationRange: "-1 智能或 5-15 秒" })).toBe(-1);
     });
 
-    it("normalizes pixel dimensions to the provider aspect-ratio format", () => {
+    it("keeps exact pixel dimensions while exposing a normalized ratio separately", () => {
         expect(normalizeVideoAspectRatio("1280x720")).toBe("16:9");
         expect(normalizeVideoAspectRatio("720 × 1280")).toBe("9:16");
-        expect(resolveVideoGenerationParameters({ size: "1024x1024" }, defaults).size).toBe("1:1");
+        expect(normalizeVideoSize("720 × 1280")).toBe("720x1280");
+        expect(resolveVideoGenerationParameters({ size: "1024x1024" }, defaults).size).toBe("1024x1024");
+        expect(resolveVideoGenerationParameters({ size: "1280x720" }, defaults).size).toBe("1280x720");
     });
 
     it("adds a server-side subject fidelity constraint for visual references", () => {

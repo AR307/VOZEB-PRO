@@ -4,6 +4,7 @@ import { creativeAssetReferenceAliases, orderCreativeAssetsByIds } from "@/lib/c
 import type { AgentRun, AgentRunPlannerContextSummary, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 import { resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
+import { canvasSnapshotPlannerView, selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 
 export function availableAgentSkills(settings: AuthSettings, surface: CreativeSurface) {
     const workspaces = surface === "canvas" ? new Set(["canvas"]) : surface === "drama" ? new Set(["drama"]) : new Set(["image", "video", "drama"]);
@@ -31,7 +32,11 @@ export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExamp
             ? "明确要求创建、修改、删除、移动、连接画布节点，或生成媒体产物时为 generation。用户要求修改已有画布产物时必须填写该节点真实 targetNodeId。选中文本/提示词节点并要求修改、优化或改写时，只规划一个 type=text 的原位编辑任务，targetNodeId 必须是该文本节点；除非用户同时明确要求生成媒体，否则禁止规划图片、视频或音频任务。canvasSnapshot.selectedNodeIds 是用户本轮明确选中并展示在输入框中的附件：非空时，当前编辑任务必须优先且只能从这些节点选择 targetNodeId，禁止被 conversationContext 的上一张、旧主体或其他未选中画布节点覆盖；只有本轮没有选中节点时，才允许结合会话记忆选择旧节点。"
             : "明确要求生成或修改文本、图片、视频、音频产物时为 generation。禁止创建、更新、删除或连接任何 Canvas 节点，targetNodeId 必须省略。";
     const projectRule =
-        surface === "drama" ? "短剧项目中的角色、场景、多镜头和依赖生产默认是 complex，并保持项目视觉与叙事一致。" : surface === "canvas" ? "Canvas 的品牌系列、多物料和依赖生产默认是 complex。" : "多物料、系列内容和依赖生产默认是 complex。";
+        surface === "drama"
+            ? "projectSnapshot 是本次短剧生产的权威上下文：必须遵循其中 currentStage、project.ratio、project.style、episode、shots、characters、scenes、props、clues 和 currentTurnReferences。所有生成任务必须服务于当前项目与当前集，沿用项目画幅、视觉设定、角色/场景/道具基准和镜头连续性；不得把短剧入口当成脱离项目的通用图片或视频工作台。短剧项目中的角色、场景、多镜头和依赖生产默认是 complex。"
+            : surface === "canvas"
+              ? "Canvas 的品牌系列、多物料和依赖生产默认是 complex。"
+              : "多物料、系列内容和依赖生产默认是 complex。";
     const handoffRule =
         surface === "chat"
             ? "只有用户原文明确要求创建、建立或整理成画布/短剧项目时才填写 projectHandoff；生成短视频、短片、图片或系列媒体不等于创建项目，必须省略 projectHandoff。只做明确项目交接且无需新产物时允许 deliverables=[]。projectHandoff.assetIds 只能引用 referencedAssets，当前 Run 新生成的资产会由服务端自动合并。"
@@ -72,7 +77,7 @@ export function buildAgentPlannerInput(
         },
         surface: run.surface,
         ...(run.projectId ? { projectId: run.projectId } : {}),
-        ...(run.surface === "canvas" ? { canvasSnapshot: compactCanvasSnapshot(run.snapshot) } : run.surface === "drama" ? { projectSnapshot: compactProjectSnapshot(run.snapshot) } : {}),
+        ...(run.surface === "canvas" ? { canvasSnapshot: canvasSnapshotPlannerView(run.snapshot) } : run.surface === "drama" ? { projectSnapshot: compactProjectSnapshot(run.snapshot) } : {}),
         ...(selectedNodeIds.length ? { currentTurnSelection: { selectedNodeIds, rule: "这些节点是本轮明确附件；编辑任务不得改用历史节点" } } : {}),
         referenceContext: { source: referenceSource },
         referencedAssets: orderedAssets.map((asset) => plannerAssetSummary(asset, referenceAliases.get(asset.id))),
@@ -114,47 +119,7 @@ function plannerSkillSummary(skill: AuthSettings["agentSkills"][number]) {
 }
 
 export function compactCanvasSnapshot(snapshot: unknown) {
-    const source = record(snapshot);
-    const selectedNodeIds = selectedCanvasNodeIds(snapshot);
-    const selected = new Set(selectedNodeIds);
-    const connections = records(source.connections).filter((connection) => {
-        const from = text(connection.fromNodeId);
-        const to = text(connection.toNodeId);
-        return selected.has(from) || selected.has(to);
-    });
-    for (const connection of connections) {
-        selected.add(text(connection.fromNodeId));
-        selected.add(text(connection.toNodeId));
-    }
-    const nodes = records(source.nodes)
-        .filter((node) => selected.has(text(node.id)) || node.type === "config")
-        .map(compactCanvasNode);
-    return {
-        projectId: text(source.projectId),
-        title: text(source.title),
-        imageSize: text(source.imageSize),
-        selectedNodeIds,
-        nodes,
-        connections: connections.map((connection) => ({ id: text(connection.id), fromNodeId: text(connection.fromNodeId), toNodeId: text(connection.toNodeId) })),
-    };
-}
-
-function compactCanvasNode(node: Record<string, unknown>) {
-    const metadata = record(node.metadata);
-    return {
-        id: text(node.id),
-        type: text(node.type),
-        title: text(node.title),
-        width: number(node.width),
-        height: number(node.height),
-        metadata: {
-            size: text(metadata.size),
-            content: text(metadata.content || metadata.prompt),
-            url: text(metadata.serverUrl || metadata.remoteUrl || metadata.url),
-            naturalWidth: number(metadata.naturalWidth),
-            naturalHeight: number(metadata.naturalHeight),
-        },
-    };
+    return canvasSnapshotPlannerView(snapshot);
 }
 
 function compactProjectSnapshot(snapshot: unknown) {
@@ -209,16 +174,7 @@ function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
 }
 
-function number(value: unknown) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-export function selectedCanvasNodeIds(snapshot: unknown) {
-    if (!snapshot || typeof snapshot !== "object") return [];
-    const ids = (snapshot as { selectedNodeIds?: unknown }).selectedNodeIds;
-    return Array.isArray(ids) ? Array.from(new Set(ids.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map((id) => id.trim()))) : [];
-}
+export { selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 
 export function taskPlanSummary(task: AgentRunTask) {
     return { id: task.id, title: task.title, type: task.type, model: task.model, dependencies: task.dependencies, referenceAssetIds: task.references?.map((item) => item.assetId).filter(Boolean) || [] };

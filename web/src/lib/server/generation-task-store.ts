@@ -85,21 +85,23 @@ export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id
     return (await readFileTasks()).find((task) => task.id === id && task.type === type && task.expiresAt > Date.now()) || null;
 }
 
-export async function listStoredGenerationTaskRecordsByRunIds(runIds: string[]) {
+export async function listStoredGenerationTaskRecordsByRunIds(runIds: string[], userIds: string[] = []) {
     const ids = Array.from(new Set(runIds.map(cleanContextText).filter(Boolean)));
+    const owners = Array.from(new Set(userIds.map(cleanContextText).filter(Boolean)));
     if (!ids.length) return [];
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery<Record<string, unknown>>(
             `SELECT * FROM generation_tasks
              WHERE expires_at > now() AND run_id = ANY($1::text[]) AND task_type <> 'agent'
+               AND (cardinality($2::text[]) = 0 OR user_id = ANY($2::text[]))
              ORDER BY run_id ASC, created_at ASC, id ASC`,
-            [ids],
+            [ids, owners],
         );
         return result.rows.map(mapStoredTaskRecord);
     }
     return (await readFileTasks())
-        .filter((task) => task.expiresAt > Date.now() && task.type !== "agent" && task.runId && ids.includes(task.runId))
+        .filter((task) => task.expiresAt > Date.now() && task.type !== "agent" && task.runId && ids.includes(task.runId) && (!owners.length || owners.includes(task.userId)))
         .sort((left, right) => String(left.runId).localeCompare(String(right.runId)) || left.createdAt - right.createdAt || left.id.localeCompare(right.id));
 }
 
@@ -681,28 +683,30 @@ export async function linkStoredGenerationTask(type: GenerationTaskType, id: str
     await mutateFileTasks((tasks) => tasks.map((task) => (task.id === id && task.type === type ? { ...task, ...normalized, payload: { ...task.payload, ...normalized } } : task)));
 }
 
-export async function countActiveStoredGenerationTasks(userId: string, type: GenerationTaskType, staleMs: number) {
+export async function countActiveStoredGenerationTasks(userId: string, type: GenerationTaskType, staleMs: number, excludeTaskId?: string) {
     const activeAfter = Date.now() - staleMs;
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery<{ total: string | number }>(
-            "SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()",
-            [userId, type, new Date(activeAfter), ACTIVE_CONCURRENCY_PHASES],
+            `SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()${excludeTaskId ? " AND id <> $5" : ""}`,
+            [userId, type, new Date(activeAfter), ACTIVE_CONCURRENCY_PHASES, ...(excludeTaskId ? [excludeTaskId] : [])],
         );
         return Number(result.rows[0]?.total || 0);
     }
     const tasks = await readFileTasks();
-    return tasks.filter((task) => task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && isActiveConcurrencyPhase(task.executionPhase) && task.updatedAt >= activeAfter && task.expiresAt > Date.now()).length;
+    return tasks.filter(
+        (task) => task.id !== excludeTaskId && task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && isActiveConcurrencyPhase(task.executionPhase) && task.updatedAt >= activeAfter && task.expiresAt > Date.now(),
+    ).length;
 }
 
-export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>): Promise<T | null> {
+export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>, excludeTaskId?: string): Promise<T | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
             await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [userId, type]);
             const result = await client.query<{ total: string | number }>(
-                "SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()",
-                [userId, type, new Date(Date.now() - staleMs), ACTIVE_CONCURRENCY_PHASES],
+                `SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()${excludeTaskId ? " AND id <> $5" : ""}`,
+                [userId, type, new Date(Date.now() - staleMs), ACTIVE_CONCURRENCY_PHASES, ...(excludeTaskId ? [excludeTaskId] : [])],
             );
             return Number(result.rows[0]?.total || 0) >= limit ? null : handler();
         });
@@ -718,7 +722,7 @@ export async function withGenerationConcurrencyLimit<T>(userId: string, type: Ge
     concurrencyQueues.set(key, queued);
     await previous;
     try {
-        return (await countActiveStoredGenerationTasks(userId, type, staleMs)) >= limit ? null : handler();
+        return (await countActiveStoredGenerationTasks(userId, type, staleMs, excludeTaskId)) >= limit ? null : handler();
     } finally {
         release();
         if (concurrencyQueues.get(key) === queued) concurrencyQueues.delete(key);

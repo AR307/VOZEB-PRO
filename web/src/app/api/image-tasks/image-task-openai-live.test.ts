@@ -290,7 +290,7 @@ describe("OpenAI image provider over a live compatible fixture", () => {
                 baseUrl: origin,
                 apiKey: "fixture-key",
                 apiFormat: "openai",
-                model: "fixture-image-model",
+                model: protocol === "yumeng" ? "seedream-5.0" : "fixture-image-model",
                 channelId: `fixture-${protocol}`,
                 quality: "high",
                 advancedConfig: { ...emptyAdvancedConfig(), protocol, createPath: "/custom/images", requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","resolution":"{{resolution}}"}', resultField: "data.image_url" },

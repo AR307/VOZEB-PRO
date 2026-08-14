@@ -9,6 +9,7 @@ import { cancelledRunCanvasOps, taskCanvasEventOps } from "./agent-run-canvas-op
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 import { agentTaskCompletionMessage } from "./agent-run-messages";
 import type { AgentRunPlannerAudit } from "./agent-run-audit";
+import { normalizeAgentRunCanvasSnapshot, selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentRunReviewStatus = "review_pending" | "reviewing" | "review_completed" | "review_unavailable";
@@ -119,6 +120,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
     await assertVideoFrameAssets(userId, input);
     const now = Date.now();
     const conversationId = input.conversationId || `conversation-${nanoid()}`;
+    const snapshot = input.surface === "canvas" ? normalizeAgentRunCanvasSnapshot(input.snapshot, input.projectId) : input.snapshot;
     const run: AgentRun = {
         id: `agent-${nanoid()}`,
         userId,
@@ -130,7 +132,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         assistantMessageId: `message-${nanoid()}`,
         prompt: input.prompt,
         ...(input.publicPrompt ? { publicPrompt: input.publicPrompt } : {}),
-        snapshot: input.snapshot,
+        snapshot,
         referencedAssetIds: input.assetIds,
         selectedSkillIds: input.skillIds,
         ...(input.modelIds.length ? { requestedModelIds: input.modelIds } : {}),
@@ -151,7 +153,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         prompt: publicPrompt,
         title: publicPrompt.slice(0, 48),
         assetIds: input.assetIds,
-        acknowledgement: agentRequirementAcknowledgement(publicPrompt, input.surface, input.assetIds.length > 0 || selectedCanvasNodeIds(input.snapshot).length > 0),
+        acknowledgement: agentRequirementAcknowledgement(publicPrompt, input.surface, input.assetIds.length > 0 || (input.surface === "canvas" && selectedCanvasNodeIds(snapshot).length > 0)),
         ttlMs: TTL,
     });
 }
@@ -159,18 +161,13 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
 async function assertVideoFrameAssets(userId: string, input: CreativeRunRequest) {
     const frameIds = videoFrameAssetIds(input.preferences?.video);
     if (!frameIds.length) return;
-    const assets = await getCreativeAssetsByIds(frameIds);
+    const assets = await getCreativeAssetsByIds(frameIds, userId);
     const byId = new Map(assets.map((asset) => [asset.id, asset]));
     for (const id of frameIds) {
         const asset = byId.get(id);
         if (!asset || asset.userId !== userId || asset.status !== "ready") throw new CreativeRuntimeInputError("视频首尾帧图片不存在或已失效");
         if (asset.type !== "image") throw new CreativeRuntimeInputError("视频首尾帧只能使用图片素材");
     }
-}
-
-function selectedCanvasNodeIds(snapshot: unknown) {
-    const ids = snapshot && typeof snapshot === "object" ? (snapshot as { selectedNodeIds?: unknown }).selectedNodeIds : undefined;
-    return Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id.trim()) : [];
 }
 
 export const getAgentRun = (id: string) => getStoredGenerationTask<AgentRun>("agent", id);

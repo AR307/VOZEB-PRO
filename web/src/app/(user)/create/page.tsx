@@ -18,6 +18,7 @@ import { optimizePrompt } from "@/services/api/prompt-optimization";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
 import { createAgentPromptFromHash } from "@/lib/create-agent-prompt";
+import { resolveSiteTitle } from "@/lib/site-brand";
 
 import { CreativeComposer } from "./components/creative-composer";
 import { CreativeAssetsPanel } from "./components/creative-assets-panel";
@@ -25,7 +26,6 @@ import { applyAgentGenerationCapability, shouldShowVideoFrameControls } from "./
 import { CreativeConversationList } from "./components/creative-conversation-list";
 import { CreateInspirationGallery } from "./components/create-inspiration-gallery";
 import { CreativeMessages } from "./components/creative-messages";
-import { creativeRunReplayPreferences } from "./components/creative-run-replay";
 import { CreateWorkbenchOverview } from "./components/create-workbench-overview";
 import { publicCreativeAssetPrompt, remapCreativeAssetReferences } from "./components/creative-asset-mention";
 import { createConversationHref, createConversationIdFromSearch } from "./create-conversation-navigation";
@@ -49,6 +49,7 @@ export default function CreatePage() {
     const initialConversationRestoredRef = useRef(false);
     const initialPromptRestoredRef = useRef(false);
     const conversationScrollRef = useRef<HTMLElement>(null);
+    const conversationWasLoadingRef = useRef(false);
     const previousScrollTopRef = useRef(0);
     const awayFromLatestRef = useRef(false);
     const promptValueRef = useRef("");
@@ -68,7 +69,7 @@ export default function CreatePage() {
     const [awayFromLatest, setAwayFromLatest] = useState(false);
     const [composerExpanded, setComposerExpanded] = useState(true);
     const publicSettings = usePublicSessionStore((state) => state.payload?.settings);
-    const siteTitle = publicSettings?.site?.title || "VOZEB PRO";
+    const siteTitle = resolveSiteTitle(publicSettings?.site?.title);
     const agent = useCreateAgent();
     const openAgentConversation = agent.openConversation;
     const newAgentConversation = agent.newConversation;
@@ -134,6 +135,32 @@ export default function CreatePage() {
         setComposerExpanded(true);
     }, [agent.conversationId]);
 
+    useEffect(() => {
+        const wasLoading = conversationWasLoadingRef.current;
+        conversationWasLoadingRef.current = agent.conversationLoading;
+        const element = conversationScrollRef.current;
+        if (!element || agent.conversationLoading || !agent.messages.length) return;
+        if (wasLoading) {
+            awayFromLatestRef.current = false;
+            setAwayFromLatest(false);
+            setComposerExpanded(true);
+        }
+        const content = element.querySelector<HTMLElement>('[data-testid="creative-message-list"]');
+        if (!content) return;
+        const settle = () => {
+            if (awayFromLatestRef.current) return;
+            element.scrollTop = element.scrollHeight;
+            previousScrollTopRef.current = element.scrollTop;
+        };
+        const resizeObserver = new ResizeObserver(settle);
+        resizeObserver.observe(content);
+        const frame = window.requestAnimationFrame(settle);
+        return () => {
+            window.cancelAnimationFrame(frame);
+            resizeObserver.disconnect();
+        };
+    }, [agent.conversationId, agent.conversationLoading, agent.messages.length]);
+
     const openConversation = (id: string) => {
         router.push(createConversationHref(id));
         void openAgentConversation(id).catch((error) => {
@@ -187,19 +214,23 @@ export default function CreatePage() {
         }
     };
 
-    const restoreRoundInput = (editedMessage: CreativeMessage, run?: CreativeAgentRun) => {
-        const assetIds = Array.isArray(editedMessage.metadata.assetIds) ? editedMessage.metadata.assetIds.filter((id): id is string => typeof id === "string") : [];
-        const { mode, ...preferences } = creativeRunReplayPreferences(run) || {};
-        const availableModelIds = (run?.requestedModelIds || []).filter((id) => modelOptions.some((model) => model.id === id));
-        updatePrompt(editedMessage.content);
-        agent.restoreAttachments(assetIds);
-        setSelectedSkillId(run?.selectedSkillIds?.find((id) => skills.some((skill) => skill.id === id)));
-        setSelectedModelIds(availableModelIds);
-        setSmartPlanning(!availableModelIds.length);
-        setCreationMode(mode || "agent");
-        setGenerationPreferences(preferences);
-        window.requestAnimationFrame(() => inputRef.current?.focus());
-        message.info("已恢复本轮需求、参考素材和生成设置，可修改后重新发送");
+    const retryRound = async (assistantMessage: CreativeMessage, run?: CreativeAgentRun) => {
+        try {
+            if (!run) return await agent.retrySubmission(assistantMessage.id);
+            const failedTasks = run.tasks.filter((task) => task.status === "failed");
+            if (failedTasks.length) {
+                await agent.retryTasks(
+                    run.id,
+                    failedTasks.map((task) => task.id),
+                );
+                return true;
+            }
+            await agent.retryRun(run.id);
+            return true;
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "重试失败");
+            return false;
+        }
     };
 
     const uploadAttachments = async (files: File[], successMessage?: string) => {
@@ -605,7 +636,7 @@ export default function CreatePage() {
                                 runDetails={agent.runDetails}
                                 materializingProjectId={agent.materializingProjectId}
                                 onMaterializeProject={agent.materializeProject}
-                                onEditMessage={restoreRoundInput}
+                                onRetryMessage={retryRound}
                                 selectedAssetIds={agent.selectedAssetIds}
                                 onToggleAsset={toggleReferencedAsset}
                                 hasOlder={agent.hasOlderMessages}

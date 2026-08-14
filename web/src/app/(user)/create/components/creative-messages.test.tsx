@@ -98,6 +98,40 @@ describe("CreativeMessages", () => {
         expect(markup).not.toContain("已完成 1 个创作任务。");
     });
 
+    it("keeps a complete document artifact while hiding upstream wrapper syntax", () => {
+        const message: CreativeMessage = {
+            id: "assistant-novel",
+            conversationId: "conversation-one",
+            sequence: 2,
+            role: "assistant",
+            status: "completed",
+            content: "创作任务已完成。",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const asset: CreativeAsset = {
+            id: "novel-one",
+            userId: "user-one",
+            conversationId: "conversation-one",
+            messageId: message.id,
+            ordinal: 0,
+            type: "text",
+            status: "ready",
+            title: "原创小说正文",
+            textContent: ':::writing{variant="document" id="58391" title="《潮汐写给远方的信》"}\n# 潮汐写给远方的信\n\n## 六\n\n等你回来。:::',
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderMessages(message, [asset]);
+
+        expect(markup).toContain("潮汐写给远方的信");
+        expect(markup).toContain("等你回来。");
+        expect(markup).not.toContain(":::writing");
+        expect(markup).not.toContain(":::");
+    });
+
     it("renders current-turn reference images above the user message", () => {
         const message: CreativeMessage = {
             id: "user-message",
@@ -138,7 +172,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onEditMessage={vi.fn()}
+                    onRetryMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -187,7 +221,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onEditMessage={vi.fn()}
+                    onRetryMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -345,7 +379,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onEditMessage={vi.fn()}
+                    onRetryMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -376,7 +410,9 @@ describe("CreativeMessages", () => {
         expect(markup).toContain("完成时间：");
         expect(markup).toContain('data-testid="creative-run-timing"');
         expect(markup).toContain('aria-label="查看本轮创作详细信息"');
-        expect(markup).toContain("复制提示词");
+        expect(markup).not.toContain(">复制提示词</button>");
+        expect(markup).toContain("grid-cols-[94px_32px]");
+        expect(markup).not.toContain("grid-cols-[minmax(0,1fr)_minmax(0,1fr)_32px]");
         expect(markup).not.toContain("重新编辑");
         expect(markup).not.toContain("再次生成");
         expect(markup).toContain("下载视频");
@@ -447,7 +483,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onEditMessage={vi.fn()}
+                    onRetryMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -496,15 +532,15 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onEditMessage={vi.fn()}
+                    onRetryMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
             </App>,
         );
 
-        expect(markup).toContain("编辑重试");
-        expect(markup).not.toContain('aria-label="重试本次创作请求"');
+        expect(markup).toContain("直接重试");
+        expect(markup).toContain('aria-label="直接重试本次创作"');
     });
 
     it("offers an explicit retry when Agent planning finished with an uncertain result", () => {
@@ -554,16 +590,15 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onEditMessage={vi.fn()}
+                    onRetryMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
             </App>,
         );
 
-        expect(markup).toContain("编辑重试");
-        expect(markup).not.toContain('aria-label="重新分析本次请求"');
-        expect(markup).not.toContain("仅在你确认后重新请求");
+        expect(markup).toContain("直接重试");
+        expect(markup).toContain('aria-label="直接重试本次创作"');
     });
 
     it("keeps failed media feedback under the single assistant logo", () => {
@@ -614,7 +649,7 @@ describe("CreativeMessages", () => {
                     onMaterializeProject={async () => {
                         throw new Error("not used");
                     }}
-                    onEditMessage={vi.fn()}
+                    onRetryMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
                 />
@@ -624,8 +659,8 @@ describe("CreativeMessages", () => {
         expect(markup).toContain('data-testid="creative-generation-failure"');
         expect((markup.match(/aria-label="创作助手"/g) || []).length).toBe(1);
         expect((markup.match(/data-testid="creative-assistant-avatar"/g) || []).length).toBe(1);
-        expect(markup).toContain('aria-label="编辑提示词后重试"');
-        expect(markup).toContain("编辑重试");
+        expect(markup).toContain('aria-label="直接重试本次创作"');
+        expect(markup).toContain("直接重试");
         const failureMarkup = markup.slice(markup.indexOf('data-testid="creative-generation-failure"'));
         expect(failureMarkup).not.toContain("size-12");
         expect(failureMarkup).not.toContain("Sparkles");
@@ -667,7 +702,7 @@ describe("CreativeMessages", () => {
         expect(markup).toContain('aria-label="复制输入内容"');
         expect(markup).toContain('aria-label="复制消息"');
         expect(markup).not.toContain('aria-label="编辑消息"');
-        expect(markup).not.toContain("编辑重试");
+        expect(markup).not.toContain("直接重试");
     });
 });
 
@@ -684,7 +719,7 @@ function renderMessages(message: CreativeMessage, assets: CreativeAsset[] = [], 
                 onMaterializeProject={async () => {
                     throw new Error("not used");
                 }}
-                onEditMessage={vi.fn()}
+                onRetryMessage={vi.fn()}
                 selectedAssetIds={[]}
                 onToggleAsset={vi.fn()}
             />

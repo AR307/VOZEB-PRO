@@ -5,7 +5,7 @@ import { SlidersHorizontal } from "lucide-react";
 import { CreativeGenerationPreferences, generationPreferenceSummary, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
 import type { CreativeGenerationPreferences as GenerationPreferences } from "@/lib/creative-runtime-contract";
 import type { AiConfig } from "@/stores/use-config-store";
-import type { CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
+import { useCreativeComposerPopoverPlacement, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
@@ -17,6 +17,7 @@ type CanvasImageSettingsPopoverProps = {
 };
 
 export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChange, buttonClassName, placement = "topLeft", fixedSizeLabel }: CanvasImageSettingsPopoverProps) {
+    const responsivePlacement = useCreativeComposerPopoverPlacement(placement);
     const preferences: GenerationPreferences = {
         mode: "image",
         image: {
@@ -37,7 +38,8 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
             triggerIcon={<SlidersHorizontal className="size-4" />}
             triggerClassName={buttonClassName}
             triggerLabelClassName="whitespace-nowrap text-left !overflow-visible !text-clip"
-            placement={placement}
+            placement={responsivePlacement}
+            autoAdjustOverflow
             fixedSizeLabel={fixedSizeLabel}
             onOpenChange={onOpenChange}
             onChange={(patch) => applyImagePreferencePatch(patch, onConfigChange)}

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/lib/auth/store-foundation";
 
-import { agentPlannerInput, buildAgentPlannerInput, compactCanvasSnapshot, plannerAgentSkills, selectAgentSkills } from "./agent-run-surface-policy";
+import { agentPlannerInput, agentPlannerSystemPrompt, buildAgentPlannerInput, compactCanvasSnapshot, plannerAgentSkills, selectAgentSkills } from "./agent-run-surface-policy";
 import { filterAgentPlannerModels, resolveAgentPlanningProfile } from "./agent-run-planning-profile";
 
 describe("selectAgentSkills", () => {
@@ -31,6 +31,16 @@ describe("selectAgentSkills", () => {
 });
 
 describe("agentPlannerInput", () => {
+    it("constrains drama generation to the current project snapshot", () => {
+        const prompt = agentPlannerSystemPrompt("drama", "{}");
+
+        expect(prompt).toContain("projectSnapshot 是本次短剧生产的权威上下文");
+        expect(prompt).toContain("currentStage");
+        expect(prompt).toContain("project.ratio");
+        expect(prompt).toContain("currentTurnReferences");
+        expect(prompt).toContain("不得把短剧入口当成脱离项目的通用图片或视频工作台");
+    });
+
     it("keeps selected Canvas nodes, one-hop relations and exact size while dropping unrelated nodes", () => {
         const snapshot = {
             projectId: "canvas-one",
@@ -53,6 +63,25 @@ describe("agentPlannerInput", () => {
         expect(compact.nodes.map((node) => node.id)).toEqual(["config", "selected", "related"]);
         expect(compact.nodes[0]).toMatchObject({ metadata: { size: "400x600" } });
         expect(compact).not.toHaveProperty("viewport");
+    });
+
+    it("reuses a persisted normalized Canvas snapshot without exposing internal analysis", () => {
+        const snapshot = {
+            canvasSnapshotVersion: 1,
+            projectId: "canvas-one",
+            title: "画布",
+            imageSize: "1824x1024",
+            selectedNodeIds: ["selected"],
+            nodes: [{ id: "selected", type: "image", title: "商品", metadata: { url: "/api/reference-assets/current", naturalWidth: 1824, naturalHeight: 1024 } }],
+            connections: [],
+            analysis: { nodeCount: 1, selectedNodeTypes: ["image"] },
+        };
+
+        const compact = compactCanvasSnapshot(snapshot);
+
+        expect(compact).toEqual({ projectId: "canvas-one", title: "画布", imageSize: "1824x1024", selectedNodeIds: ["selected"], nodes: snapshot.nodes, connections: [] });
+        expect(compact).not.toHaveProperty("analysis");
+        expect(compact).not.toHaveProperty("canvasSnapshotVersion");
     });
 
     it("keeps the complete validated conversation, asset and Skill planning context", () => {
@@ -160,9 +189,24 @@ describe("agentPlannerInput", () => {
     it("classifies planning complexity without adding input or output limits", () => {
         const multi = resolveAgentPlanningProfile({ surface: "chat", prompt: "生成四张角色图" });
         const complex = resolveAgentPlanningProfile({ surface: "drama", prompt: "继续当前项目" });
+        const complexCanvas = resolveAgentPlanningProfile({
+            surface: "canvas",
+            prompt: "整理当前选择",
+            snapshot: {
+                canvasSnapshotVersion: 1,
+                projectId: "canvas",
+                title: "画布",
+                imageSize: "1:1",
+                selectedNodeIds: ["selected"],
+                nodes: [{ id: "selected", type: "text", title: "选中", metadata: { content: "正文" } }],
+                connections: [],
+                analysis: { nodeCount: 12, selectedNodeTypes: ["text"] },
+            },
+        });
 
         expect(multi).toMatchObject({ complexity: "multi" });
         expect(complex).toMatchObject({ complexity: "complex" });
+        expect(complexCanvas).toMatchObject({ complexity: "complex" });
         expect(multi).not.toHaveProperty("maxInputChars");
         expect(multi).not.toHaveProperty("maxOutputTokens");
         expect(complex).not.toHaveProperty("maxInputChars");

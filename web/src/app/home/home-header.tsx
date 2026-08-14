@@ -27,7 +27,7 @@ export function HomeHeader() {
             <div className={styles.headerInner}>
                 <Link href="/" className={styles.brand} aria-label={`${site.title} 首页`}>
                     <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
-                    <span>{site.title || "VOZEB PRO"}</span>
+                    <span>{site.title}</span>
                 </Link>
 
                 <nav className={styles.desktopNav} aria-label="官网主导航">

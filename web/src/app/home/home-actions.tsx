@@ -10,6 +10,7 @@ import { createAgentPromptHref } from "@/lib/create-agent-prompt";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { HomeSiteSettings } from "./home-data";
+import { resolveSiteTitle } from "@/lib/site-brand";
 
 type HomeActions = {
     authenticated: boolean;
@@ -34,7 +35,7 @@ export function HomeActionsProvider({ initialSite, children }: { initialSite: Ho
         () => ({
             ...initialSite,
             ...(sessionSite || {}),
-            title: sessionSite?.title?.trim() || initialSite.title.trim() || "VOZEB PRO",
+            title: resolveSiteTitle(sessionSite?.title || initialSite.title),
             logoUrl: sessionSite?.logoUrl?.trim() || initialSite.logoUrl || "/logo.svg",
             friendLinks: sessionSite?.friendLinks || initialSite.friendLinks,
             socials: (sessionSite?.socials as HomeSiteSettings["socials"] | undefined) || initialSite.socials,
