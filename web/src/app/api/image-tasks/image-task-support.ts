@@ -27,6 +27,7 @@ import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
+import { resolveMediaMimeType } from "@/lib/server/media-content-type";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 
 import {
@@ -563,8 +564,8 @@ export async function inlineRemoteImageResult(value: string, origin: string, coo
         if (contentLength > MAX_INLINE_IMAGE_BYTES) return { dataUrl: url, remoteUrl: fallbackUrl };
         const bytes = Buffer.from(await response.arrayBuffer());
         if (bytes.length > MAX_INLINE_IMAGE_BYTES) return { dataUrl: url, remoteUrl: fallbackUrl };
-        const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || "image/png";
-        if (!mimeType.startsWith("image/")) return { dataUrl: url, remoteUrl: fallbackUrl };
+        const mimeType = await resolveMediaMimeType(bytes, "image", response.headers.get("content-type"));
+        if (!mimeType) return { dataUrl: url, remoteUrl: fallbackUrl };
         return { dataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`, remoteUrl: fallbackUrl };
     } catch {
         return { dataUrl: url, remoteUrl: fallbackUrl };
@@ -708,8 +709,8 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
             const bytes = Buffer.from(await response.arrayBuffer());
             if (!bytes.length) throw new Error("参考图读取失败");
             if (bytes.length > MAX_INLINE_IMAGE_BYTES) throw new Error("参考图过大，请压缩后重试");
-            const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || reference.type || "image/png";
-            if (!mimeType.startsWith("image/")) throw new Error("参考图不是有效图片");
+            const mimeType = await resolveMediaMimeType(bytes, "image", response.headers.get("content-type") || reference.type);
+            if (!mimeType) throw new Error("参考图不是有效图片");
             return new File([bytes], name, { type: mimeType });
         } catch (error) {
             lastError = error;

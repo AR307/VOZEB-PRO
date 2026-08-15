@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     queryAudioTaskUpstreamStep: vi.fn(),
     queryCancelledImageTaskUpstreamStep: vi.fn(),
     queryImageTaskUpstreamStep: vi.fn(),
+    persistImageTaskResult: vi.fn(),
     queryCancelledTextTaskUpstreamStep: vi.fn(),
     getTextTask: vi.fn(),
     updateTextTask: vi.fn(),
@@ -47,7 +48,7 @@ vi.mock("@/lib/server/audio-task-store", () => ({ getAudioTask: mocks.getAudioTa
 vi.mock("@/lib/server/image-task-runtime", () => ({
     createImageTaskUpstreamStep: vi.fn(),
     markImageTaskFailed: vi.fn(),
-    persistImageTaskResult: vi.fn(),
+    persistImageTaskResult: mocks.persistImageTaskResult,
     queryCancelledImageTaskUpstreamStep: mocks.queryCancelledImageTaskUpstreamStep,
     queryImageTaskUpstreamStep: mocks.queryImageTaskUpstreamStep,
 }));
@@ -139,6 +140,19 @@ describe("generation task recovery service", () => {
         expect(mocks.release.mock.invocationCallOrder.find((order) => order < mocks.executeAgentRun.mock.invocationCallOrder[0]!)).toBeTruthy();
         expect(mocks.executeAgentRun).toHaveBeenCalledTimes(1);
         expect(result).toMatchObject({ claimed: 1, completed: 1 });
+    });
+
+    it("persists a ready image without querying the upstream a second time", async () => {
+        const task = { id: "image-ready", userId: "user-one", status: "running", config: {} };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "running", executionPhase: "persisting", resultPayload: { url: "https://cdn.example.com/result.png" } }]);
+        mocks.getImageTask.mockResolvedValue(task);
+        mocks.persistImageTaskResult.mockResolvedValue({ status: "success" });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.persistImageTaskResult).toHaveBeenCalledWith(task, "http://internal", "https://cdn.example.com/result.png", "", task.userId);
+        expect(mocks.queryImageTaskUpstreamStep).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ claimed: 1, completed: 1, deferred: 0 });
     });
 
     it("recovers every Agent child task in configured batches", async () => {

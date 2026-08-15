@@ -8,6 +8,7 @@ import { resolveImageRequestSize } from "@/lib/image-size";
 import { readImageMeta } from "@/lib/image-utils";
 import { createAudioGenerationTask } from "@/services/api/audio";
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
+import { isImageGenerationTaskDeferredError } from "@/services/api/image";
 import { createTextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask } from "@/services/api/video";
 import type { InsertAssetPayload } from "../components/canvas-asset-insert";
@@ -246,6 +247,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     let hasSuccess = false;
                     let hasFailure = false;
                     let hasReview = false;
+                    let hasDeferred = false;
                     await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
@@ -256,6 +258,13 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             } catch (error) {
                                 if (isGenerationCanceled(error)) return false;
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                                if (isImageGenerationTaskDeferredError(error)) {
+                                    const shouldNotify = !hasDeferred;
+                                    hasDeferred = true;
+                                    if (shouldNotify) message.info(errorDetails);
+                                    setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_LOADING, errorDetails } } : node)));
+                                    return false;
+                                }
                                 if (isGenerationTaskNeedsReviewError(error)) {
                                     hasReview = true;
                                     pauseReviewedTasks([targetId], errorDetails);
@@ -281,18 +290,32 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             node.metadata?.status === NODE_STATUS_NEEDS_REVIEW
                                 ? node
                                 : node.id === nodeId && isConfigNode
-                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : hasReview ? NODE_STATUS_IDLE : NODE_STATUS_ERROR, errorDetails: hasSuccess || hasReview ? undefined : "全部图片生成失败" } }
+                                  ? {
+                                        ...node,
+                                        metadata: {
+                                            ...node.metadata,
+                                            status: hasSuccess ? NODE_STATUS_SUCCESS : hasReview ? NODE_STATUS_IDLE : hasDeferred ? NODE_STATUS_LOADING : NODE_STATUS_ERROR,
+                                            errorDetails: hasSuccess || hasReview ? undefined : hasDeferred ? "图片仍在后台生成，系统会继续查询原任务" : "全部图片生成失败",
+                                        },
+                                    }
                                   : node.id === nodeId && isEmptyImageNode
                                     ? {
                                           ...node,
                                           metadata: {
                                               ...node.metadata,
-                                              status: hasSuccess ? NODE_STATUS_SUCCESS : hasReview ? NODE_STATUS_NEEDS_REVIEW : NODE_STATUS_ERROR,
-                                              errorDetails: hasSuccess ? undefined : node.metadata?.errorDetails || "全部图片生成失败",
+                                              status: hasSuccess ? NODE_STATUS_SUCCESS : hasReview ? NODE_STATUS_NEEDS_REVIEW : hasDeferred ? NODE_STATUS_LOADING : NODE_STATUS_ERROR,
+                                              errorDetails: hasSuccess ? undefined : node.metadata?.errorDetails || (hasDeferred ? "图片仍在后台生成，系统会继续查询原任务" : "全部图片生成失败"),
                                           },
                                       }
                                     : node.id === rootId && !hasSuccess
-                                      ? { ...node, metadata: { ...node.metadata, status: hasReview ? NODE_STATUS_IDLE : NODE_STATUS_ERROR, errorDetails: hasReview ? undefined : "全部图片生成失败" } }
+                                      ? {
+                                            ...node,
+                                            metadata: {
+                                                ...node.metadata,
+                                                status: hasReview ? NODE_STATUS_IDLE : hasDeferred ? NODE_STATUS_LOADING : NODE_STATUS_ERROR,
+                                                errorDetails: hasReview ? undefined : hasDeferred ? "图片仍在后台生成，系统会继续查询原任务" : "全部图片生成失败",
+                                            },
+                                        }
                                       : node,
                         ),
                     );
@@ -639,6 +662,11 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                if (isImageGenerationTaskDeferredError(error)) {
+                    message.info(errorDetails);
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails } } : item)));
+                    return;
+                }
                 message.error(errorDetails);
                 if (isGenerationTaskNeedsReviewError(error)) {
                     pauseReviewedTasks([node.id], errorDetails);

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
+import { isImageGenerationTaskDeferredError } from "@/services/api/image";
 import { CanvasNodeType, isCanvasImageNodeType } from "../types";
 import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
 
@@ -218,6 +219,11 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                 .catch((error) => {
                     if (isGenerationCanceled(error)) return;
                     const errorDetails = error instanceof Error ? error.message : "图片生成失败";
+                    if (isImageGenerationTaskDeferredError(error)) {
+                        message.info(errorDetails);
+                        setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails } } : item)));
+                        return;
+                    }
                     message.error(errorDetails);
                     if (isGenerationTaskNeedsReviewError(error)) {
                         deferReviewedTask(node.id, errorDetails);

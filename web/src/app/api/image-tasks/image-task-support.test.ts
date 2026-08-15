@@ -11,6 +11,7 @@ import {
     imageTaskPollAttempts,
     imageTaskPollUrls,
     imageTaskRequestTimeoutMs,
+    inlineRemoteImageResult,
     openAiImageTaskPath,
     parseImagePayloadOrPoll,
     parseImagePayloadCompat,
@@ -32,6 +33,7 @@ const config = {
 describe("GlobalAiOpc image task paths", () => {
     afterEach(() => {
         vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
     });
 
     it("preserves maintenance authorization for the internal system proxy", () => {
@@ -145,6 +147,18 @@ describe("GlobalAiOpc image task paths", () => {
         const response = new Response("<!doctype html><html></html>", { headers: { "content-type": "text/html" } });
 
         await expect(parseImageQueryJson(response)).rejects.toBeInstanceOf(ImageQueryContractError);
+    });
+
+    it("reads an image from a proxy response even when its content type is generic", async () => {
+        const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+4q2JAAAAAElFTkSuQmCC", "base64");
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(png, { headers: { "content-type": "application/octet-stream" } })),
+        );
+
+        const result = await inlineRemoteImageResult("https://cdn.example.com/result", "http://localhost:3000", "");
+
+        expect(result.dataUrl).toMatch(/^data:image\/png;base64,/);
     });
 
     it("prefers the edit endpoint declared by the channel reference rule", async () => {
