@@ -14,7 +14,7 @@ import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { Prompt } from "@/services/api/prompts";
 import { applyPublicSiteSettings, notifyPublicSettingsChanged } from "@/stores/use-public-session-store";
-import { beginAdminSettingsSave, createAdminSettingsSaveSnapshot, finishAdminSettingsSave, mergeAdminSettingsSaveResponse } from "./admin-settings-save";
+import { applyAdminSettingsSaveSnapshot, beginAdminSettingsSave, createAdminSettingsSaveSnapshot, finishAdminSettingsSave, mergeAdminSettingsSaveResponse, restoreAdminSettingsSaveFailure } from "./admin-settings-save";
 import { downloadTextFile, formatCreatedCdkExport, splitTags } from "./admin-dashboard-elements";
 
 export type AdminDashboardProps = {
@@ -179,6 +179,8 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
 
     const saveSettings = async (patch: Partial<AuthSettings>, successText = "设置已保存") => {
         const snapshot = createAdminSettingsSaveSnapshot(patch);
+        const previous = createAdminSettingsSaveSnapshot(Object.fromEntries(snapshot.keys.map((key) => [key, settings[key]])) as Partial<AuthSettings>);
+        setSettings((current) => applyAdminSettingsSaveSnapshot(current, snapshot));
         settingsSaveCountRef.current = beginAdminSettingsSave(settingsSaveCountRef.current);
         setSettingsLoading(true);
         try {
@@ -195,6 +197,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
             message.success(successText);
             return true;
         } catch (error) {
+            setSettings((current) => restoreAdminSettingsSaveFailure(current, previous, snapshot));
             message.error(error instanceof Error ? error.message : "更新设置失败");
             return false;
         } finally {

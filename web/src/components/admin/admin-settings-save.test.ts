@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/lib/auth/store";
-import { beginAdminSettingsSave, createAdminSettingsSaveSnapshot, finishAdminSettingsSave, mergeAdminSettingsSaveResponse } from "./admin-settings-save";
+import { applyAdminSettingsSaveSnapshot, beginAdminSettingsSave, createAdminSettingsSaveSnapshot, finishAdminSettingsSave, mergeAdminSettingsSaveResponse, restoreAdminSettingsSaveFailure } from "./admin-settings-save";
 
 function settings() {
     return structuredClone(DEFAULT_SETTINGS);
@@ -31,6 +31,32 @@ describe("admin settings save response merge", () => {
 
         expect(next.site.title).toBe("服务端标题");
         expect(next.registrationEnabled).toBe(false);
+    });
+
+    it("synchronizes channel additions and deletions to the local snapshot before the response", () => {
+        const current = settings();
+        const channel = { id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "", apiFormat: "openai" as const, models: ["writer"], enabled: true };
+        current.systemChannels = [channel];
+
+        const deleted = applyAdminSettingsSaveSnapshot(current, createAdminSettingsSaveSnapshot({ systemChannels: [] }));
+        const added = applyAdminSettingsSaveSnapshot(deleted, createAdminSettingsSaveSnapshot({ systemChannels: [channel] }));
+
+        expect(deleted.systemChannels).toEqual([]);
+        expect(added.systemChannels).toEqual([channel]);
+    });
+
+    it("rolls back a failed deletion without overwriting a later edit", () => {
+        const current = settings();
+        const channel = { id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "", apiFormat: "openai" as const, models: ["writer"], enabled: true };
+        current.systemChannels = [channel];
+        const previous = createAdminSettingsSaveSnapshot({ systemChannels: current.systemChannels });
+        const submitted = createAdminSettingsSaveSnapshot({ systemChannels: [] });
+        const pending = applyAdminSettingsSaveSnapshot(current, submitted);
+
+        expect(restoreAdminSettingsSaveFailure(pending, previous, submitted).systemChannels).toEqual([channel]);
+
+        const edited = { ...pending, systemChannels: [{ ...channel, id: "later" }] };
+        expect(restoreAdminSettingsSaveFailure(edited, previous, submitted).systemChannels).toEqual(edited.systemChannels);
     });
 
     it("does not overwrite a field edited while its save request is pending", () => {
