@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     signRead: vi.fn(),
     listObjects: vi.fn(),
     testConnection: vi.fn(),
+    errorMessage: vi.fn((error: unknown) => (error instanceof Error ? error.message : "外部存储请求失败")),
     register: vi.fn(),
     listMigrationRegistrations: vi.fn(),
     listByObjectKeys: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("@/lib/server/object-storage-client", () => ({
     signObjectRead: mocks.signRead,
     listObjects: mocks.listObjects,
     testObjectStorageConnection: mocks.testConnection,
+    objectStorageErrorMessage: mocks.errorMessage,
 }));
 vi.mock("@/lib/server/local-media-registry", () => ({
     registerLocalMediaAsset: mocks.register,
@@ -107,6 +109,13 @@ describe("object storage media service", () => {
         mocks.register.mockRejectedValueOnce(new Error("registry failed"));
         await expect(persistExternalMediaIfEnabled({ registration, bytes: Buffer.from("data") })).rejects.toThrow("registry failed");
         expect(mocks.deleteObjects).toHaveBeenCalledWith(config, [objectKey]);
+    });
+
+    it("reports object upload failures consistently for every media writer", async () => {
+        mocks.putBytes.mockRejectedValueOnce(new Error("AccessDenied"));
+
+        await expect(persistExternalMediaIfEnabled({ registration, bytes: Buffer.from("data") })).rejects.toThrow("外部存储上传失败：AccessDenied");
+        expect(mocks.register).not.toHaveBeenCalled();
     });
 
     it("continues signing existing object media after the write switch is disabled", async () => {

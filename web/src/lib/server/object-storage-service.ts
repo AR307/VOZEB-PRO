@@ -11,7 +11,7 @@ import { countLocalMediaReferences } from "@/lib/server/local-media-references";
 import { runImageVariantTaskOnce } from "@/lib/server/media-image-variant-cache";
 import { mediaContentDisposition, requestedImageVariant } from "@/lib/server/local-media-response";
 import { deleteLocalMediaRegistrations, listLocalMediaMigrationRegistrations, listMediaRegistrationsByExternalObjectKeys, registerLocalMediaAsset, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
-import { deleteObjects, getObjectBytes, listObjects, objectExists, putObjectBytes, putObjectFile, signObjectRead, testObjectStorageConnection } from "@/lib/server/object-storage-client";
+import { deleteObjects, getObjectBytes, listObjects, objectExists, objectStorageErrorMessage, putObjectBytes, putObjectFile, signObjectRead, testObjectStorageConnection } from "@/lib/server/object-storage-client";
 import { assertObjectStorageConfigured, getObjectStorageRuntimeConfig, type ObjectStorageRuntimeConfig } from "@/lib/server/object-storage-config";
 
 const MAX_INPUT_PIXELS = 100_000_000;
@@ -31,7 +31,11 @@ export async function persistExternalMediaIfEnabled(input: ExternalMediaWriteInp
     if (!config.enabled) return null;
     assertObjectStorageConfigured(config);
     const objectKey = mediaObjectKey(config, input.registration.scope, input.registration.storageKey);
-    await uploadMedia(config, objectKey, input);
+    try {
+        await uploadMedia(config, objectKey, input);
+    } catch (error) {
+        throw new Error(`外部存储上传失败：${objectStorageErrorMessage(error)}`, { cause: error });
+    }
     const syncedAt = new Date().toISOString();
     try {
         return await registerLocalMediaAsset({

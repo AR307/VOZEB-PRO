@@ -102,7 +102,7 @@ export function AdminExternalStorage() {
         setTesting(true);
         try {
             await testObjectStorageSettings();
-            message.success("外部存储连接正常");
+            message.success("外部存储列表、写入和删除权限正常");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "外部存储连接失败");
         } finally {
@@ -234,8 +234,8 @@ export function AdminExternalStorage() {
                     description="启用后新媒体直接写入 S3 兼容存储；关闭后新媒体恢复写入本机。"
                     actions={
                         <>
-                            <Tooltip title="检测连接">
-                                <Button aria-label="检测外部存储连接" className="!w-8 !px-0 sm:!w-auto sm:!px-3" icon={<ShieldCheck className="size-4" />} loading={testing} disabled={!settings?.bucket} onClick={() => void testConnection()}>
+                            <Tooltip title="检测读写权限">
+                                <Button aria-label="检测外部存储读写权限" className="!w-8 !px-0 sm:!w-auto sm:!px-3" icon={<ShieldCheck className="size-4" />} loading={testing} disabled={!settings?.bucket} onClick={() => void testConnection()}>
                                     <span className="hidden sm:inline">检测连接</span>
                                 </Button>
                             </Tooltip>
@@ -330,6 +330,19 @@ export function AdminExternalStorage() {
                             <StatusMetric label="失败" value={syncResult.failed} />
                             <StatusMetric label="跳过" value={syncResult.skipped} />
                             <StatusMetric label="剩余" value={syncResult.remaining} />
+                        </div>
+                    ) : null}
+                    {syncResult?.errors.length ? (
+                        <div role="alert" className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3.5 py-3 text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                            <div className="text-sm font-medium">迁移失败详情（本地源文件已保留）</div>
+                            <div className="mt-2 max-h-40 space-y-2 overflow-y-auto text-xs">
+                                {syncResult.errors.map((error, index) => (
+                                    <div key={`${error.storageKey}-${index}`} className="grid gap-0.5 sm:grid-cols-[minmax(180px,0.8fr)_minmax(0,1.2fr)] sm:gap-3">
+                                        <span className="break-all font-mono text-[11px] opacity-75">{error.storageKey}</span>
+                                        <span>{error.message}</span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     ) : null}
                     <div>
