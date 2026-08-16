@@ -284,7 +284,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         setNodes((prev) => prev.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
                         return;
                     }
-                    if (hasReview) message.warning("部分图片任务待管理员确认，系统未重复提交");
                     if (hasFailure) message.error(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
                     setNodes((prev) =>
                         prev.map((node) =>
@@ -483,7 +482,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 if (isGenerationTaskNeedsReviewError(error) && pendingChildIds.length) {
-                    message.error(errorDetails);
                     pauseReviewedTasks(pendingChildIds, errorDetails);
                     return;
                 }
@@ -535,7 +533,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         async (node: CanvasNodeData) => {
             if (node.metadata?.status === NODE_STATUS_NEEDS_REVIEW && hasCanvasGenerationTask(node)) {
                 setNodes((prev) => resumeCanvasGenerationReview(prev, node.id));
-                message.info("正在检查原任务状态，不会重复提交");
                 return;
             }
             if (node.metadata?.agentRunId && node.metadata.agentTaskId) {
@@ -674,11 +671,11 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails } } : item)));
                     return;
                 }
-                message.error(errorDetails);
                 if (isGenerationTaskNeedsReviewError(error)) {
                     pauseReviewedTasks([node.id], errorDetails);
                     return;
                 }
+                message.error(errorDetails);
                 setNodes((prev) =>
                     prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined, textTask: undefined, videoTask: undefined, audioTask: undefined } } : item)),
                 );

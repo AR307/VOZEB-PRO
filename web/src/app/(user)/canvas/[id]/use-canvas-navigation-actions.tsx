@@ -113,7 +113,9 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
     }, [applyHistory]);
 
     const autoLayout = useCallback(() => {
-        const next = autoLayoutCanvas(nodesRef.current, connections);
+        const availableWidth = Math.max(1, size.width - 128);
+        const availableHeight = Math.max(1, size.height - 152);
+        const next = autoLayoutCanvas(nodesRef.current, connections, { width: availableWidth, height: availableHeight });
         if (!next.length) return message.info("画布上还没有节点");
         const visible = next.filter((node) => !isAgentInternalNode(node));
         if (!visible.length) return message.info("画布上没有可整理的可见节点");
@@ -127,7 +129,7 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
         const bottom = Math.max(...visible.map((node) => node.position.y + node.height));
         const contentWidth = Math.max(1, right - left);
         const contentHeight = Math.max(1, bottom - top);
-        const scale = Math.min(1, Math.max(0.08, Math.min((size.width - 128) / contentWidth, (size.height - 152) / contentHeight)));
+        const scale = Math.min(1, Math.max(0.08, Math.min(availableWidth / contentWidth, availableHeight / contentHeight)));
         setViewport({ x: size.width / 2 - (left + contentWidth / 2) * scale, y: size.height / 2 - (top + contentHeight / 2) * scale, k: scale });
         message.success("画布已整理，操作可撤销");
     }, [connections, message, size.height, size.width]);

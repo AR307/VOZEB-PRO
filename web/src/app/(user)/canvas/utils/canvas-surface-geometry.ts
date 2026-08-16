@@ -17,7 +17,7 @@ export function edgePath(from: CanvasNodeData, to: CanvasNodeData) {
     const end = nodeAnchor(to, "target");
     const forwardDistance = end.x - start.x;
 
-    if (forwardDistance >= FORWARD_GAP) return forwardCurve(start, end, 1, forwardDistance);
+    if (forwardDistance >= FORWARD_GAP) return forwardRoute(start, end, 1, forwardDistance);
 
     const fromBottom = from.position.y + from.height;
     const toBottom = to.position.y + to.height;
@@ -35,7 +35,7 @@ export function edgePath(from: CanvasNodeData, to: CanvasNodeData) {
 export function previewPath(start: Position, end: Position, handleType: "source" | "target") {
     const direction = handleType === "source" ? 1 : -1;
     const forwardDistance = (end.x - start.x) * direction;
-    if (forwardDistance >= FORWARD_GAP) return forwardCurve(start, end, direction, forwardDistance);
+    if (forwardDistance >= FORWARD_GAP) return forwardRoute(start, end, direction, forwardDistance);
 
     const routeY = (start.y + end.y) / 2;
     return roundedPolyline([
@@ -99,9 +99,9 @@ export function isBlockedConnectionDrop(world: Position, draft: { nodeId: string
     });
 }
 
-function forwardCurve(start: Position, end: Position, direction: 1 | -1, forwardDistance: number) {
-    const curvature = Math.min(Math.max(forwardDistance * 0.5, 50), 240);
-    return `M ${start.x} ${start.y} C ${start.x + direction * curvature} ${start.y}, ${end.x - direction * curvature} ${end.y}, ${end.x} ${end.y}`;
+function forwardRoute(start: Position, end: Position, direction: 1 | -1, forwardDistance: number) {
+    const routeX = start.x + (direction * forwardDistance) / 2;
+    return roundedPolyline([start, { x: routeX, y: start.y }, { x: routeX, y: end.y }, end]);
 }
 
 function gapRoute(start: Position, end: Position, routeY: number) {

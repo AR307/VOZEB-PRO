@@ -221,11 +221,11 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                         setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails } } : item)));
                         return;
                     }
-                    message.error(errorDetails);
                     if (isGenerationTaskNeedsReviewError(error)) {
                         deferReviewedTask(node.id, errorDetails);
                         return;
                     }
+                    message.error(errorDetails);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : item)));
                 })
                 .finally(() => {
@@ -252,7 +252,6 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     const errorDetails = error instanceof Error ? error.message : "视频生成失败";
                     const failureKind = classifyCanvasVideoTaskFailure(error);
                     if (failureKind === "needs_review") {
-                        message.error(errorDetails);
                         deferReviewedTask(node.id, errorDetails);
                         return;
                     }
@@ -286,11 +285,11 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                 .catch((error) => {
                     if (isGenerationCanceled(error)) return;
                     const errorDetails = error instanceof Error ? error.message : "文本生成失败";
-                    message.error(errorDetails);
                     if (isGenerationTaskNeedsReviewError(error)) {
                         deferReviewedTask(node.id, errorDetails);
                         return;
                     }
+                    message.error(errorDetails);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, textTask: undefined } } : item)));
                 })
                 .finally(() => {
@@ -315,11 +314,11 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                 .catch((error) => {
                     if (isGenerationCanceled(error)) return;
                     const errorDetails = error instanceof Error ? error.message : "音频生成失败";
-                    message.error(errorDetails);
                     if (isGenerationTaskNeedsReviewError(error)) {
                         deferReviewedTask(node.id, errorDetails);
                         return;
                     }
+                    message.error(errorDetails);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, audioTask: undefined } } : item)));
                 })
                 .finally(() => {

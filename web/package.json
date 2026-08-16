@@ -39,7 +39,6 @@
         "@tiptap/pm": "3.30.0",
         "@tiptap/react": "3.30.0",
         "@tiptap/starter-kit": "3.30.0",
-        "ag-psd": "31.0.2",
         "antd": "^6.5.3",
         "axios": "^1.19.0",
         "clsx": "^2.1.1",

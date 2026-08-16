@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Eraser, FolderOpen, Globe2, Grid2x2, Hand, Image as ImageIcon, Info, Moon, MousePointer2, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video, Workflow } from "lucide-react";
+import { CircleDot, Download, Eraser, FolderOpen, Globe2, Grid2x2, Hand, Image as ImageIcon, Info, Moon, MousePointer2, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video, Workflow } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -10,6 +10,8 @@ import type { CanvasInteractionMode } from "./canvas-surface";
 
 export function CanvasToolbar({
     selectedCount,
+    selectedMediaCount,
+    selectedMediaDownloadPending,
     canUndo,
     canRedo,
     agentOpen,
@@ -25,6 +27,7 @@ export function CanvasToolbar({
     onUndo,
     onRedo,
     onUpload,
+    onDownloadSelectedMedia,
     onDelete,
     onClear,
     onInteractionModeChange,
@@ -34,6 +37,8 @@ export function CanvasToolbar({
     onAutoLayout,
 }: {
     selectedCount: number;
+    selectedMediaCount: number;
+    selectedMediaDownloadPending: boolean;
     canUndo: boolean;
     canRedo: boolean;
     agentOpen?: boolean;
@@ -49,6 +54,7 @@ export function CanvasToolbar({
     onUndo: () => void;
     onRedo: () => void;
     onUpload: () => void;
+    onDownloadSelectedMedia: () => void;
     onDelete: () => void;
     onClear: () => void;
     onInteractionModeChange: (mode: CanvasInteractionMode) => void;
@@ -155,6 +161,22 @@ export function CanvasToolbar({
                 >
                     <Palette className="size-4.5" />
                 </ToolbarButton>
+                {selectedMediaCount > 1 ? (
+                    <>
+                        <Divider theme={theme} />
+                        <Button
+                            data-canvas-batch-download
+                            aria-label={`批量下载 ${selectedMediaCount} 个图片或视频`}
+                            className="!h-8 !rounded-md !px-2.5 !text-xs !font-medium"
+                            style={{ background: theme.node.action, borderColor: theme.node.action, color: theme.node.actionText }}
+                            icon={<Download className="size-4" />}
+                            loading={selectedMediaDownloadPending}
+                            onClick={onDownloadSelectedMedia}
+                        >
+                            下载 {selectedMediaCount} 项
+                        </Button>
+                    </>
+                ) : null}
                 {selectedCount ? (
                     <>
                         <Divider theme={theme} />

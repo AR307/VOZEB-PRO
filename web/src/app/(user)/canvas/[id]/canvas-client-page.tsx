@@ -22,7 +22,6 @@ import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasTopBar } from "../components/canvas-top-bar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CanvasNodeType, type Position } from "../types";
-import { exportCanvasProjectAsPsd } from "../utils/canvas-export";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 import { CanvasRefreshShell, ConnectionCreateMenu, NodeCreateMenu } from "./canvas-page-elements";
@@ -237,6 +236,9 @@ function VozebProCanvasPage() {
         handleNodePromptChange,
         handleConfigNodeChange,
         downloadNodeImage,
+        downloadSelectedMedia,
+        selectedMediaCount,
+        selectedMediaDownloadPending,
         saveNodeAsset,
         createImageReversePromptNodes,
         appendDerivedImageNode,
@@ -302,10 +304,6 @@ function VozebProCanvasPage() {
                     onWorkbench={() => router.push("/create")}
                     onDeleteProject={deleteCurrentProject}
                     onImportImage={() => handleUploadRequest()}
-                    onExportPsd={() => {
-                        if (!currentProject) return;
-                        void exportCanvasProjectAsPsd({ ...currentProject, nodes, connections }).catch((error) => message.error(error instanceof Error ? error.message : "PSD 导出失败"));
-                    }}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     assetsOpen={assetPickerOpen}
@@ -506,6 +504,8 @@ function VozebProCanvasPage() {
 
                 <CanvasToolbar
                     selectedCount={selectedNodeIds.size}
+                    selectedMediaCount={selectedMediaCount}
+                    selectedMediaDownloadPending={selectedMediaDownloadPending}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
                     agentOpen={assistantOpen}
@@ -521,6 +521,7 @@ function VozebProCanvasPage() {
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}
+                    onDownloadSelectedMedia={() => void downloadSelectedMedia()}
                     onDelete={() => deleteNodes(new Set(selectedNodeIds))}
                     onClear={() => setClearConfirmOpen(true)}
                     onInteractionModeChange={setInteractionMode}

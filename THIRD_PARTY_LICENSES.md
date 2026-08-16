@@ -4,7 +4,7 @@
 
 ## Web 应用
 
-共 468 个运行时依赖记录。
+共 465 个运行时依赖记录。
 
 | 包 | 版本 | 许可证 | 项目主页 |
 | --- | --- | --- | --- |
@@ -229,7 +229,6 @@
 | @types/unist | 2.0.11, 3.0.3 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist) |
 | @types/use-sync-external-store | 0.0.6 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/use-sync-external-store) |
 | @ungap/structured-clone | 1.3.3 | ISC | [链接](https://github.com/ungap/structured-clone#readme) |
-| ag-psd | 31.0.2 | MIT | [链接](https://github.com/Agamnentzar/ag-psd#readme) |
 | agent-base | 6.0.2 | MIT | [链接](https://github.com/TooTallNate/node-agent-base#readme) |
 | antd | 6.5.3 | MIT | [链接](https://ant.design) |
 | aria-hidden | 1.2.6 | MIT | [链接](https://github.com/theKashey/aria-hidden#readme) |
@@ -237,7 +236,6 @@
 | axios | 1.19.0 | MIT | [链接](https://axios-http.com) |
 | babel-plugin-macros | 3.1.0 | MIT | [链接](https://github.com/kentcdodds/babel-plugin-macros#readme) |
 | bail | 2.0.2 | MIT | [链接](https://github.com/wooorm/bail#readme) |
-| base64-js | 1.5.1 | MIT | [链接](https://github.com/beatgammit/base64-js) |
 | baseline-browser-mapping | 2.10.40, 2.11.14 | Apache-2.0 | [链接](https://github.com/web-platform-dx/baseline-browser-mapping#readme) |
 | bowser | 2.14.1 | MIT | [链接](https://github.com/bowser-js/bowser) |
 | browserslist | 4.28.8 | MIT | [链接](https://github.com/browserslist/browserslist#readme) |
@@ -377,7 +375,6 @@
 | node-releases | 2.0.53 | MIT | [链接](https://github.com/chicoxyzzy/node-releases#readme) |
 | orderedmap | 2.1.1 | MIT | [链接](https://github.com/marijnh/orderedmap#readme) |
 | otpauth | 9.5.1 | MIT | [链接](https://github.com/hectorm/otpauth) |
-| pako | 2.1.0 | (MIT AND Zlib) | [链接](https://github.com/nodeca/pako#readme) |
 | parent-module | 1.0.1 | MIT | [链接](https://github.com/sindresorhus/parent-module#readme) |
 | parse-entities | 4.0.2 | MIT | [链接](https://github.com/wooorm/parse-entities#readme) |
 | parse-json | 5.2.0 | MIT | [链接](https://github.com/sindresorhus/parse-json#readme) |

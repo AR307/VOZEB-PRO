@@ -408,8 +408,12 @@ export function ImageContent({
     onSetBatchPrimary?: () => void;
     onImageDimensions?: (nodeId: string, naturalWidth: number, naturalHeight: number) => void;
 }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const colorTheme = useThemeStore((state) => state.theme);
+    const theme = canvasThemes[colorTheme];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
+    const layerName = node.metadata?.layerName?.trim();
+    const showTransparencyGrid = layerName === "主体" || Boolean(layerName?.includes("透明背景"));
+    const checkerColor = colorTheme === "dark" ? "rgba(255,255,255,.10)" : "rgba(100,116,139,.18)";
     const imageRef = useRef<HTMLImageElement>(null);
     const reportDimensions = useCallback(
         (image: HTMLImageElement) => {
@@ -425,7 +429,20 @@ export function ImageContent({
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
-            <div className="h-full w-full overflow-hidden rounded-3xl">
+            <div
+                className="h-full w-full overflow-hidden rounded-3xl"
+                data-canvas-transparent-preview={showTransparencyGrid ? "true" : undefined}
+                style={
+                    showTransparencyGrid
+                        ? {
+                              backgroundColor: colorTheme === "dark" ? "#18181b" : "#f8fafc",
+                              backgroundImage: `linear-gradient(45deg, ${checkerColor} 25%, transparent 25%), linear-gradient(-45deg, ${checkerColor} 25%, transparent 25%), linear-gradient(45deg, transparent 75%, ${checkerColor} 75%), linear-gradient(-45deg, transparent 75%, ${checkerColor} 75%)`,
+                              backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0",
+                              backgroundSize: "16px 16px",
+                          }
+                        : undefined
+                }
+            >
                 <img
                     ref={imageRef}
                     src={imagePreviewUrl(node.metadata!.content!, 1920)}

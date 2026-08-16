@@ -19,7 +19,7 @@ import { refundAudioTask } from "@/lib/server/audio-task-refund";
 import { refundImageTask } from "@/lib/server/image-task-refund";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
-import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
+import { toSafeGenerationReviewReason } from "@/lib/server/generation-errors";
 import { getAuthSettings } from "@/lib/auth/store";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
@@ -738,7 +738,7 @@ function safeError(error: unknown) {
 }
 
 function safeReviewReason(error: unknown, fallback: string) {
-    return toSafeGenerationErrorMessage(error, fallback).slice(0, 500);
+    return toSafeGenerationReviewReason(error, fallback).slice(0, 500);
 }
 
 function reviewPayload(lease: GenerationTaskLease, reviewReason: string) {

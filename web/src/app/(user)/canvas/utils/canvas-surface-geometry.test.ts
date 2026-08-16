@@ -14,7 +14,8 @@ describe("canvas surface geometry", () => {
     it("uses node-side centers as connection anchors", () => {
         expect(nodeAnchor(source, "source")).toEqual({ x: 340, y: 200 });
         expect(nodeAnchor(target, "target")).toEqual({ x: 500, y: 320 });
-        expect(edgePath(source, target)).toBe("M 340 200 C 420 200, 420 320, 500 320");
+        expect(edgePath(source, target)).toBe("M 340 200 L 406 200 Q 420 200 420 214 L 420 306 Q 420 320 434 320 L 500 320");
+        expect(edgePath(source, target)).not.toContain(" C ");
     });
 
     it("routes backward connections through a clear vertical gap", () => {
@@ -37,9 +38,10 @@ describe("canvas surface geometry", () => {
     });
 
     it("builds previews in the direction of the active handle", () => {
-        expect(previewPath({ x: 0, y: 20 }, { x: 100, y: 60 }, "source")).toBe("M 0 20 C 50 20, 50 60, 100 60");
-        expect(previewPath({ x: 100, y: 60 }, { x: 0, y: 20 }, "target")).toBe("M 100 60 C 50 60, 50 20, 0 20");
+        expect(previewPath({ x: 0, y: 20 }, { x: 100, y: 60 }, "source")).toBe("M 0 20 L 36 20 Q 50 20 50 34 L 50 46 Q 50 60 64 60 L 100 60");
+        expect(previewPath({ x: 100, y: 60 }, { x: 0, y: 20 }, "target")).toBe("M 100 60 L 64 60 Q 50 60 50 46 L 50 34 Q 50 20 36 20 L 0 20");
         expect(previewPath({ x: 100, y: 60 }, { x: 160, y: 20 }, "target")).toContain(" Q ");
+        expect(previewPath({ x: 0, y: 20 }, { x: 100, y: 60 }, "source")).not.toContain(" C ");
     });
 
     it("targets node bodies and nearby handles without selecting the origin", () => {

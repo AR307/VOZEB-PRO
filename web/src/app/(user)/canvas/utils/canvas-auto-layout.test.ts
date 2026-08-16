@@ -31,6 +31,23 @@ describe("Canvas 一键整理", () => {
         expect(isAgentInternalNode({ ...node("result", CanvasNodeType.Image), metadata: { agentRunId: "run" } })).toBe(false);
     });
 
+    it("穿透隐藏 Agent 任务恢复可见输入与结果的布局关系", () => {
+        const source = node("source", CanvasNodeType.Image, 640, 420);
+        const hiddenTask = { ...node("agent-task", CanvasNodeType.Task, -320, -180), metadata: { agentRunId: "run" } };
+        const output = { ...node("output", CanvasNodeType.Image, 40, 720), metadata: { agentRunId: "run" } };
+        const arranged = autoLayoutCanvas(
+            [source, hiddenTask, output],
+            [
+                { id: "source-task", fromNodeId: source.id, toNodeId: hiddenTask.id },
+                { id: "task-output", fromNodeId: hiddenTask.id, toNodeId: output.id },
+            ],
+            { width: 1200, height: 720 },
+        );
+
+        expect(arranged.find((item) => item.id === hiddenTask.id)?.position).toEqual(hiddenTask.position);
+        expect(arranged.find((item) => item.id === output.id)!.position.x).toBeGreaterThan(arranged.find((item) => item.id === source.id)!.position.x);
+    });
+
     it("长链路不把节点压回固定列，孤立节点按语义分层", () => {
         const nodes = Array.from({ length: 6 }, (_, index) => node(`node-${index}`, index === 0 ? CanvasNodeType.Text : CanvasNodeType.Image, 900 - index * 40, 700 - index * 80));
         const connections = nodes.slice(0, -1).map((item, index) => ({ id: `edge-${index}`, fromNodeId: item.id, toNodeId: nodes[index + 1].id }));
@@ -42,12 +59,24 @@ describe("Canvas 一键整理", () => {
         expect(isolated.find((item) => item.id === "config")!.position.x).toBeLessThan(isolated.find((item) => item.id === "image")!.position.x);
     });
 
+    it("大量独立生成分支整理后仍保持稳定且分行紧凑", () => {
+        const sources = Array.from({ length: 80 }, (_, index) => node(`source-${index}`, CanvasNodeType.Image, index * 900, index * 20));
+        const outputs = sources.map((source, index) => node(`output-${index}`, CanvasNodeType.Image, source.position.x + 500, source.position.y + 240));
+        const nodes = sources.concat(outputs);
+        const connections = sources.map((source, index) => ({ id: `edge-${index}`, fromNodeId: source.id, toNodeId: outputs[index].id }));
+        const first = autoLayoutCanvas(nodes, connections, { width: 1800, height: 1000 });
+        const second = autoLayoutCanvas(first, connections, { width: 1800, height: 1000 });
+
+        expect(second.map((item) => item.position)).toEqual(first.map((item) => item.position));
+        expect(new Set(first.map((item) => item.position.y)).size).toBeGreaterThan(1);
+    });
+
     it("全部是内部节点时保持原布局", () => {
         const internal = { ...node("brief", CanvasNodeType.Brief, 420, 180), metadata: { agentRunId: "run" } };
         expect(autoLayoutCanvas([internal], []).at(0)?.position).toEqual(internal.position);
     });
 
-    it("将旧坐标互相穿插的生成分支整理到独立纵向区间", () => {
+    it("将旧坐标互相穿插的生成分支紧凑整理且互不重叠", () => {
         const nodes = [
             node("pig-source", CanvasNodeType.Image, 80, 40, 260, 220),
             node("pig-cutout", CanvasNodeType.Image, 640, 540, 240, 220),
@@ -63,14 +92,14 @@ describe("Canvas 一键整理", () => {
             { id: "person-background-edge", fromNodeId: "person-source", toNodeId: "person-background" },
         ];
 
-        const arranged = autoLayoutCanvas(nodes, connections);
+        const arranged = autoLayoutCanvas(nodes, connections, { width: 1400, height: 720 });
         const byId = new Map(arranged.map((item) => [item.id, item]));
-        const pigBottom = Math.max(byId.get("pig-source")!.position.y + byId.get("pig-source")!.height, byId.get("pig-cutout")!.position.y + byId.get("pig-cutout")!.height, byId.get("pig-background")!.position.y + byId.get("pig-background")!.height);
-        const personTop = Math.min(byId.get("person-source")!.position.y, byId.get("person-cutout")!.position.y, byId.get("person-background")!.position.y);
+        const pigRight = Math.max(...["pig-source", "pig-cutout", "pig-background"].map((id) => byId.get(id)!.position.x + byId.get(id)!.width));
+        const personLeft = Math.min(...["person-source", "person-cutout", "person-background"].map((id) => byId.get(id)!.position.x));
         const pigSourceCenter = byId.get("pig-source")!.position.y + byId.get("pig-source")!.height / 2;
         const pigChildrenCenter = (byId.get("pig-cutout")!.position.y + byId.get("pig-background")!.position.y + byId.get("pig-background")!.height) / 2;
 
-        expect(pigBottom).toBeLessThan(personTop);
+        expect(pigRight).toBeLessThan(personLeft);
         expect(pigSourceCenter).toBe(pigChildrenCenter);
         expect(byId.get("pig-cutout")!.position.y).toBeLessThan(byId.get("pig-background")!.position.y);
         expect(byId.get("person-cutout")!.position.y).toBeLessThan(byId.get("person-background")!.position.y);

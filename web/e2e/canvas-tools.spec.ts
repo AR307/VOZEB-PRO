@@ -2,24 +2,25 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { expect, test, type Locator } from "@playwright/test";
+import { unzipSync } from "fflate";
 
 import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, expectNoHorizontalOverflow, node, readCanvasProject } from "./canvas-e2e-helpers";
 
 test.describe.configure({ mode: "serial" });
 
-test("canvas layer tools, Agent node simplification and auto layout stay usable", async ({ page, request }) => {
+test("canvas layer tools, transparent preview, Agent node simplification and auto layout stay usable", async ({ page, request }) => {
     const project = await createCanvasProject(request, {
         title: `Canvas 图层工具 ${randomUUID().slice(0, 8)}`,
         viewport: { x: 20, y: 40, k: 0.72 },
         nodes: [
             node("prompt", "text", 900, 700, 240, 140, { content: "生成电影感人物海报" }),
             node("manual-config", "config", -320, 30, 300, 180, { generationMode: "image", composerContent: "电影感人物海报" }),
-            node("source-image", "image", 80, -500, 260, 180, { content: "/logo.svg", naturalWidth: 512, naturalHeight: 512 }),
+            node("source-image", "image", 80, -500, 260, 180, { content: "/logo.svg", naturalWidth: 512, naturalHeight: 512, layerName: "主体（透明背景）" }),
             node("agent-brief", "brief", -700, -520, 340, 220, { agentRunId: "run-layer-tools", agentBrief: { objective: "内部目标" } }),
             node("agent-brand", "brand-kit", -700, -240, 340, 220, { agentRunId: "run-layer-tools", brandKit: { summary: "内部视觉方向" } }),
             node("agent-config", "config", -280, -400, 300, 180, { agentRunId: "run-layer-tools", generationMode: "image" }),
             node("agent-task", "task", 260, 260, 300, 180, { agentRunId: "run-layer-tools", prompt: "生成蓝色电影感人物海报", agentTaskStatus: "completed" }),
-            node("agent-output", "image", 720, 240, 260, 180, { agentRunId: "run-layer-tools", content: "/logo.svg", naturalWidth: 512, naturalHeight: 512 }),
+            node("agent-output", "image", 720, 240, 260, 180, { agentRunId: "run-layer-tools", content: "/logo.svg", naturalWidth: 512, naturalHeight: 512, layerName: "背景" }),
         ],
         connections: [
             { id: "manual-input", fromNodeId: "prompt", toNodeId: "manual-config" },
@@ -66,19 +67,15 @@ test("canvas layer tools, Agent node simplification and auto layout stay usable"
         await expectCanvasSaved(page);
 
         const sourceImage = page.locator('[data-node-id="source-image"]');
+        await expect(sourceImage.locator('[data-canvas-transparent-preview="true"]')).toBeVisible();
+        await expect(page.locator('[data-node-id="agent-output"] [data-canvas-transparent-preview]')).toHaveCount(0);
         await sourceImage.hover();
         for (const name of ["智能分层", "消除背景", "识别人脸并调节表情参考"]) {
             await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
         }
 
         await page.getByRole("button", { name: "打开画布菜单" }).click();
-        const downloadPromise = page.waitForEvent("download");
-        await page.getByRole("menuitem", { name: "导出分层 PSD" }).click();
-        const download = await downloadPromise;
-        expect(download.suggestedFilename()).toMatch(/[.]psd$/i);
-        const filePath = await download.path();
-        expect(filePath).not.toBeNull();
-        expect((await readFile(filePath!)).subarray(0, 4).toString("ascii")).toBe("8BPS");
+        await expect(page.getByRole("menuitem", { name: /PSD/i })).toHaveCount(0);
     } finally {
         await deleteCanvasProject(request, project.id);
     }
@@ -112,9 +109,16 @@ test("canvas auto layout separates branching flows and keeps lines away from unr
         await expectCanvasSaved(page);
         const arranged = await readCanvasProject(request, projectPath);
         const byId = new Map(arranged.nodes.map((item) => [item.id, item]));
-        const pigBottom = Math.max(...["pig-source", "pig-cutout", "pig-background"].map((id) => byId.get(id)!.position.y + byId.get(id)!.height));
-        const personTop = Math.min(...["person-source", "person-cutout", "person-background"].map((id) => byId.get(id)!.position.y));
-        expect(pigBottom).toBeLessThan(personTop);
+        const bounds = [
+            ["pig-source", "pig-cutout", "pig-background"],
+            ["person-source", "person-cutout", "person-background"],
+        ].map((ids) => ({
+            left: Math.min(...ids.map((id) => byId.get(id)!.position.x)),
+            top: Math.min(...ids.map((id) => byId.get(id)!.position.y)),
+            right: Math.max(...ids.map((id) => byId.get(id)!.position.x + byId.get(id)!.width)),
+            bottom: Math.max(...ids.map((id) => byId.get(id)!.position.y + byId.get(id)!.height)),
+        }));
+        expect(bounds[0].right <= bounds[1].left || bounds[1].right <= bounds[0].left || bounds[0].bottom <= bounds[1].top || bounds[1].bottom <= bounds[0].top).toBe(true);
         await expectConnectionsAvoidNodes(page, [
             { id: "pig-cutout-edge", endpoints: ["pig-source", "pig-cutout"] },
             { id: "pig-background-edge", endpoints: ["pig-source", "pig-background"] },
@@ -123,6 +127,64 @@ test("canvas auto layout separates branching flows and keeps lines away from unr
         ]);
     } finally {
         await deleteCanvasProject(request, project.id);
+    }
+});
+
+test("canvas box selection downloads selected images and videos as a browser ZIP", async ({ page, request }) => {
+    const imageDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XcX9WQAAAABJRU5ErkJggg==";
+    const videoDataUrl = "data:video/mp4;base64,AAAAHGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=";
+    const uploadAsset = async (type: "image" | "video", dataUrl: string, originalName: string) => {
+        const response = await request.post("/api/reference-assets", { data: { type, persistent: false, dataUrl, originalName } });
+        expect(response.ok(), await response.text()).toBe(true);
+        return (await response.json()) as { key: string; url: string; mimeType: string };
+    };
+    const imageAsset = await uploadAsset("image", imageDataUrl, "selected.png");
+    const videoAsset = await uploadAsset("video", videoDataUrl, "selected.mp4");
+    let project: Awaited<ReturnType<typeof createCanvasProject>> | undefined;
+
+    try {
+        project = await createCanvasProject(request, {
+            title: `Canvas 批量下载 ${randomUUID().slice(0, 8)}`,
+            viewport: { x: 80, y: 100, k: 0.8 },
+            nodes: [
+                node("selected-image", "image", 100, 140, 220, 180, { content: imageAsset.url, serverUrl: imageAsset.url, storageKey: imageAsset.key, mimeType: imageAsset.mimeType }),
+                node("selected-video", "video", 420, 140, 260, 180, { content: videoAsset.url, serverUrl: videoAsset.url, storageKey: videoAsset.key, mimeType: videoAsset.mimeType }),
+            ],
+            connections: [],
+        });
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        const surface = page.locator("[data-canvas-surface]");
+        await expect(surface).toBeVisible({ timeout: 20_000 });
+        await page.getByRole("button", { name: "切换到框选模式" }).click();
+        const boxes = await Promise.all([page.locator('[data-node-id="selected-image"]').boundingBox(), page.locator('[data-node-id="selected-video"]').boundingBox()]);
+        expect(boxes.every(Boolean)).toBe(true);
+        const left = Math.min(...boxes.map((box) => box!.x)) - 12;
+        const top = Math.min(...boxes.map((box) => box!.y)) - 12;
+        const right = Math.max(...boxes.map((box) => box!.x + box!.width)) + 12;
+        const bottom = Math.max(...boxes.map((box) => box!.y + box!.height)) + 12;
+        await page.mouse.move(left, top);
+        await page.mouse.down();
+        await page.mouse.move(right, bottom, { steps: 8 });
+        await page.mouse.up();
+
+        const batchDownload = page.getByRole("button", { name: "批量下载 2 个图片或视频" });
+        await expect(batchDownload).toBeVisible();
+        const downloadPromise = page.waitForEvent("download");
+        await batchDownload.click();
+        const download = await downloadPromise;
+        expect(download.suggestedFilename()).toMatch(/[.]zip$/i);
+        const filePath = await download.path();
+        expect(filePath).not.toBeNull();
+        const entries = Object.keys(unzipSync(await readFile(filePath!)));
+        expect(entries.some((name) => /[.]png$/i.test(name))).toBe(true);
+        expect(entries.some((name) => /[.]mp4$/i.test(name))).toBe(true);
+    } finally {
+        try {
+            if (project) await deleteCanvasProject(request, project.id);
+        } finally {
+            const cleanup = await request.delete("/api/media-assets", { data: { storageKeys: [imageAsset.key, videoAsset.key] } });
+            expect(cleanup.ok(), await cleanup.text()).toBe(true);
+        }
     }
 });
 
@@ -288,6 +350,7 @@ async function expectConnectionsAvoidNodes(page: import("@playwright/test").Page
         const paths = items.map(({ id, endpoints }) => {
             const path = document.querySelector<SVGPathElement>(`[data-connection-id="${CSS.escape(id)}"] path:last-child`);
             if (!path) return { id, endpoints, points: [], error: `${id}: missing path` };
+            if (/\bC\b/.test(path.getAttribute("d") || "")) return { id, endpoints, points: [], error: `${id}: cubic path` };
             const matrix = path.getScreenCTM();
             if (!matrix) return { id, endpoints, points: [], error: `${id}: missing matrix` };
             const length = path.getTotalLength();

@@ -89,6 +89,20 @@ describe("CanvasNode image border", () => {
 
         expect(markup).toContain(`class="relative h-full w-full overflow-visible rounded-3xl border-2" style="background:transparent;border-color:${canvasThemes.light.node.stroke}"`);
     });
+
+    it("只为透明主体图层显示棋盘格预览且继续使用原图片地址", () => {
+        const subject = renderContent({ ...imageNode, metadata: { ...imageNode.metadata, layerName: "主体" } }, canvasThemes.light);
+        const removedBackground = renderContent({ ...imageNode, metadata: { ...imageNode.metadata, layerName: "主体（透明背景）" } }, canvasThemes.light);
+        const background = renderContent({ ...imageNode, metadata: { ...imageNode.metadata, layerName: "背景" } }, canvasThemes.light);
+        const ordinary = renderContent(imageNode, canvasThemes.light);
+
+        expect(subject).toContain('data-canvas-transparent-preview="true"');
+        expect(removedBackground).toContain('data-canvas-transparent-preview="true"');
+        expect(subject).toContain("background-image:linear-gradient");
+        expect(subject).toContain("/api/reference-assets/permanent/generated-image.png?format=webp&amp;width=1920");
+        expect(background).not.toContain("data-canvas-transparent-preview");
+        expect(ordinary).not.toContain("data-canvas-transparent-preview");
+    });
 });
 
 describe("CanvasNode task content", () => {
