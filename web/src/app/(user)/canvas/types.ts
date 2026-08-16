@@ -131,6 +131,13 @@ export type CanvasNodeMetadata = {
     layerName?: string;
     layerVisible?: boolean;
     sourceLayerNodeId?: string;
+    imageEditMask?: {
+        storageKey: string;
+        serverUrl?: string;
+        mimeType?: string;
+        width?: number;
+        height?: number;
+    };
     internalOnly?: boolean;
     cameraControl?: CameraControlOptions;
     panoramaProjection?: "equirectangular";

@@ -36,10 +36,9 @@ test("canvas layer tools, Agent node simplification and auto layout stay usable"
         await page.addInitScript(() => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: "light" }, version: 0 })));
         await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
         await expect(page.locator("[data-canvas-surface]")).toBeVisible({ timeout: 20_000 });
-        await expect(page.locator("[data-node-id]")).toHaveCount(5);
-        await expect(page.locator('[data-node-id="agent-brief"], [data-node-id="agent-brand"], [data-node-id="agent-config"]')).toHaveCount(0);
+        await expect(page.locator("[data-node-id]")).toHaveCount(4);
+        await expect(page.locator('[data-node-id="agent-brief"], [data-node-id="agent-brand"], [data-node-id="agent-config"], [data-node-id="agent-task"]')).toHaveCount(0);
         await expect(page.locator('[data-node-id="manual-config"]')).toBeVisible();
-        await expect(page.locator('[data-node-id="agent-task"]')).toContainText("生成蓝色电影感人物海报");
         await expect(page.locator('[data-node-id="agent-output"]')).toBeVisible();
 
         await page.getByRole("button", { name: "一键整理画布" }).click();
@@ -80,6 +79,48 @@ test("canvas layer tools, Agent node simplification and auto layout stay usable"
         const filePath = await download.path();
         expect(filePath).not.toBeNull();
         expect((await readFile(filePath!)).subarray(0, 4).toString("ascii")).toBe("8BPS");
+    } finally {
+        await deleteCanvasProject(request, project.id);
+    }
+});
+
+test("canvas auto layout separates branching flows and keeps lines away from unrelated nodes", async ({ page, request }) => {
+    const project = await createCanvasProject(request, {
+        title: `Canvas 分支整理 ${randomUUID().slice(0, 8)}`,
+        viewport: { x: 20, y: 40, k: 0.72 },
+        nodes: [
+            node("pig-source", "image", 80, 40, 260, 220, { content: "/logo.svg", naturalWidth: 512, naturalHeight: 512 }),
+            node("pig-cutout", "image", 760, 560, 240, 220, { content: "/logo.svg", naturalWidth: 512, naturalHeight: 512 }),
+            node("pig-background", "image", 760, 920, 280, 180, { content: "/logo.svg", naturalWidth: 512, naturalHeight: 512 }),
+            node("person-source", "image", 140, 760, 320, 180, { content: "/generation-smoke.webp", naturalWidth: 1200, naturalHeight: 720 }),
+            node("person-cutout", "image", 760, 120, 280, 180, { content: "/generation-smoke.webp", naturalWidth: 1200, naturalHeight: 720 }),
+            node("person-background", "image", 760, 340, 280, 180, { content: "/generation-smoke.webp", naturalWidth: 1200, naturalHeight: 720 }),
+        ],
+        connections: [
+            { id: "pig-cutout-edge", fromNodeId: "pig-source", toNodeId: "pig-cutout" },
+            { id: "pig-background-edge", fromNodeId: "pig-source", toNodeId: "pig-background" },
+            { id: "person-cutout-edge", fromNodeId: "person-source", toNodeId: "person-cutout" },
+            { id: "person-background-edge", fromNodeId: "person-source", toNodeId: "person-background" },
+        ],
+    });
+    const projectPath = `/api/canvas/projects/${project.id}`;
+
+    try {
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        await expect(page.locator("[data-canvas-surface]")).toBeVisible({ timeout: 20_000 });
+        await page.getByRole("button", { name: "一键整理画布" }).click();
+        await expectCanvasSaved(page);
+        const arranged = await readCanvasProject(request, projectPath);
+        const byId = new Map(arranged.nodes.map((item) => [item.id, item]));
+        const pigBottom = Math.max(...["pig-source", "pig-cutout", "pig-background"].map((id) => byId.get(id)!.position.y + byId.get(id)!.height));
+        const personTop = Math.min(...["person-source", "person-cutout", "person-background"].map((id) => byId.get(id)!.position.y));
+        expect(pigBottom).toBeLessThan(personTop);
+        await expectConnectionsAvoidNodes(page, [
+            { id: "pig-cutout-edge", endpoints: ["pig-source", "pig-cutout"] },
+            { id: "pig-background-edge", endpoints: ["pig-source", "pig-background"] },
+            { id: "person-cutout-edge", endpoints: ["person-source", "person-cutout"] },
+            { id: "person-background-edge", endpoints: ["person-source", "person-background"] },
+        ]);
     } finally {
         await deleteCanvasProject(request, project.id);
     }
@@ -239,4 +280,59 @@ async function expectIntensityMarksContained(dialog: Locator) {
     for (const bounds of [intensityBounds, firstBounds, lastBounds]) expect(bounds).not.toBeNull();
     expect(firstBounds!.x, "左侧强度标签不应溢出").toBeGreaterThanOrEqual(intensityBounds!.x);
     expect(lastBounds!.x + lastBounds!.width, "右侧强度标签不应溢出").toBeLessThanOrEqual(intensityBounds!.x + intensityBounds!.width);
+}
+
+async function expectConnectionsAvoidNodes(page: import("@playwright/test").Page, connections: Array<{ id: string; endpoints: string[] }>) {
+    const violations = await page.evaluate((items) => {
+        const nodeElements = [...document.querySelectorAll<HTMLElement>("[data-node-id]")];
+        const paths = items.map(({ id, endpoints }) => {
+            const path = document.querySelector<SVGPathElement>(`[data-connection-id="${CSS.escape(id)}"] path:last-child`);
+            if (!path) return { id, endpoints, points: [], error: `${id}: missing path` };
+            const matrix = path.getScreenCTM();
+            if (!matrix) return { id, endpoints, points: [], error: `${id}: missing matrix` };
+            const length = path.getTotalLength();
+            const points = Array.from({ length: Math.ceil(length / 6) + 1 }, (_, index) => {
+                const local = path.getPointAtLength(Math.min(length, index * 6));
+                const screen = new DOMPoint(local.x, local.y).matrixTransform(matrix);
+                return { x: screen.x, y: screen.y };
+            });
+            return { id, endpoints, points, error: "" };
+        });
+        const violations = paths.flatMap(({ id, endpoints, points, error }) => {
+            if (error) return [error];
+            const unrelated = nodeElements.filter((element) => !endpoints.includes(element.dataset.nodeId || ""));
+            for (const screen of points.slice(1, -1)) {
+                const blocking = unrelated.find((element) => {
+                    const rect = element.getBoundingClientRect();
+                    return screen.x > rect.left + 3 && screen.x < rect.right - 3 && screen.y > rect.top + 3 && screen.y < rect.bottom - 3;
+                });
+                if (blocking) return [`${id}: crosses ${blocking.dataset.nodeId}`];
+            }
+            return [];
+        });
+        const cross = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        for (let first = 0; first < paths.length; first += 1) {
+            for (let second = first + 1; second < paths.length; second += 1) {
+                const a = paths[first];
+                const b = paths[second];
+                if (a.error || b.error || a.endpoints.some((endpoint) => b.endpoints.includes(endpoint))) continue;
+                let intersects = false;
+                for (let aIndex = 1; aIndex < a.points.length && !intersects; aIndex += 1) {
+                    const aStart = a.points[aIndex - 1];
+                    const aEnd = a.points[aIndex];
+                    for (let bIndex = 1; bIndex < b.points.length; bIndex += 1) {
+                        const bStart = b.points[bIndex - 1];
+                        const bEnd = b.points[bIndex];
+                        if (cross(aStart, aEnd, bStart) * cross(aStart, aEnd, bEnd) < 0 && cross(bStart, bEnd, aStart) * cross(bStart, bEnd, aEnd) < 0) {
+                            intersects = true;
+                            break;
+                        }
+                    }
+                }
+                if (intersects) violations.push(`${a.id}: crosses ${b.id}`);
+            }
+        }
+        return violations;
+    }, connections);
+    expect(violations).toEqual([]);
 }

@@ -2,7 +2,7 @@
 
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { readImageMeta } from "@/lib/image-utils";
-import { resolveImageUrl, resolveStoredImageDataUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { resolveStoredImageDataUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -136,6 +136,7 @@ export function replaceCanvasNodeMediaMetadata(current: CanvasNodeMetadata | und
         primaryImageId: undefined,
         imageBatchExpanded: undefined,
         imageTask: undefined,
+        imageEditMask: undefined,
         videoTask: undefined,
         textTask: undefined,
         audioTask: undefined,
@@ -184,11 +185,29 @@ export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     if (!metadata.references?.length) return null;
     const references = await Promise.all(
         metadata.references.map(async (url, index) => {
-            const dataUrl = url.startsWith("image:") ? await resolveImageUrl(url, "") : url;
-            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
+            const stored = url.startsWith("image:") || /^(?:temporary|permanent)\//.test(url);
+            const dataUrl = stored ? await resolveStoredImageDataUrl(url, "") : url;
+            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: stored ? url : undefined, serverUrl: stored ? dataUrl : undefined } : null;
         }),
     );
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
+}
+
+export async function resolveMetadataImageEditMask(metadata: CanvasNodeMetadata): Promise<ReferenceImage | null | undefined> {
+    const mask = metadata.imageEditMask;
+    if (!mask) return undefined;
+    const dataUrl = await resolveStoredImageDataUrl(mask.storageKey, mask.serverUrl || "");
+    if (!dataUrl) return null;
+    return {
+        id: `mask-${mask.storageKey}`,
+        name: "mask.png",
+        type: mask.mimeType || "image/png",
+        dataUrl,
+        storageKey: mask.storageKey,
+        serverUrl: mask.serverUrl,
+        width: mask.width,
+        height: mask.height,
+    };
 }
 
 export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {

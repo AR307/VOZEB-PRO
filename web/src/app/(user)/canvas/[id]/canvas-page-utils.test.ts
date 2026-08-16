@@ -16,7 +16,17 @@ vi.mock("@/services/image-storage", async (importOriginal) => ({
     uploadImage: mocks.uploadImage,
 }));
 
-import { applyNodeConfigPatch, getGenerationCount, hydrateAssistantImages, hydrateCanvasImages, normalizeCanvasConfigNodeLayout, replaceCanvasNodeMediaMetadata } from "./canvas-page-utils";
+import {
+    applyNodeConfigPatch,
+    getGenerationCount,
+    hydrateAssistantImages,
+    hydrateCanvasImages,
+    isHiddenBatchChild,
+    normalizeCanvasConfigNodeLayout,
+    replaceCanvasNodeMediaMetadata,
+    resolveMetadataImageEditMask,
+    resolveMetadataReferences,
+} from "./canvas-page-utils";
 
 describe("Canvas project hydration", () => {
     beforeEach(() => {
@@ -85,6 +95,14 @@ describe("Canvas config node layout", () => {
         expect(getGenerationCount("0")).toBe(1);
         expect(getGenerationCount("-2")).toBe(1);
     });
+
+    it("hides persisted Agent task nodes without hiding manual task nodes", () => {
+        const agentTask = { ...configNode(180), type: CanvasNodeType.Task, metadata: { agentRunId: "run-1" } };
+        const manualTask = { ...configNode(180), id: "manual-task", type: CanvasNodeType.Task };
+
+        expect(isHiddenBatchChild(agentTask, [agentTask, manualTask])).toBe(true);
+        expect(isHiddenBatchChild(manualTask, [agentTask, manualTask])).toBe(false);
+    });
 });
 
 describe("Canvas media replacement", () => {
@@ -95,6 +113,7 @@ describe("Canvas media replacement", () => {
                 size: "1:1",
                 videoTask: { id: "video-task", provider: "generation", model: "video-model" },
                 imageTask: { id: "image-task", kind: "generation", model: "image-model" },
+                imageEditMask: { storageKey: "mask.png" },
                 isBatchRoot: true,
                 batchChildIds: ["child"],
             },
@@ -105,9 +124,26 @@ describe("Canvas media replacement", () => {
         expect(metadata).toMatchObject({ content: "/api/reference-assets/panorama.webp", size: "2048x1024", panoramaProjection: "equirectangular", status: "success" });
         expect(metadata.prompt).toBeUndefined();
         expect(metadata.imageTask).toBeUndefined();
+        expect(metadata.imageEditMask).toBeUndefined();
         expect(metadata.videoTask).toBeUndefined();
         expect(metadata.isBatchRoot).toBeUndefined();
         expect(metadata.batchChildIds).toBeUndefined();
+    });
+
+    it("restores a persisted image edit mask for stable retries", async () => {
+        await expect(resolveMetadataImageEditMask({ imageEditMask: { storageKey: "mask.png", serverUrl: "/api/reference-assets/mask.png", mimeType: "image/png", width: 512, height: 512 } })).resolves.toMatchObject({
+            id: "mask-mask.png",
+            dataUrl: "/api/reference-assets/mask.png",
+            storageKey: "mask.png",
+            width: 512,
+            height: 512,
+        });
+    });
+
+    it("restores current server media storage keys for image retries", async () => {
+        await expect(resolveMetadataReferences({ generationType: "edit", references: ["permanent/2026/08/16/images/source.png"] })).resolves.toEqual([
+            expect.objectContaining({ dataUrl: "/api/reference-assets/permanent/2026/08/16/images/source.png", storageKey: "permanent/2026/08/16/images/source.png" }),
+        ]);
     });
 });
 

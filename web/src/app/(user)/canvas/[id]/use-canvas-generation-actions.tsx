@@ -35,6 +35,7 @@ import {
     getGenerationCount,
     imageMetadata,
     isGenerationCanceled,
+    resolveMetadataImageEditMask,
     resolveMetadataReferences,
     sourceNodeReferenceImages,
     uploadCanvasImage,
@@ -595,6 +596,12 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 return;
             }
             const retryImages = retryReferenceImages || [];
+            const retryMask = savedImageMetadata ? await resolveMetadataImageEditMask(savedImageMetadata) : undefined;
+            if (savedImageMetadata?.imageEditMask && !retryMask) {
+                message.error("背景补全蒙版已丢失，无法继续重试");
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: "背景补全蒙版已丢失，无法继续重试" } } : item)));
+                return;
+            }
 
             setRunningNodeId(node.id);
             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
@@ -658,7 +665,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             : item,
                     ),
                 );
-                await startAndCompleteImageTask(node.id, generationConfig, prompt, retryImages, undefined, controller);
+                await startAndCompleteImageTask(node.id, generationConfig, prompt, retryImages, retryMask || undefined, controller);
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";

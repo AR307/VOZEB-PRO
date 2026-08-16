@@ -1,5 +1,7 @@
 "use client";
 
+import { renderCanvasSubjectLayers, type CanvasSubjectMask } from "./canvas-subject-segmentation";
+
 type ImageCropRect = {
     x: number;
     y: number;
@@ -8,11 +10,12 @@ type ImageCropRect = {
 };
 
 export type CanvasImageLayerData = {
-    foregroundDataUrl: string;
-    backgroundDataUrl: string;
+    foregroundBlob: Blob;
+    editMaskBlob: Blob;
     width: number;
     height: number;
-    removedPixels: number;
+    foregroundPixels: number;
+    backgroundPixels: number;
 };
 
 export type ImageUpscaleAlgorithm = "nearest" | "bilinear" | "high";
@@ -65,12 +68,10 @@ export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): P
     return pieces;
 }
 
-/**
- * Estimates the subject from the border colour and returns two transparent
- * layers. It is deliberately local: the source image never leaves the
- * browser and users can still refine the result with the existing mask tool.
- */
-export async function splitSubjectAndBackgroundDataUrl(dataUrl: string): Promise<CanvasImageLayerData> {
+/** Uses the local semantic mask to create a transparent subject and an edit mask. */
+export async function splitSubjectAndBackgroundDataUrl(dataUrl: string, signal?: AbortSignal): Promise<CanvasImageLayerData> {
+    const result = await renderCanvasSubjectLayers(dataUrl, signal);
+    if (result.kind === "blobs") return result;
     const image = await loadImage(dataUrl);
     const canvas = document.createElement("canvas");
     canvas.width = image.width;
@@ -79,27 +80,39 @@ export async function splitSubjectAndBackgroundDataUrl(dataUrl: string): Promise
     if (!context) throw new Error("浏览器不支持图片处理");
     context.drawImage(image, 0, 0);
     const source = context.getImageData(0, 0, canvas.width, canvas.height);
-    const { foreground, background: backgroundLayer, removedPixels } = splitImageDataLayers(source);
+    const { foreground, editMask, foregroundPixels, backgroundPixels } = applySubjectMaskToImageData(source, result.mask);
+    const [foregroundBlob, editMaskBlob] = await Promise.all([imageDataBlob(foreground, canvas.width, canvas.height), imageDataBlob(editMask, canvas.width, canvas.height)]);
     return {
-        foregroundDataUrl: imageDataUrl(foreground, canvas.width, canvas.height),
-        backgroundDataUrl: imageDataUrl(backgroundLayer, canvas.width, canvas.height),
+        foregroundBlob,
+        editMaskBlob,
         width: canvas.width,
         height: canvas.height,
-        removedPixels,
+        foregroundPixels,
+        backgroundPixels,
     };
 }
 
-export function splitImageDataLayers(source: ImageData) {
-    const backgroundColour = sampleBorderColour(source);
-    const removed = floodBorderBackground(source, backgroundColour);
+export function applySubjectMaskToImageData(source: Pick<ImageData, "data" | "width" | "height">, subjectMask: CanvasSubjectMask) {
+    if (source.width < 1 || source.height < 1 || source.data.length !== source.width * source.height * 4) throw new Error("源图片像素数据无效");
+    if (subjectMask.width < 1 || subjectMask.height < 1 || subjectMask.data.length !== subjectMask.width * subjectMask.height) throw new Error("主体蒙版尺寸无效");
     const foreground = new Uint8ClampedArray(source.data);
-    const background = new Uint8ClampedArray(source.data);
-    for (let index = 0; index < removed.length; index += 1) {
-        const offset = index * 4 + 3;
-        if (removed[index]) foreground[offset] = 0;
-        else background[offset] = 0;
+    const editMask = new Uint8ClampedArray(source.data.length);
+    let foregroundPixels = 0;
+    let backgroundPixels = 0;
+    for (let y = 0; y < source.height; y += 1) {
+        for (let x = 0; x < source.width; x += 1) {
+            const confidence = sampleSubjectConfidence(subjectMask, x, y, source.width, source.height);
+            const offset = (y * source.width + x) * 4;
+            foreground[offset + 3] = Math.round(source.data[offset + 3] * confidence);
+            editMask[offset] = 255;
+            editMask[offset + 1] = 255;
+            editMask[offset + 2] = 255;
+            editMask[offset + 3] = Math.round(255 * (1 - confidence));
+            if (confidence >= 0.5) foregroundPixels += 1;
+            else backgroundPixels += 1;
+        }
     }
-    return { foreground, background, removedPixels: removed.reduce((count, value) => count + (value ? 1 : 0), 0) };
+    return { foreground, editMask, foregroundPixels, backgroundPixels };
 }
 
 export async function upscaleDataUrl(dataUrl: string, params: ImageUpscaleParams) {
@@ -167,58 +180,21 @@ function loadImage(dataUrl: string) {
     });
 }
 
-function sampleBorderColour(image: ImageData) {
-    const points = [
-        [0, 0],
-        [image.width - 1, 0],
-        [0, image.height - 1],
-        [image.width - 1, image.height - 1],
-    ];
-    const values = points.map(([x, y]) => {
-        const offset = (y * image.width + x) * 4;
-        return [image.data[offset], image.data[offset + 1], image.data[offset + 2]];
-    });
-    return values[0].map((_, channel) => Math.round(values.reduce((sum, value) => sum + value[channel], 0) / values.length));
+function sampleSubjectConfidence(mask: CanvasSubjectMask, x: number, y: number, width: number, height: number) {
+    const sourceX = width === 1 ? 0 : (x / (width - 1)) * (mask.width - 1);
+    const sourceY = height === 1 ? 0 : (y / (height - 1)) * (mask.height - 1);
+    const left = Math.floor(sourceX);
+    const top = Math.floor(sourceY);
+    const right = Math.min(mask.width - 1, left + 1);
+    const bottom = Math.min(mask.height - 1, top + 1);
+    const horizontal = sourceX - left;
+    const vertical = sourceY - top;
+    const topValue = mask.data[top * mask.width + left] * (1 - horizontal) + mask.data[top * mask.width + right] * horizontal;
+    const bottomValue = mask.data[bottom * mask.width + left] * (1 - horizontal) + mask.data[bottom * mask.width + right] * horizontal;
+    return Math.max(0, Math.min(1, topValue * (1 - vertical) + bottomValue * vertical));
 }
 
-function floodBorderBackground(image: ImageData, background: number[]) {
-    const total = image.width * image.height;
-    const removed = new Uint8Array(total);
-    const queued = new Uint8Array(total);
-    const queue: number[] = [];
-    for (let x = 0; x < image.width; x += 1) {
-        queue.push(x, (image.height - 1) * image.width + x);
-    }
-    for (let y = 1; y < image.height - 1; y += 1) {
-        queue.push(y * image.width, y * image.width + image.width - 1);
-    }
-    const tolerance = 58;
-    for (const index of queue) queued[index] = 1;
-    for (let cursor = 0; cursor < queue.length; cursor += 1) {
-        const index = queue[cursor];
-        const offset = index * 4;
-        if (!isBackgroundPixel(image.data, offset, background, tolerance)) continue;
-        removed[index] = 1;
-        const x = index % image.width;
-        const y = Math.floor(index / image.width);
-        for (const next of [index - 1, index + 1, index - image.width, index + image.width]) {
-            if (next < 0 || next >= total || queued[next]) continue;
-            const nextX = next % image.width;
-            if (Math.abs(nextX - x) > 1) continue;
-            queued[next] = 1;
-            queue.push(next);
-        }
-    }
-    return removed;
-}
-
-function isBackgroundPixel(data: Uint8ClampedArray, offset: number, background: number[], tolerance: number) {
-    if (data[offset + 3] === 0) return true;
-    const distance = Math.hypot(data[offset] - background[0], data[offset + 1] - background[1], data[offset + 2] - background[2]);
-    return distance <= tolerance;
-}
-
-function imageDataUrl(data: Uint8ClampedArray, width: number, height: number) {
+function imageDataBlob(data: Uint8ClampedArray, width: number, height: number) {
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
@@ -227,5 +203,5 @@ function imageDataUrl(data: Uint8ClampedArray, width: number, height: number) {
     const pixels = new Uint8ClampedArray(data.length);
     pixels.set(data);
     context.putImageData(new ImageData(pixels, width, height), 0, 0);
-    return canvas.toDataURL("image/png");
+    return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("图片编码失败，无法生成图层"))), "image/png"));
 }

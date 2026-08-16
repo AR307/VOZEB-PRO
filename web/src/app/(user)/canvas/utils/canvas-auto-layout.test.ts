@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
 import { autoLayoutCanvas, isAgentInternalNode } from "./canvas-auto-layout";
 
-const node = (id: string, type: CanvasNodeType, x = 0, y = 0): CanvasNodeData => ({ id, type, title: id, position: { x, y }, width: 240, height: 140, metadata: {} });
+const node = (id: string, type: CanvasNodeType, x = 0, y = 0, width = 240, height = 140): CanvasNodeData => ({ id, type, title: id, position: { x, y }, width, height, metadata: {} });
 
 describe("Canvas 一键整理", () => {
     it("按连接拓扑分列并保留节点身份与连接", () => {
@@ -20,10 +20,15 @@ describe("Canvas 一键整理", () => {
 
     it("不移动 Agent 内部节点，并将其标记为默认隐藏", () => {
         const internal = { ...node("brief", CanvasNodeType.Brief), metadata: { agentRunId: "run" } };
-        const result = autoLayoutCanvas([internal, node("task", CanvasNodeType.Task)], []);
+        const agentTask = { ...node("agent-task", CanvasNodeType.Task, 320, 180), metadata: { agentRunId: "run" } };
+        const manualTask = node("manual-task", CanvasNodeType.Task);
+        const result = autoLayoutCanvas([internal, agentTask, manualTask], []);
         expect(result[0].position).toEqual(internal.position);
+        expect(result[1].position).toEqual(agentTask.position);
         expect(isAgentInternalNode(internal)).toBe(true);
-        expect(isAgentInternalNode({ ...node("task", CanvasNodeType.Task), metadata: { agentRunId: "run" } })).toBe(false);
+        expect(isAgentInternalNode(agentTask)).toBe(true);
+        expect(isAgentInternalNode(manualTask)).toBe(false);
+        expect(isAgentInternalNode({ ...node("result", CanvasNodeType.Image), metadata: { agentRunId: "run" } })).toBe(false);
     });
 
     it("长链路不把节点压回固定列，孤立节点按语义分层", () => {
@@ -40,5 +45,53 @@ describe("Canvas 一键整理", () => {
     it("全部是内部节点时保持原布局", () => {
         const internal = { ...node("brief", CanvasNodeType.Brief, 420, 180), metadata: { agentRunId: "run" } };
         expect(autoLayoutCanvas([internal], []).at(0)?.position).toEqual(internal.position);
+    });
+
+    it("将旧坐标互相穿插的生成分支整理到独立纵向区间", () => {
+        const nodes = [
+            node("pig-source", CanvasNodeType.Image, 80, 40, 260, 220),
+            node("pig-cutout", CanvasNodeType.Image, 640, 540, 240, 220),
+            node("pig-background", CanvasNodeType.Image, 640, 920, 280, 180),
+            node("person-source", CanvasNodeType.Image, 120, 760, 320, 180),
+            node("person-cutout", CanvasNodeType.Image, 640, 120, 280, 180),
+            node("person-background", CanvasNodeType.Image, 640, 340, 280, 180),
+        ];
+        const connections = [
+            { id: "pig-cutout-edge", fromNodeId: "pig-source", toNodeId: "pig-cutout" },
+            { id: "pig-background-edge", fromNodeId: "pig-source", toNodeId: "pig-background" },
+            { id: "person-cutout-edge", fromNodeId: "person-source", toNodeId: "person-cutout" },
+            { id: "person-background-edge", fromNodeId: "person-source", toNodeId: "person-background" },
+        ];
+
+        const arranged = autoLayoutCanvas(nodes, connections);
+        const byId = new Map(arranged.map((item) => [item.id, item]));
+        const pigBottom = Math.max(byId.get("pig-source")!.position.y + byId.get("pig-source")!.height, byId.get("pig-cutout")!.position.y + byId.get("pig-cutout")!.height, byId.get("pig-background")!.position.y + byId.get("pig-background")!.height);
+        const personTop = Math.min(byId.get("person-source")!.position.y, byId.get("person-cutout")!.position.y, byId.get("person-background")!.position.y);
+        const pigSourceCenter = byId.get("pig-source")!.position.y + byId.get("pig-source")!.height / 2;
+        const pigChildrenCenter = (byId.get("pig-cutout")!.position.y + byId.get("pig-background")!.position.y + byId.get("pig-background")!.height) / 2;
+
+        expect(pigBottom).toBeLessThan(personTop);
+        expect(pigSourceCenter).toBe(pigChildrenCenter);
+        expect(byId.get("pig-cutout")!.position.y).toBeLessThan(byId.get("pig-background")!.position.y);
+        expect(byId.get("person-cutout")!.position.y).toBeLessThan(byId.get("person-background")!.position.y);
+    });
+
+    it("循环图和多父节点重复整理后保持稳定", () => {
+        const nodes = [node("cycle-a", CanvasNodeType.Text, 720, 520), node("cycle-b", CanvasNodeType.Image, 80, 260), node("cycle-c", CanvasNodeType.Image, 460, 40), node("result", CanvasNodeType.Image, 920, 120)];
+        const connections = [
+            { id: "a-b", fromNodeId: "cycle-a", toNodeId: "cycle-b" },
+            { id: "b-c", fromNodeId: "cycle-b", toNodeId: "cycle-c" },
+            { id: "c-a", fromNodeId: "cycle-c", toNodeId: "cycle-a" },
+            { id: "a-result", fromNodeId: "cycle-a", toNodeId: "result" },
+            { id: "c-result", fromNodeId: "cycle-c", toNodeId: "result" },
+        ];
+
+        const first = autoLayoutCanvas(nodes, connections);
+        const second = autoLayoutCanvas(first, connections);
+        const byId = new Map(first.map((item) => [item.id, item]));
+
+        expect(second.map((item) => item.position)).toEqual(first.map((item) => item.position));
+        expect(new Set(["cycle-a", "cycle-b", "cycle-c"].map((id) => byId.get(id)!.position.x)).size).toBe(3);
+        expect(byId.get("result")!.position.x).toBeGreaterThan(byId.get("cycle-a")!.position.x);
     });
 });
