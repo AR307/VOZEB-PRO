@@ -128,6 +128,10 @@ export type CanvasNodeMetadata = {
     audioFormat?: string;
     audioSpeed?: string;
     audioInstructions?: string;
+    layerName?: string;
+    layerVisible?: boolean;
+    sourceLayerNodeId?: string;
+    internalOnly?: boolean;
     cameraControl?: CameraControlOptions;
     panoramaProjection?: "equirectangular";
     panoramaSourcePrompt?: string;

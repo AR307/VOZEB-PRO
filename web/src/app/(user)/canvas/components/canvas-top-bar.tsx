@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Dropdown, Modal } from "antd";
-import { BookOpen, Bot, LibraryBig, Menu, Redo2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Bot, FileDown, LibraryBig, Menu, Redo2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -23,6 +23,7 @@ export function CanvasTopBar({
     onWorkbench,
     onDeleteProject,
     onImportImage,
+    onExportPsd,
     onUndo,
     onRedo,
     assetsOpen,
@@ -44,6 +45,7 @@ export function CanvasTopBar({
     onWorkbench: () => void;
     onDeleteProject: () => void;
     onImportImage: () => void;
+    onExportPsd: () => void;
     onUndo: () => void;
     onRedo: () => void;
     assetsOpen: boolean;
@@ -96,6 +98,7 @@ export function CanvasTopBar({
                                 { key: "docs", icon: <BookOpen className="size-4" />, label: "使用帮助", onClick: () => window.location.assign("/help?section=canvas") },
                                 { type: "divider" },
                                 { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
+                                { key: "export-psd", icon: <FileDown className="size-4" />, label: "导出分层 PSD", onClick: onExportPsd },
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
                                 { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text="重做" shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },

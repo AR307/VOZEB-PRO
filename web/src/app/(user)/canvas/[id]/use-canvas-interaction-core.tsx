@@ -47,6 +47,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         splitNodeId,
         upscaleNodeId,
         angleNodeId,
+        emotionNodeId,
         previewNodeId,
         collapsingBatchIds,
         nodesRef,
@@ -143,6 +144,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
     const splitNode = splitNodeId ? nodeById.get(splitNodeId) || null : null;
     const upscaleNode = upscaleNodeId ? nodeById.get(upscaleNodeId) || null : null;
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
+    const emotionNode = emotionNodeId ? nodeById.get(emotionNodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
@@ -259,6 +261,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         splitNode,
         upscaleNode,
         angleNode,
+        emotionNode,
         previewNode,
         hasMultipleSelectedNodes,
         activeNodeId,

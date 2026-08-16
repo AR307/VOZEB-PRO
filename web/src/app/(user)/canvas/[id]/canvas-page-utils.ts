@@ -13,6 +13,7 @@ import type { CanvasNodeGenerationMode } from "../components/canvas-node-prompt-
 import { resolveCanvasGenerationModel } from "../utils/canvas-node-config";
 import { nodeSizeFromRatio, resizeImageNodeToNaturalRatio } from "../utils/canvas-node-size";
 import { PANORAMA_IMAGE_SIZE } from "../utils/canvas-panorama";
+import { isAgentInternalNode } from "../utils/canvas-auto-layout";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle } from "../types";
 
 export function imageExtension(dataUrl: string) {
@@ -349,6 +350,7 @@ export function isAudioFile(file: File) {
 }
 
 export function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[], collapsingBatchIds?: Set<string>) {
+    if (isAgentInternalNode(node)) return true;
     const rootId = node.metadata?.batchRootId;
     if (!rootId) return false;
     const root = nodes.find((item) => item.id === rootId);

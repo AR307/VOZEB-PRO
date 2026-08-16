@@ -7,6 +7,14 @@ type ImageCropRect = {
     height: number;
 };
 
+export type CanvasImageLayerData = {
+    foregroundDataUrl: string;
+    backgroundDataUrl: string;
+    width: number;
+    height: number;
+    removedPixels: number;
+};
+
 export type ImageUpscaleAlgorithm = "nearest" | "bilinear" | "high";
 
 export const MAX_UPSCALE_LONG_EDGE = 4096;
@@ -55,6 +63,43 @@ export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): P
     }
 
     return pieces;
+}
+
+/**
+ * Estimates the subject from the border colour and returns two transparent
+ * layers. It is deliberately local: the source image never leaves the
+ * browser and users can still refine the result with the existing mask tool.
+ */
+export async function splitSubjectAndBackgroundDataUrl(dataUrl: string): Promise<CanvasImageLayerData> {
+    const image = await loadImage(dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("浏览器不支持图片处理");
+    context.drawImage(image, 0, 0);
+    const source = context.getImageData(0, 0, canvas.width, canvas.height);
+    const { foreground, background: backgroundLayer, removedPixels } = splitImageDataLayers(source);
+    return {
+        foregroundDataUrl: imageDataUrl(foreground, canvas.width, canvas.height),
+        backgroundDataUrl: imageDataUrl(backgroundLayer, canvas.width, canvas.height),
+        width: canvas.width,
+        height: canvas.height,
+        removedPixels,
+    };
+}
+
+export function splitImageDataLayers(source: ImageData) {
+    const backgroundColour = sampleBorderColour(source);
+    const removed = floodBorderBackground(source, backgroundColour);
+    const foreground = new Uint8ClampedArray(source.data);
+    const background = new Uint8ClampedArray(source.data);
+    for (let index = 0; index < removed.length; index += 1) {
+        const offset = index * 4 + 3;
+        if (removed[index]) foreground[offset] = 0;
+        else background[offset] = 0;
+    }
+    return { foreground, background, removedPixels: removed.reduce((count, value) => count + (value ? 1 : 0), 0) };
 }
 
 export async function upscaleDataUrl(dataUrl: string, params: ImageUpscaleParams) {
@@ -114,9 +159,73 @@ function drawResizeCanvas(source: CanvasImageSource, sourceWidth: number, source
 }
 
 function loadImage(dataUrl: string) {
-    return new Promise<HTMLImageElement>((resolve) => {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
         const image = new Image();
         image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("图片读取失败，无法处理图像"));
         image.src = dataUrl;
     });
+}
+
+function sampleBorderColour(image: ImageData) {
+    const points = [
+        [0, 0],
+        [image.width - 1, 0],
+        [0, image.height - 1],
+        [image.width - 1, image.height - 1],
+    ];
+    const values = points.map(([x, y]) => {
+        const offset = (y * image.width + x) * 4;
+        return [image.data[offset], image.data[offset + 1], image.data[offset + 2]];
+    });
+    return values[0].map((_, channel) => Math.round(values.reduce((sum, value) => sum + value[channel], 0) / values.length));
+}
+
+function floodBorderBackground(image: ImageData, background: number[]) {
+    const total = image.width * image.height;
+    const removed = new Uint8Array(total);
+    const queued = new Uint8Array(total);
+    const queue: number[] = [];
+    for (let x = 0; x < image.width; x += 1) {
+        queue.push(x, (image.height - 1) * image.width + x);
+    }
+    for (let y = 1; y < image.height - 1; y += 1) {
+        queue.push(y * image.width, y * image.width + image.width - 1);
+    }
+    const tolerance = 58;
+    for (const index of queue) queued[index] = 1;
+    for (let cursor = 0; cursor < queue.length; cursor += 1) {
+        const index = queue[cursor];
+        const offset = index * 4;
+        if (!isBackgroundPixel(image.data, offset, background, tolerance)) continue;
+        removed[index] = 1;
+        const x = index % image.width;
+        const y = Math.floor(index / image.width);
+        for (const next of [index - 1, index + 1, index - image.width, index + image.width]) {
+            if (next < 0 || next >= total || queued[next]) continue;
+            const nextX = next % image.width;
+            if (Math.abs(nextX - x) > 1) continue;
+            queued[next] = 1;
+            queue.push(next);
+        }
+    }
+    return removed;
+}
+
+function isBackgroundPixel(data: Uint8ClampedArray, offset: number, background: number[], tolerance: number) {
+    if (data[offset + 3] === 0) return true;
+    const distance = Math.hypot(data[offset] - background[0], data[offset + 1] - background[1], data[offset + 2] - background[2]);
+    return distance <= tolerance;
+}
+
+function imageDataUrl(data: Uint8ClampedArray, width: number, height: number) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("浏览器不支持图片处理");
+    const pixels = new Uint8ClampedArray(data.length);
+    pixels.set(data);
+    context.putImageData(new ImageData(pixels, width, height), 0, 0);
+    return canvas.toDataURL("image/png");
 }

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
+import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, expectNoHorizontalOverflow, node, readCanvasProject } from "./canvas-e2e-helpers";
+
 test.describe.configure({ mode: "serial" });
 
 test("canvas keeps editing, selection, linking and persistence fluid", async ({ page, request }) => {
@@ -902,21 +904,6 @@ test("canvas Agent attachment remove badge stays compact and theme readable", as
     }
 });
 
-function node(id: string, type: string, x: number, y: number, width: number, height: number, metadata: Record<string, unknown>) {
-    return { id, type, title: id, position: { x, y }, width, height, metadata };
-}
-
-async function createCanvasProject(request: APIRequestContext, project: Record<string, unknown>) {
-    const response = await request.post("/api/canvas/projects", { data: { title: project.title, project } });
-    expect(response.ok(), await response.text()).toBe(true);
-    return ((await response.json()) as { data: { project: { id: string } } }).data.project;
-}
-
-async function deleteCanvasProject(request: APIRequestContext, id: string) {
-    const response = await request.delete("/api/canvas/projects", { data: { ids: [id] } });
-    expect(response.ok(), await response.text()).toBe(true);
-}
-
 async function readCanvasNodeCount(request: APIRequestContext, path: string) {
     const response = await request.get(path);
     expect(response.ok(), await response.text()).toBe(true);
@@ -927,29 +914,6 @@ async function readCanvasViewport(request: APIRequestContext, path: string) {
     const response = await request.get(path);
     expect(response.ok(), await response.text()).toBe(true);
     return ((await response.json()) as { data: { project: { viewport: { x: number; y: number; k: number } } } }).data.project.viewport;
-}
-
-async function readCanvasProject(request: APIRequestContext, path: string) {
-    const response = await request.get(path);
-    expect(response.ok(), await response.text()).toBe(true);
-    return (
-        (await response.json()) as {
-            data: {
-                project: {
-                    nodes: Array<{
-                        id: string;
-                        type: string;
-                        metadata?: {
-                            videoReferenceMode?: string;
-                            videoFirstFrame?: { nodeId?: string };
-                            videoLastFrame?: { nodeId?: string };
-                            videoReferences?: Array<{ role: string }>;
-                        };
-                    }>;
-                };
-            };
-        }
-    ).data.project;
 }
 
 async function readCanvasChatState(request: APIRequestContext, path: string) {
@@ -993,13 +957,4 @@ async function dragSelectionBox(page: Page, nodes: Locator) {
 
 async function expectSelectedNodeCount(page: Page, count: number) {
     await expect.poll(() => page.locator("[data-node-id] > div").evaluateAll((elements) => elements.filter((element) => getComputedStyle(element).borderColor === "rgb(47, 128, 255)").length)).toBe(count);
-}
-
-async function expectCanvasSaved(page: Page, timeout = 5_000) {
-    await expect(page.locator(".canvas-topbar")).toHaveAttribute("data-save-status", "saved", { timeout });
-}
-
-async function expectNoHorizontalOverflow(page: Page, label: string) {
-    const widths = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
-    expect(widths.scrollWidth, `${label} document overflow`).toBeLessThanOrEqual(widths.clientWidth + 1);
 }

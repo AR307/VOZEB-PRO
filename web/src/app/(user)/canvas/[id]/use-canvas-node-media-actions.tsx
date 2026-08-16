@@ -13,11 +13,12 @@ import { nanoid } from "nanoid";
 import { type CanvasImageAngleParams } from "../components/canvas-node-angle-dialog";
 import { type CanvasImageCropRect } from "../components/canvas-node-crop-dialog";
 import { type CanvasImageMaskEditPayload } from "../components/canvas-node-mask-edit-dialog";
+import type { CanvasEmotionPayload } from "../components/canvas-node-emotion-dialog";
 import { type CanvasImageSplitParams } from "../components/canvas-node-split-dialog";
 import { type CanvasImageUpscaleParams } from "../components/canvas-node-upscale-dialog";
 import { NODE_DEFAULT_SIZE } from "../constants";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasNodeData } from "../types";
-import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
+import { cropDataUrl, splitDataUrl, splitSubjectAndBackgroundDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
 import { fitNodeSize } from "../utils/canvas-node-size";
 
 import { IMAGE_PROMPT_REVERSE_PRESET, NODE_STATUS_ERROR, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, createCanvasNode } from "./canvas-page-elements";
@@ -49,6 +50,7 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         setCropNodeId,
         setMaskEditNodeId,
         setSplitNodeId,
+        setEmotionNodeId,
         setUpscaleNodeId,
         setAngleNodeId,
         setCollapsingBatchIds,
@@ -269,7 +271,7 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         [effectiveConfig.model, effectiveConfig.textModel, message],
     );
 
-    const appendDerivedImageNode = useCallback((sourceNode: CanvasNodeData, image: UploadedImage, title: string, size: { width: number; height: number }) => {
+    const appendDerivedImageNode = useCallback((sourceNode: CanvasNodeData, image: UploadedImage, title: string, size: { width: number; height: number }, metadataPatch: Partial<NonNullable<CanvasNodeData["metadata"]>> = {}) => {
         const childId = nanoid();
         const child: CanvasNodeData = {
             id: childId,
@@ -277,13 +279,60 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
             title,
             position: { x: sourceNode.position.x + sourceNode.width + 96, y: sourceNode.position.y },
             ...size,
-            metadata: { ...imageMetadata(image), prompt: sourceNode.metadata?.prompt },
+            metadata: { ...imageMetadata(image), prompt: sourceNode.metadata?.prompt, ...metadataPatch },
         };
         setNodes((prev) => [...prev, child]);
         setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: sourceNode.id, toNodeId: childId }]);
         setSelectedNodeIds(new Set([childId]));
         setDialogNodeId(childId);
     }, []);
+
+    const removeBackgroundImageNode = useCallback(
+        async (node: CanvasNodeData) => {
+            if (!node.metadata?.content) return;
+            const layers = await splitSubjectAndBackgroundDataUrl(node.metadata.content);
+            if (!layers.removedPixels) message.warning("没有识别到可移除的背景，请尝试局部编辑");
+            const image = await uploadCanvasImage(layers.foregroundDataUrl);
+            appendDerivedImageNode(node, image, "主体（透明背景）", { width: node.width, height: node.height }, { layerName: "主体（透明背景）", sourceLayerNodeId: node.id });
+            message.success("已生成透明主体图层");
+        },
+        [appendDerivedImageNode, message],
+    );
+
+    const splitImageLayers = useCallback(
+        async (node: CanvasNodeData) => {
+            if (!node.metadata?.content) return;
+            const layers = await splitSubjectAndBackgroundDataUrl(node.metadata.content);
+            const results = await Promise.allSettled([uploadCanvasImage(layers.foregroundDataUrl), uploadCanvasImage(layers.backgroundDataUrl)]);
+            const definitions = [
+                { title: "主体图层", layerName: "主体", image: results[0] },
+                { title: "背景图层", layerName: "背景", image: results[1] },
+            ];
+            const children = definitions.flatMap((definition) =>
+                definition.image.status === "fulfilled"
+                    ? [
+                          {
+                              id: nanoid(),
+                              type: CanvasNodeType.Image,
+                              title: `${node.title || "图片"} · ${definition.title}`,
+                              position: { x: node.position.x + node.width + 96, y: node.position.y + (definition.layerName === "背景" ? node.height + 28 : 0) },
+                              width: node.width,
+                              height: node.height,
+                              metadata: { ...imageMetadata(definition.image.value), prompt: node.metadata?.prompt, layerName: definition.layerName, sourceLayerNodeId: node.id },
+                          } satisfies CanvasNodeData,
+                      ]
+                    : [],
+            );
+            if (!children.length) throw results.find((result): result is PromiseRejectedResult => result.status === "rejected")?.reason || new Error("图层保存失败");
+            setNodes((prev) => [...prev, ...children]);
+            setConnections((prev) => [...prev, ...children.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }))]);
+            setSelectedNodeIds(new Set(children.map((child) => child.id)));
+            setSelectedConnectionId(null);
+            setDialogNodeId(null);
+            message.success(children.length === 2 ? "已生成主体和背景两个图层" : "已保留成功的图层结果");
+        },
+        [message],
+    );
 
     const cropImageNode = useCallback(
         async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
@@ -400,6 +449,56 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startAndCompleteImageTask, startGenerationRequest],
     );
 
+    const emotionEditImageNode = useCallback(
+        async (node: CanvasNodeData, payload: CanvasEmotionPayload) => {
+            if (!node.metadata?.content) return;
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: node.metadata?.size || "auto" };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            const childId = nanoid();
+            const source = canvasNodeReferenceImage(node);
+            const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
+            setEmotionNodeId(null);
+            setRunningNodeId(childId);
+            setNodes((prev) => [
+                ...prev,
+                {
+                    id: childId,
+                    type: CanvasNodeType.Image,
+                    title: "表情参考结果",
+                    position: { x: node.position.x + node.width + 96, y: node.position.y },
+                    width: node.width,
+                    height: node.height,
+                    metadata: { prompt: payload.prompt, status: NODE_STATUS_LOADING, ...generationMetadata },
+                },
+            ]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+            setSelectedNodeIds(new Set([childId]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(childId);
+            const controller = startGenerationRequest(childId, node.id, childId);
+            try {
+                await startAndCompleteImageTask(childId, generationConfig, payload.prompt, [source], undefined, controller);
+            } catch (error) {
+                if (isGenerationCanceled(error)) return;
+                const errorDetails = error instanceof Error ? error.message : "表情参考生成失败";
+                const needsReview = isGenerationTaskNeedsReviewError(error);
+                message.error(errorDetails);
+                if (needsReview) {
+                    setNodes((prev) => pauseCanvasGenerationReview(prev, [childId], errorDetails));
+                    return;
+                }
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : item)));
+            } finally {
+                finishGenerationRequest(childId, controller);
+                setRunningNodeId(null);
+            }
+        },
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startAndCompleteImageTask, startGenerationRequest],
+    );
+
     const upscaleImageNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
             if (!node.metadata?.content) return;
@@ -489,7 +588,10 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         appendDerivedImageNode,
         cropImageNode,
         splitImageNode,
+        splitImageLayers,
+        removeBackgroundImageNode,
         maskEditImageNode,
+        emotionEditImageNode,
         upscaleImageNode,
         generateAngleNode,
         handleFontSizeChange,

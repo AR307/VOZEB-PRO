@@ -11,6 +11,7 @@ import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasAssetsPanel } from "../components/canvas-assets-panel";
 import { CanvasSurface, type CanvasInteractionMode } from "../components/canvas-surface";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
+import { CanvasNodeEmotionDialog } from "../components/canvas-node-emotion-dialog";
 import { CanvasNodeCropDialog } from "../components/canvas-node-crop-dialog";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canvas-node-hover-toolbar";
 import { CanvasNodeMaskEditDialog } from "../components/canvas-node-mask-edit-dialog";
@@ -21,6 +22,7 @@ import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasTopBar } from "../components/canvas-top-bar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CanvasNodeType, type Position } from "../types";
+import { exportCanvasProjectAsPsd } from "../utils/canvas-export";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 import { CanvasRefreshShell, ConnectionCreateMenu, NodeCreateMenu } from "./canvas-page-elements";
@@ -132,6 +134,8 @@ function VozebProCanvasPage() {
         setUpscaleNodeId,
         angleNodeId,
         setAngleNodeId,
+        emotionNodeId,
+        setEmotionNodeId,
         previewNodeId,
         setPreviewNodeId,
         assistantCollapsed,
@@ -188,6 +192,7 @@ function VozebProCanvasPage() {
         splitNode,
         upscaleNode,
         angleNode,
+        emotionNode,
         previewNode,
         hasMultipleSelectedNodes,
         activeNodeId,
@@ -215,6 +220,7 @@ function VozebProCanvasPage() {
         applyHistory,
         undoCanvas,
         redoCanvas,
+        autoLayout,
         createAndOpenProject,
         deleteCurrentProject,
         createImageFileNode,
@@ -235,7 +241,10 @@ function VozebProCanvasPage() {
         appendDerivedImageNode,
         cropImageNode,
         splitImageNode,
+        splitImageLayers,
+        removeBackgroundImageNode,
         maskEditImageNode,
+        emotionEditImageNode,
         upscaleImageNode,
         generateAngleNode,
         handleFontSizeChange,
@@ -289,6 +298,10 @@ function VozebProCanvasPage() {
                     onWorkbench={() => router.push("/create")}
                     onDeleteProject={deleteCurrentProject}
                     onImportImage={() => handleUploadRequest()}
+                    onExportPsd={() => {
+                        if (!currentProject) return;
+                        void exportCanvasProjectAsPsd({ ...currentProject, nodes, connections }).catch((error) => message.error(error instanceof Error ? error.message : "PSD 导出失败"));
+                    }}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     assetsOpen={assetPickerOpen}
@@ -474,6 +487,9 @@ function VozebProCanvasPage() {
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
+                    onSplitLayers={(node) => void splitImageLayers(node).catch((error) => message.error(error instanceof Error ? error.message : "智能分层失败"))}
+                    onRemoveBackground={(node) => void removeBackgroundImageNode(node).catch((error) => message.error(error instanceof Error ? error.message : "消除背景失败"))}
+                    onEmotion={(node) => setEmotionNodeId(node.id)}
                     onUpscale={(node) => setUpscaleNodeId(node.id)}
                     onSuperResolve={(node) => setUpscaleNodeId(node.id)}
                     onAngle={(node) => setAngleNodeId(node.id)}
@@ -509,6 +525,7 @@ function VozebProCanvasPage() {
                     onOpenAssets={() => {
                         setAssetPickerOpen(true);
                     }}
+                    onAutoLayout={autoLayout}
                 />
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
@@ -570,6 +587,10 @@ function VozebProCanvasPage() {
                 ) : null}
 
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
+
+                {emotionNode?.metadata?.content ? (
+                    <CanvasNodeEmotionDialog dataUrl={emotionNode.metadata.content} open={Boolean(emotionNode)} onClose={() => setEmotionNodeId(null)} onConfirm={(payload) => void emotionEditImageNode(emotionNode!, payload)} />
+                ) : null}
 
                 <Modal
                     title="图片详情"
