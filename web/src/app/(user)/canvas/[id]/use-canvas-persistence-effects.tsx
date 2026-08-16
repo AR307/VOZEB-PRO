@@ -39,8 +39,6 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         openConfigDialog,
         addAsset,
         userId,
-        hydrated,
-        hydratedUserId,
         hydrate,
         loadProject,
         createProject,
@@ -161,13 +159,12 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
     }, [hydrate, userId]);
 
     useEffect(() => {
-        if (!userId || !hydrated || hydratedUserId !== userId) return;
+        if (!userId) return;
         let cancelled = false;
         setProjectLoaded(false);
         void loadProject(projectId)
             .then(async (project) => {
-                const restoredNodes = (await hydrateCanvasImages(project.nodes)).map(normalizeCanvasConfigNodeLayout);
-                const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+                const [restoredNodes, restoredSessions] = await Promise.all([hydrateCanvasImages(project.nodes).then((nodes) => nodes.map(normalizeCanvasConfigNodeLayout)), hydrateAssistantImages(project.chatSessions || [])]);
                 if (cancelled) return;
                 skipInitialProjectSyncRef.current = true;
                 setNodes(restoredNodes);
@@ -203,7 +200,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         return () => {
             cancelled = true;
         };
-    }, [hydrated, hydratedUserId, loadProject, message, projectId, router, userId]);
+    }, [loadProject, message, projectId, router, userId]);
 
     useEffect(() => {
         if (!projectLoaded) return;

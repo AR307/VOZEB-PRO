@@ -72,6 +72,7 @@ function VozebProCanvasPage() {
         hydrated,
         hydratedUserId,
         hydrate,
+        loadProject,
         createProject,
         updateProject,
         projectSaveState,
@@ -275,7 +276,10 @@ function VozebProCanvasPage() {
                 projectId={projectId}
                 projectTitle={currentProject?.title || "未命名画布"}
                 nodes={nodes}
-                onOpenProject={(id) => router.push(`/canvas/${id}`)}
+                onOpenProject={(id) => {
+                    void loadProject(id).catch(() => undefined);
+                    router.push(`/canvas/${id}`);
+                }}
                 onOpenProjects={() => router.push("/canvas")}
                 onCreateProject={createAndOpenProject}
                 onInsertAsset={handleAssetInsert}
