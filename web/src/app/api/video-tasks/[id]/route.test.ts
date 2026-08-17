@@ -39,24 +39,26 @@ describe("GET /api/video-tasks/[id]", () => {
         mocks.writeLog.mockResolvedValue(undefined);
     });
 
-    it("returns a running task immediately and schedules a low-cost Worker wakeup", async () => {
+    it("returns a running task without running recovery work", async () => {
         const task = videoTask();
         mocks.getVideoTask.mockResolvedValue(task);
 
         const response = await GET(new Request("http://localhost/api/video-tasks/local-video", { headers: { cookie: "session=test" } }), context);
 
         expect(response.status).toBe(200);
-        expect(after).toHaveBeenCalledOnce();
+        expect(after).not.toHaveBeenCalled();
+        expect(mocks.recover).not.toHaveBeenCalled();
         expect((await response.json()).task).toMatchObject({ status: "running" });
     });
 
-    it("schedules recovery for a legacy local timeout instead of treating it as terminal", async () => {
+    it("returns a legacy local timeout without running recovery work", async () => {
         const task = videoTask({ status: "error", error: "视频任务长时间未更新，请重新查询或生成。" });
         mocks.getVideoTask.mockResolvedValue(task);
 
         await GET(new Request("http://localhost/api/video-tasks/local-video"), context);
 
-        expect(after).toHaveBeenCalledOnce();
+        expect(after).not.toHaveBeenCalled();
+        expect(mocks.recover).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -87,6 +89,15 @@ describe("GET /api/video-tasks/[id]", () => {
         const response = await GET(new Request("http://localhost/api/video-tasks/local-video"), context);
 
         expect((await response.json()).task).toMatchObject({ needsReview: true, reviewReason: "视频提交结果无法确认" });
+    });
+
+    it("does not let a stale schedule payload replace the normalized review reason", async () => {
+        mocks.getVideoTask.mockResolvedValue(videoTask({ reviewReason: "上游提交结果暂时无法确认" }));
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "needs_review", resultPayload: { reviewReason: "参考素材无法提交" } });
+
+        const response = await GET(new Request("http://localhost/api/video-tasks/local-video"), context);
+
+        expect((await response.json()).task).toMatchObject({ needsReview: true, reviewReason: "上游提交结果暂时无法确认" });
     });
 
     it("rejects browser attempts to submit a terminal status or result URL", async () => {

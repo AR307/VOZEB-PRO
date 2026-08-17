@@ -3,7 +3,7 @@
 import { App, Button, Drawer, Grid } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import { ChevronsDown, Clapperboard, FolderOpen, History, Play, Plus, ScanFace, ShoppingBag, Sparkles, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CREATIVE_UPLOAD_ACCEPT, CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
@@ -49,6 +49,8 @@ export default function CreatePage() {
     const initialConversationRestoredRef = useRef(false);
     const initialPromptRestoredRef = useRef(false);
     const conversationScrollRef = useRef<HTMLElement>(null);
+    const composerHostRef = useRef<HTMLDivElement>(null);
+    const composerLayoutRef = useRef<DOMRect | null>(null);
     const conversationWasLoadingRef = useRef(false);
     const previousScrollTopRef = useRef(0);
     const awayFromLatestRef = useRef(false);
@@ -68,6 +70,7 @@ export default function CreatePage() {
     const [assetsOpen, setAssetsOpen] = useState(false);
     const [awayFromLatest, setAwayFromLatest] = useState(false);
     const [composerExpanded, setComposerExpanded] = useState(true);
+    const [composerHeight, setComposerHeight] = useState(220);
     const publicSettings = usePublicSessionStore((state) => state.payload?.settings);
     const siteTitle = resolveSiteTitle(publicSettings?.site?.title);
     const agent = useCreateAgent();
@@ -433,7 +436,7 @@ export default function CreatePage() {
     const updateConversationScrollState = (element: HTMLElement) => {
         const scrollTop = element.scrollTop;
         const distanceFromLatest = Math.max(0, element.scrollHeight - element.clientHeight - scrollTop);
-        const scrollingUp = scrollTop < previousScrollTopRef.current - 3;
+        const scrollingUp = distanceFromLatest > 48 && scrollTop < previousScrollTopRef.current - 3;
         const away = scrollingUp ? true : distanceFromLatest > 48 ? awayFromLatestRef.current : false;
         previousScrollTopRef.current = scrollTop;
         setAwayFromLatestState(away);
@@ -462,6 +465,27 @@ export default function CreatePage() {
     };
 
     const composerCompact = showConversation && awayFromLatest && !composerExpanded;
+    useEffect(() => {
+        const host = composerHostRef.current;
+        const composerElement = host?.querySelector<HTMLElement>(".creative-composer");
+        if (!composerElement) return;
+        const update = () => setComposerHeight((current) => Math.max(180, Math.ceil(composerElement.getBoundingClientRect().height + 24) || current));
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(composerElement);
+        return () => observer.disconnect();
+    }, [showConversation, composerCompact]);
+
+    useLayoutEffect(() => {
+        const host = composerHostRef.current;
+        if (!host) return;
+        const next = host.getBoundingClientRect();
+        const previous = composerLayoutRef.current;
+        if (previous && (Math.abs(previous.top - next.top) > 1 || Math.abs(previous.left - next.left) > 1)) {
+            host.animate([{ transform: `translate(${previous.left - next.left}px, ${previous.top - next.top}px)` }, { transform: "translate(0, 0)" }], { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" });
+        }
+        composerLayoutRef.current = next;
+    }, [showConversation]);
     const composer = (
         <CreativeComposer
             inputRef={inputRef}
@@ -654,7 +678,7 @@ export default function CreatePage() {
                                     <h1 className="text-[23px] font-semibold leading-tight sm:text-[31px]">{siteTitle} 创作 Agent</h1>
                                     <p className="mt-2 text-sm text-[#8b949f] dark:text-[#7f8996]">从一个想法开始</p>
                                 </div>
-                                <div className="mt-5 w-full sm:mt-8">{composer}</div>
+                                <div aria-hidden="true" className="mt-5 w-full transition-[height] duration-300 sm:mt-8" style={{ height: composerHeight }} />
                                 <div className="mt-2 flex w-full min-w-0 flex-wrap justify-center gap-1.5 sm:mt-3 sm:gap-2">
                                     {skillsLoading ? <span className="px-2 py-2 text-xs text-[#9aa2ad]">正在加载创作 Skill...</span> : null}
                                     {skills.map((skill, index) => {
@@ -681,21 +705,28 @@ export default function CreatePage() {
                         )}
                     </section>
 
-                    {showConversation ? (
-                        <div data-testid="creative-composer-dock" data-compact={composerCompact ? "true" : "false"} className={cn("relative shrink-0", composerCompact && "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-transparent")}>
-                            {awayFromLatest ? (
-                                <Button
-                                    type="text"
-                                    icon={<ChevronsDown className="size-4" />}
-                                    className="!pointer-events-auto !absolute !-top-11 !left-1/2 !z-20 !h-9 !-translate-x-1/2 !rounded-lg !border !border-[#e1e5e9] !bg-white !px-3 !text-sm !font-medium !text-[#596572] !shadow-[0_6px_20px_rgba(32,36,42,0.08)] hover:!bg-[#f4f6f8] hover:!text-[#20242a] dark:!border-[#343a42] dark:!bg-[#1c2025] dark:!text-[#b7c0ca] dark:!shadow-black/25 dark:hover:!bg-[#272c33] dark:hover:!text-white"
-                                    onClick={scrollToLatest}
-                                >
-                                    回到底部
-                                </Button>
-                            ) : null}
-                            {composer}
-                        </div>
-                    ) : null}
+                    <div
+                        ref={composerHostRef}
+                        data-testid="creative-composer-dock"
+                        data-compact={composerCompact ? "true" : "false"}
+                        className={cn(
+                            "shrink-0",
+                            showConversation ? "relative" : "pointer-events-auto absolute inset-x-0 top-[117px] z-20 sm:top-[153px] lg:top-[calc(10vh+97px)]",
+                            composerCompact && "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-transparent",
+                        )}
+                    >
+                        {showConversation && awayFromLatest ? (
+                            <Button
+                                type="text"
+                                icon={<ChevronsDown className="size-4" />}
+                                className="!pointer-events-auto !absolute !-top-11 !left-1/2 !z-20 !h-9 !-translate-x-1/2 !rounded-lg !border !border-[#e1e5e9] !bg-white !px-3 !text-sm !font-medium !text-[#596572] !shadow-[0_6px_20px_rgba(32,36,42,0.08)] hover:!bg-[#f4f6f8] hover:!text-[#20242a] dark:!border-[#343a42] dark:!bg-[#1c2025] dark:!text-[#b7c0ca] dark:!shadow-black/25 dark:hover:!bg-[#272c33] dark:hover:!text-white"
+                                onClick={scrollToLatest}
+                            >
+                                回到底部
+                            </Button>
+                        ) : null}
+                        {composer}
+                    </div>
                 </div>
                 <CreativeAssetsPanel
                     open={assetsOpen}

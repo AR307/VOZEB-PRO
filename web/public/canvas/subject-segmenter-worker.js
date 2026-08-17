@@ -54,18 +54,18 @@ async function resetSegmenter() {
 }
 
 self.onmessage = async (event) => {
-    const { id, image, operation = "mask" } = event.data || {};
+    const { id, image, operation = "mask", targetPoint } = event.data || {};
     try {
         if (!Number.isInteger(id) || !image || (operation !== "mask" && operation !== "layers")) throw new Error("主体分割请求无效");
         const segmenter = await getSegmenter();
-        let selected = segmentCandidate(segmenter, image, { x: 0.5, y: 0.5 });
-        if (!isReliableCandidate(selected)) {
-            for (const point of fallbackPoints) {
-                const candidate = segmentCandidate(segmenter, image, point);
-                if (candidate.score > selected.score) selected = candidate;
-            }
+        const firstPoint = normalizedPoint(targetPoint) || { x: 0.5, y: 0.5 };
+        let selected = null;
+        const points = [firstPoint, ...fallbackPoints.filter((point) => point.x !== firstPoint.x || point.y !== firstPoint.y)];
+        for (const point of points) {
+            const candidate = segmentCandidate(segmenter, image, point);
+            if (!selected || candidate.score > selected.score) selected = candidate;
         }
-        if (!isReliableCandidate(selected)) throw new Error("没有识别到可靠主体，请尝试局部编辑");
+        if (!selected || !isReliableCandidate(selected)) throw new Error("没有识别到可靠主体，请尝试局部编辑");
         if (operation === "layers" && supportsWorkerImageEncoding()) {
             const layers = await composeSubjectLayers(image, selected);
             self.postMessage({ id, operation, ...layers });
@@ -117,7 +117,12 @@ function maskStats(data, width, height) {
     }
     const areaRatio = foregroundPixels / Math.max(1, width * height);
     const borderRatio = foregroundBorderPixels / Math.max(1, borderPixels);
-    return { areaRatio, borderRatio, score: areaRatio * (1 - borderRatio) };
+    return { areaRatio, borderRatio, score: areaRatio * (1 - areaRatio) * (1 - borderRatio) };
+}
+
+function normalizedPoint(value) {
+    if (!value || !Number.isFinite(value.x) || !Number.isFinite(value.y)) return null;
+    return { x: Math.min(1, Math.max(0, value.x)), y: Math.min(1, Math.max(0, value.y)) };
 }
 
 function isReliableCandidate(candidate) {

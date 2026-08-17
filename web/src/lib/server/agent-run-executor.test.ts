@@ -197,6 +197,11 @@ describe("executeAgentRun backend settings", () => {
 
     it("runs an explicitly selected generation model without a default text model", async () => {
         mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "生成商品主图", requestedModelIds: ["image-model"] });
+        mocks.getCreativeConversationContext.mockResolvedValue({
+            summary: "同一商品使用红色包装",
+            summaryThroughSequence: 1,
+            recentMessages: [],
+        });
         const manualSettings = settings("image-model", "image-channel") as unknown as {
             defaultModels: { textModel: string };
             systemChannels: Array<{ id: string }>;
@@ -209,10 +214,12 @@ describe("executeAgentRun backend settings", () => {
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.getCreativeConversationContext).not.toHaveBeenCalled();
+        expect(mocks.getCreativeConversationContext).toHaveBeenCalledWith("conversation", "user", "agent-run");
         expect(mocks.listRecentCreativeMediaAssets).not.toHaveBeenCalled();
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).endsWith("/responses") || String(url).endsWith("/chat/completions"))).toBe(false);
         expect(mocks.fetchInternalApi.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toBe(true);
+        expect(mocks.run?.tasks[0]).toMatchObject({ optimizedPrompt: "生成商品主图" });
+        expect(mocks.run?.tasks[0]?.prompt).toContain("同一商品使用红色包装");
         expect(mocks.run?.status).toBe("completed");
     });
 

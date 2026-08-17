@@ -2,7 +2,7 @@ import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBodyResult } from "@/lib/auth/request";
-import { canReconcileVideoTask, getVideoTask, transitionVideoTask } from "@/lib/server/video-task-store";
+import { getVideoTask, transitionVideoTask } from "@/lib/server/video-task-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { pointsResponseHeaders } from "@/lib/server/points-response";
 import { generationModelId } from "@/lib/server/generation-channel";
@@ -22,16 +22,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "视频任务不存在" }, { status: user ? 404 : 401 });
     const schedule = await getStoredGenerationTaskRecord("video", task.id);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
-    if (canReconcileVideoTask(task) || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"))) {
-        const origin = resolveInternalOrigin(new URL(request.url).origin);
-        const cookie = request.headers.get("cookie") || "";
-        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task!.id] }));
-    }
     const shouldRefund = Boolean(task.upstream.pointsRecordId && !task.upstream.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundVideoTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : user;
     return NextResponse.json(
-        { task: { ...publicTask(settledTask), needsReview: executionPhase === "needs_review", reviewReason: executionPhase === "needs_review" ? schedule?.resultPayload?.reviewReason || task.reviewReason : undefined, executionPhase } },
+        { task: { ...publicTask(settledTask), needsReview: executionPhase === "needs_review", reviewReason: executionPhase === "needs_review" ? task.reviewReason : undefined, executionPhase } },
         { headers: pointsResponseHeaders(refreshedUser) },
     );
 }

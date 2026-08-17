@@ -23,20 +23,16 @@ export async function GET(request: Request) {
     const activeOnly = url.searchParams.get("status") === "active";
     const requestedLimit = Number(url.searchParams.get("limit"));
     const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? Math.min(50, requestedLimit) : 50;
-    const internalRuns = await listAgentRuns({
-        userId: user.id,
-        projectId,
-        conversationId,
-        surface: surface || undefined,
-        statuses: activeOnly ? ["planning", "running", "paused"] : undefined,
-        limit,
-    });
-    const runs = internalRuns.map(publicAgentRun);
-    const activeTaskIds = runs.filter((run) => run.status === "planning" || run.status === "running").map((run) => run.id);
-    if (activeTaskIds.length) {
-        const origin = resolveInternalOrigin(url.origin);
-        after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: Math.min(50, activeTaskIds.length), taskIds: activeTaskIds }));
-    }
+    const runs = (
+        await listAgentRuns({
+            userId: user.id,
+            projectId,
+            conversationId,
+            surface: surface || undefined,
+            statuses: activeOnly ? ["planning", "running", "paused"] : undefined,
+            limit,
+        })
+    ).map(publicAgentRun);
     return NextResponse.json({ code: 0, data: { runs }, msg: "OK" });
 }
 

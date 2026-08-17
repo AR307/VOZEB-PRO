@@ -48,10 +48,9 @@ describe("create Agent home layout", () => {
         expect(page.indexOf("<CreateWorkbenchOverview")).toBeLessThan(page.indexOf("<CreateInspirationGallery"));
         expect(page).toContain("usePublicImage");
         expect(composer).toContain('centered ? "max-w-[1080px]"');
-        expect(composer).toContain('data-compact="true"');
-        expect(composer).toContain('data-compact="false"');
-        expect(composer).toContain("allMediaAttachments.map");
-        expect(composer).toContain("<ComposerMediaThumbnail key={asset.id} asset={asset} compact");
+        expect(composer).toContain('data-compact={compact ? "true" : "false"}');
+        expect(composer).toContain("const inputMediaAttachments = compact ? allMediaAttachments");
+        expect(composer).toContain("<ComposerMediaThumbnail key={asset.id} asset={asset} compact={compact}");
         expect(composer).toContain("autoSize={compactMode ? { minRows: 1, maxRows: 5 }");
         expect(composer).toContain("<CreativeGenerationControls");
         expect(composer).toContain("使用 Skill");

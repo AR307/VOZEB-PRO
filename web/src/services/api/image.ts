@@ -2,7 +2,7 @@ import { nanoid } from "nanoid";
 
 import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { dedupeImageResults } from "@/lib/image-result-dedupe";
-import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
+import { GenerationTaskRequestError, readGenerationRetryAfterMs } from "@/services/api/generation-task-request-error";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -109,7 +109,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
     });
     throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, requestConfig.apiSource);
-    if (!response.ok) throw new GenerationTaskRequestError(await readFetchError(response, "创建图片任务失败"), response.status);
+    if (!response.ok) throw new GenerationTaskRequestError(await readFetchError(response, "创建图片任务失败"), response.status, false, readGenerationRetryAfterMs(response.headers));
     const payload = (await response.json()) as ImageTaskPayload;
     if (!payload.task?.id) throw new Error(payload.error || "创建图片任务失败");
     return payload.task;

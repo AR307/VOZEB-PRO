@@ -23,6 +23,8 @@ import {
     hydrateCanvasImages,
     isHiddenBatchChild,
     normalizeCanvasConfigNodeLayout,
+    prepareAssistantImages,
+    prepareCanvasImages,
     replaceCanvasNodeMediaMetadata,
     resolveMetadataImageEditMask,
     resolveMetadataReferences,
@@ -77,6 +79,24 @@ describe("Canvas project hydration", () => {
 
         expect(references?.[0]?.dataUrl).toBe("/api/reference-assets/valid-image");
         expect(references?.[1]).toEqual(sessions[0]?.messages[0]?.references?.[1]);
+    });
+
+    it("prepares stable project media synchronously without waiting for image metadata", () => {
+        const node = imageNode("stable", "permanent/user/canvas/image.webp");
+        const sessions: CanvasAssistantSession[] = [
+            {
+                id: "session",
+                title: "会话",
+                createdAt: "2026-07-31T00:00:00.000Z",
+                updatedAt: "2026-07-31T00:00:00.000Z",
+                messages: [{ id: "message", role: "user", text: "素材", references: [{ id: "reference", type: CanvasNodeType.Image, title: "参考", storageKey: "permanent/user/canvas/reference.webp" }] }],
+            },
+        ];
+
+        expect(prepareCanvasImages([node])[0]?.metadata?.content).toBe("/api/reference-assets/permanent/user/canvas/image.webp");
+        expect(prepareAssistantImages(sessions)[0]?.messages[0]?.references?.[0]?.dataUrl).toBe("/api/reference-assets/permanent/user/canvas/reference.webp");
+        expect(mocks.readImageMeta).not.toHaveBeenCalled();
+        expect(mocks.uploadImage).not.toHaveBeenCalled();
     });
 });
 

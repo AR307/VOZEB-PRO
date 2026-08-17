@@ -32,19 +32,19 @@ let subjectSegmentationWorker: Worker | null = null;
 let subjectSegmentationSequence = 0;
 const pendingSubjectSegmentations = new Map<number, PendingSubjectSegmentation>();
 
-export async function segmentCanvasSubject(dataUrl: string, signal?: AbortSignal): Promise<CanvasSubjectMask> {
-    const result = await requestCanvasSubjectWorker(dataUrl, "mask", signal);
+export async function segmentCanvasSubject(dataUrl: string, signal?: AbortSignal, targetPoint?: { x: number; y: number }): Promise<CanvasSubjectMask> {
+    const result = await requestCanvasSubjectWorker(dataUrl, "mask", signal, targetPoint);
     if (result.operation !== "mask") throw new Error("本地主体分割返回了错误结果");
     return result.mask;
 }
 
-export async function renderCanvasSubjectLayers(dataUrl: string, signal?: AbortSignal): Promise<CanvasSubjectLayerResult> {
-    const result = await requestCanvasSubjectWorker(dataUrl, "layers", signal);
+export async function renderCanvasSubjectLayers(dataUrl: string, signal?: AbortSignal, targetPoint?: { x: number; y: number }): Promise<CanvasSubjectLayerResult> {
+    const result = await requestCanvasSubjectWorker(dataUrl, "layers", signal, targetPoint);
     if (result.operation !== "layers") throw new Error("本地主体分割返回了错误结果");
     return result.layers;
 }
 
-async function requestCanvasSubjectWorker(dataUrl: string, operation: "mask" | "layers", signal?: AbortSignal) {
+async function requestCanvasSubjectWorker(dataUrl: string, operation: "mask" | "layers", signal?: AbortSignal, targetPoint?: { x: number; y: number }) {
     throwIfAborted(signal);
     if (typeof createImageBitmap !== "function") throw new Error("当前浏览器无法初始化本地主体分割");
     const response = await fetch(dataUrl, { signal });
@@ -65,7 +65,7 @@ async function requestCanvasSubjectWorker(dataUrl: string, operation: "mask" | "
         pendingSubjectSegmentations.set(id, { operation, resolve, reject, cleanup });
         signal?.addEventListener("abort", abort, { once: true });
         try {
-            worker.postMessage({ id, operation, image }, [image]);
+            worker.postMessage({ id, operation, image, targetPoint }, [image]);
         } catch (error) {
             pendingSubjectSegmentations.delete(id);
             cleanup();
@@ -118,7 +118,7 @@ export function validateCanvasSubjectMask(input: { width: number; height: number
 
 function getSubjectSegmentationWorker() {
     if (subjectSegmentationWorker) return subjectSegmentationWorker;
-    const worker = new Worker("/canvas/subject-segmenter-worker.js?v=2");
+    const worker = new Worker("/canvas/subject-segmenter-worker.js?v=3");
     worker.onmessage = (event: MessageEvent<unknown>) => {
         const response = readSubjectSegmentationWorkerResponse(event.data);
         if (!response) {

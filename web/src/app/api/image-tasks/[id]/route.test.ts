@@ -32,17 +32,15 @@ describe("GET /api/image-tasks/[id]", () => {
         mocks.getSchedule.mockResolvedValue({ executionPhase: "polling" });
     });
 
-    it("returns the current image state and schedules the same task for recovery", async () => {
+    it("returns the current image state without running recovery work", async () => {
         mocks.getImageTask.mockResolvedValue(imageTask());
 
         const response = await GET(new Request("http://localhost/api/image-tasks/image-one", { headers: { cookie: "session=test" } }), context);
 
         expect(response.status).toBe(200);
         expect((await response.json()).task).toMatchObject({ id: "image-one", status: "running" });
-        expect(after).toHaveBeenCalledOnce();
-        const recovery = vi.mocked(after).mock.calls[0]?.[0] as () => Promise<unknown>;
-        await recovery();
-        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["image-one"], origin: "http://localhost", publicOrigin: "https://public.example.com" }));
+        expect(after).not.toHaveBeenCalled();
+        expect(mocks.recover).not.toHaveBeenCalled();
     });
 
     it.each(["success", "error", "cancelled"])("does not wake a %s task", async (status) => {

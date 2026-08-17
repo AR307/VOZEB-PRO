@@ -3,39 +3,58 @@ import { CanvasNodeType, type CanvasNodeData, type Position, type ViewportTransf
 const HANDLE_CLEARANCE = 32;
 const FORWARD_GAP = HANDLE_CLEARANCE * 2;
 const CORNER_RADIUS = 14;
+const NODE_ROUTE_CLEARANCE = 12;
 
 export function worldFromScreen(clientX: number, clientY: number, viewport: ViewportTransform, rect: Pick<DOMRect, "left" | "top">): Position {
     return { x: (clientX - rect.left - viewport.x) / viewport.k, y: (clientY - rect.top - viewport.y) / viewport.k };
+}
+
+export function isCanvasVideoControlPoint(rect: Pick<DOMRect, "bottom" | "height">, clientY: number) {
+    const controlsHeight = Math.max(40, Math.min(72, rect.height * 0.22));
+    return clientY >= rect.bottom - controlsHeight;
 }
 
 export function nodeAnchor(node: CanvasNodeData, handleType: "source" | "target"): Position {
     return { x: handleType === "source" ? node.position.x + node.width : node.position.x, y: node.position.y + node.height / 2 };
 }
 
-export function edgePath(from: CanvasNodeData, to: CanvasNodeData) {
+export function edgePath(from: CanvasNodeData, to: CanvasNodeData, obstacles: CanvasNodeData[] = []) {
     const start = nodeAnchor(from, "source");
     const end = nodeAnchor(to, "target");
     const forwardDistance = end.x - start.x;
+    const base = baseEdgeRoute(from, to, start, end, forwardDistance);
+    const blockingNodes = obstacles.filter((node) => node.id !== from.id && node.id !== to.id);
+    if (!blockingNodes.length || routeIsClear(base, blockingNodes)) return roundedPolyline(base);
 
-    if (forwardDistance >= FORWARD_GAP) return forwardRoute(start, end, 1, forwardDistance);
+    const routeAbove = Math.min(from.position.y, to.position.y, ...blockingNodes.map((node) => node.position.y)) - HANDLE_CLEARANCE;
+    const routeBelow = Math.max(from.position.y + from.height, to.position.y + to.height, ...blockingNodes.map((node) => node.position.y + node.height)) + HANDLE_CLEARANCE;
+    const startPortX = start.x + HANDLE_CLEARANCE;
+    const endPortX = end.x - HANDLE_CLEARANCE;
+    const candidates = [routeAbove, routeBelow].map((routeY) => [start, { x: startPortX, y: start.y }, { x: startPortX, y: routeY }, { x: endPortX, y: routeY }, { x: endPortX, y: end.y }, end]);
+    const clear = candidates.filter((candidate) => routeIsClear(candidate, blockingNodes)).sort((left, right) => routeLength(left) - routeLength(right));
+    return roundedPolyline(clear[0] || base);
+}
+
+function baseEdgeRoute(from: CanvasNodeData, to: CanvasNodeData, start: Position, end: Position, forwardDistance: number) {
+    if (forwardDistance >= FORWARD_GAP) return forwardRoutePoints(start, end, 1, forwardDistance);
 
     const fromBottom = from.position.y + from.height;
     const toBottom = to.position.y + to.height;
-    if (fromBottom <= to.position.y) return gapRoute(start, end, (fromBottom + to.position.y) / 2);
-    if (toBottom <= from.position.y) return gapRoute(start, end, (toBottom + from.position.y) / 2);
+    if (fromBottom <= to.position.y) return gapRoutePoints(start, end, (fromBottom + to.position.y) / 2);
+    if (toBottom <= from.position.y) return gapRoutePoints(start, end, (toBottom + from.position.y) / 2);
 
     const routeAbove = Math.min(from.position.y, to.position.y) - HANDLE_CLEARANCE;
     const routeBelow = Math.max(fromBottom, toBottom) + HANDLE_CLEARANCE;
     const routeY = Math.abs(start.y - routeAbove) + Math.abs(end.y - routeAbove) <= Math.abs(start.y - routeBelow) + Math.abs(end.y - routeBelow) ? routeAbove : routeBelow;
     const outerRight = Math.max(start.x, to.position.x + to.width) + HANDLE_CLEARANCE;
     const outerLeft = Math.min(end.x, from.position.x) - HANDLE_CLEARANCE;
-    return roundedPolyline([start, { x: outerRight, y: start.y }, { x: outerRight, y: routeY }, { x: outerLeft, y: routeY }, { x: outerLeft, y: end.y }, end]);
+    return [start, { x: outerRight, y: start.y }, { x: outerRight, y: routeY }, { x: outerLeft, y: routeY }, { x: outerLeft, y: end.y }, end];
 }
 
 export function previewPath(start: Position, end: Position, handleType: "source" | "target") {
     const direction = handleType === "source" ? 1 : -1;
     const forwardDistance = (end.x - start.x) * direction;
-    if (forwardDistance >= FORWARD_GAP) return forwardRoute(start, end, direction, forwardDistance);
+    if (forwardDistance >= FORWARD_GAP) return roundedPolyline(forwardRoutePoints(start, end, direction, forwardDistance));
 
     const routeY = (start.y + end.y) / 2;
     return roundedPolyline([
@@ -99,13 +118,31 @@ export function isBlockedConnectionDrop(world: Position, draft: { nodeId: string
     });
 }
 
-function forwardRoute(start: Position, end: Position, direction: 1 | -1, forwardDistance: number) {
+function forwardRoutePoints(start: Position, end: Position, direction: 1 | -1, forwardDistance: number) {
     const routeX = start.x + (direction * forwardDistance) / 2;
-    return roundedPolyline([start, { x: routeX, y: start.y }, { x: routeX, y: end.y }, end]);
+    return [start, { x: routeX, y: start.y }, { x: routeX, y: end.y }, end];
 }
 
-function gapRoute(start: Position, end: Position, routeY: number) {
-    return roundedPolyline([start, { x: start.x + HANDLE_CLEARANCE, y: start.y }, { x: start.x + HANDLE_CLEARANCE, y: routeY }, { x: end.x - HANDLE_CLEARANCE, y: routeY }, { x: end.x - HANDLE_CLEARANCE, y: end.y }, end]);
+function gapRoutePoints(start: Position, end: Position, routeY: number) {
+    return [start, { x: start.x + HANDLE_CLEARANCE, y: start.y }, { x: start.x + HANDLE_CLEARANCE, y: routeY }, { x: end.x - HANDLE_CLEARANCE, y: routeY }, { x: end.x - HANDLE_CLEARANCE, y: end.y }, end];
+}
+
+function routeIsClear(points: Position[], nodes: CanvasNodeData[]) {
+    return points.slice(1).every((point, index) => nodes.every((node) => !segmentIntersectsNode(points[index], point, node)));
+}
+
+function segmentIntersectsNode(start: Position, end: Position, node: CanvasNodeData) {
+    const left = node.position.x - NODE_ROUTE_CLEARANCE;
+    const right = node.position.x + node.width + NODE_ROUTE_CLEARANCE;
+    const top = node.position.y - NODE_ROUTE_CLEARANCE;
+    const bottom = node.position.y + node.height + NODE_ROUTE_CLEARANCE;
+    if (start.y === end.y) return start.y > top && start.y < bottom && Math.max(start.x, end.x) > left && Math.min(start.x, end.x) < right;
+    if (start.x === end.x) return start.x > left && start.x < right && Math.max(start.y, end.y) > top && Math.min(start.y, end.y) < bottom;
+    return true;
+}
+
+function routeLength(points: Position[]) {
+    return points.slice(1).reduce((length, point, index) => length + Math.abs(point.x - points[index].x) + Math.abs(point.y - points[index].y), 0);
 }
 
 function roundedPolyline(points: Position[]) {

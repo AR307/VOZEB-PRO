@@ -4,6 +4,7 @@ import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { readImageMeta } from "@/lib/image-utils";
 import { resolveStoredImageDataUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
+import { serverMediaUrl } from "@/services/server-media-storage";
 import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CANVAS_CONFIG_NODE_HEIGHT, NODE_DEFAULT_SIZE } from "../constants";
@@ -214,6 +215,24 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
     return Promise.all(nodes.map((node) => hydrateCanvasNode(node).catch(() => node)));
 }
 
+export function prepareCanvasImages(nodes: CanvasNodeData[]) {
+    return nodes.map((node) => {
+        const content = node.metadata?.content;
+        const fallbackContent = generatedContentFallback(content, node.metadata?.remoteUrl, node.metadata?.serverUrl);
+        if (!node.metadata || (!node.metadata.storageKey && !content?.startsWith("blob:") && content)) return resizePreparedImage(node);
+        const stableContent = node.metadata.storageKey ? serverMediaUrl(node.metadata.storageKey, fallbackContent) : fallbackContent;
+        if (!stableContent || stableContent === content) return resizePreparedImage(node);
+        return resizePreparedImage({ ...node, metadata: { ...node.metadata, content: stableContent } });
+    });
+}
+
+function resizePreparedImage(node: CanvasNodeData) {
+    if (!isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Panorama) return node;
+    const naturalWidth = node.metadata?.naturalWidth;
+    const naturalHeight = node.metadata?.naturalHeight;
+    return naturalWidth && naturalHeight ? resizeImageNodeToNaturalRatio(node, naturalWidth, naturalHeight) : node;
+}
+
 async function hydrateCanvasNode(node: CanvasNodeData) {
     const content = node.metadata?.content;
     const fallbackContent = generatedContentFallback(content, node.metadata?.remoteUrl, node.metadata?.serverUrl);
@@ -268,6 +287,19 @@ export async function hydrateAssistantImages(sessions: CanvasAssistantSession[])
             ),
         })),
     );
+}
+
+export function prepareAssistantImages(sessions: CanvasAssistantSession[]) {
+    return sessions.map((session) => ({
+        ...session,
+        messages: session.messages.map((message) => ({
+            ...message,
+            references: (message.references || []).map((item) => {
+                const dataUrl = item.storageKey ? serverMediaUrl(item.storageKey, item.dataUrl) : item.dataUrl;
+                return dataUrl && dataUrl !== item.dataUrl ? { ...item, dataUrl } : item;
+            }),
+        })),
+    }));
 }
 
 export function getGenerationCount(count: string) {

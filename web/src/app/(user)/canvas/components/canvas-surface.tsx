@@ -7,7 +7,7 @@ import { canvasThemes, type CanvasBackgroundMode, type CanvasTheme } from "@/lib
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNode, type CanvasNodeProps } from "./canvas-node";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position, type ViewportTransform } from "../types";
-import { edgePath, expandCanvasDragNodeIds, findConnectionTarget, isBlockedConnectionDrop, nodeAnchor, previewPath, samePosition, selectNodesInBounds, worldFromScreen } from "../utils/canvas-surface-geometry";
+import { edgePath, expandCanvasDragNodeIds, findConnectionTarget, isBlockedConnectionDrop, isCanvasVideoControlPoint, nodeAnchor, previewPath, samePosition, selectNodesInBounds, worldFromScreen } from "../utils/canvas-surface-geometry";
 
 type CanvasPointerEvent = ReactMouseEvent | ReactPointerEvent;
 type CanvasNodeUpdate = { id: string; position?: Position; width?: number; height?: number };
@@ -82,8 +82,15 @@ type CanvasSurfaceProps = {
     overlay?: ReactNode;
 };
 
-function isInteractiveTarget(target: EventTarget | null) {
-    return target instanceof Element && Boolean(target.closest("button,input,textarea,select,video,audio,[data-canvas-no-drag],[data-canvas-no-zoom],[data-canvas-minimap],[data-connection-create-menu],[data-canvas-node-create-menu]"));
+function isInteractiveTarget(target: EventTarget | null, event?: Pick<MouseEvent, "clientY">) {
+    if (!(target instanceof Element)) return false;
+    const video = target.closest("video");
+    if (video) {
+        const rect = video.getBoundingClientRect();
+        if (event && !isCanvasVideoControlPoint(rect, event.clientY)) return false;
+        return true;
+    }
+    return Boolean(target.closest("button,input,textarea,select,audio,[data-canvas-no-drag],[data-canvas-no-zoom],[data-canvas-minimap],[data-connection-create-menu],[data-canvas-node-create-menu]"));
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null) {
@@ -203,6 +210,16 @@ export function CanvasSurface({
             }),
         [connections, hiddenNodeIds, nodesById, viewBounds],
     );
+    const connectionPaths = useMemo(() => {
+        const paths = new Map<string, string>();
+        connections.forEach((item) => {
+            const from = nodesById.get(item.fromNodeId);
+            const to = nodesById.get(item.toNodeId);
+            if (!from || !to || hiddenNodeIds.has(from.id) || hiddenNodeIds.has(to.id)) return;
+            paths.set(item.id, edgePath(from, to, visibleDisplayNodes));
+        });
+        return paths;
+    }, [connections, hiddenNodeIds, nodesById, visibleDisplayNodes]);
 
     useEffect(() => {
         if (interactionRef.current?.kind === "drag" || resizingNodeIdRef.current) return;
@@ -349,7 +366,7 @@ export function CanvasSurface({
 
     const handleNodeMouseDown = useCallback(
         (event: CanvasPointerEvent, nodeId: string) => {
-            if (isInteractiveTarget(event.target)) return;
+            if (isInteractiveTarget(event.target, event)) return;
             if (displayNodesRef.current.find((node) => node.id === nodeId)?.type !== CanvasNodeType.Text) event.preventDefault();
             const additive = event.shiftKey || event.ctrlKey || event.metaKey;
             const nextSelection = new Set(selectedNodeIdsRef.current);
@@ -409,7 +426,7 @@ export function CanvasSurface({
     );
 
     const handlePointerDownCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-        if (event.button === 0 && !isInteractiveTarget(event.target)) event.currentTarget.focus({ preventScroll: true });
+        if (event.button === 0 && !isInteractiveTarget(event.target, event)) event.currentTarget.focus({ preventScroll: true });
         if (!temporaryPanRef.current || event.button !== 0 || event.pointerType === "touch") return;
         event.preventDefault();
         event.stopPropagation();
@@ -544,7 +561,7 @@ export function CanvasSurface({
 
     const handleWheel = useCallback(
         (event: React.WheelEvent<HTMLDivElement>) => {
-            if (isInteractiveTarget(event.target)) return;
+            if (isInteractiveTarget(event.target, event)) return;
             event.preventDefault();
             const pending = wheelFrameRef.current;
             wheelFrameRef.current = {
@@ -689,7 +706,7 @@ export function CanvasSurface({
                         const to = nodesById.get(item.toNodeId);
                         if (!from || !to) return null;
                         const active = selectedConnectionId === item.id || relatedConnectionIds.has(item.id);
-                        const path = edgePath(from, to);
+                        const path = connectionPaths.get(item.id) || edgePath(from, to);
                         return (
                             <g key={item.id} data-connection-id={item.id}>
                                 <path

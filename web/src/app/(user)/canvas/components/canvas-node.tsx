@@ -10,12 +10,20 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasNodeData, type Position } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
+import { isCanvasVideoControlPoint } from "../utils/canvas-surface-geometry";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
 
-function isInteractiveTarget(target: EventTarget | null) {
-    return target instanceof Element && Boolean(target.closest("button,input,textarea,select,video,audio,[data-canvas-no-drag]"));
+function isInteractiveTarget(target: EventTarget | null, event?: Pick<MouseEvent, "clientY">) {
+    if (!(target instanceof Element)) return false;
+    const video = target.closest("video");
+    if (video) {
+        const rect = video.getBoundingClientRect();
+        if (event && !isCanvasVideoControlPoint(rect, event.clientY)) return false;
+        return true;
+    }
+    return Boolean(target.closest("button,input,textarea,select,audio,[data-canvas-no-drag]"));
 }
 
 export type CanvasNodeProps = {
@@ -303,7 +311,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     };
 
     const activateTextEditorAfterClick = (event: React.MouseEvent | React.PointerEvent) => {
-        if (data.type !== CanvasNodeType.Text || isInteractiveTarget(event.target)) return;
+        if (data.type !== CanvasNodeType.Text || isInteractiveTarget(event.target, event)) return;
         const start = clickStartRef.current;
         if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 6 && !event.shiftKey && !event.ctrlKey && !event.metaKey) setIsEditingContent(true);
     };

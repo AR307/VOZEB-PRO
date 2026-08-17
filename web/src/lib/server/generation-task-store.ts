@@ -699,6 +699,33 @@ export async function countActiveStoredGenerationTasks(userId: string, type: Gen
     ).length;
 }
 
+export async function generationCapacityRetryAfterSeconds(userId: string, type: GenerationTaskType, staleMs: number, excludeTaskId?: string) {
+    const now = Date.now();
+    const activeAfter = now - staleMs;
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ retry_after_seconds?: string | number }>(
+            `SELECT CASE WHEN count(*) = 0 THEN NULL ELSE GREATEST(1, CEIL(EXTRACT(EPOCH FROM (
+                 MIN(CASE
+                     WHEN lease_until > now() THEN lease_until
+                     WHEN next_poll_at > now() THEN next_poll_at
+                     ELSE now()
+                 END) - now()
+             )))::integer END AS retry_after_seconds
+             FROM generation_tasks
+             WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running')
+               AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()${excludeTaskId ? " AND id <> $5" : ""}`,
+            [userId, type, new Date(activeAfter), ACTIVE_CONCURRENCY_PHASES, ...(excludeTaskId ? [excludeTaskId] : [])],
+        );
+        const seconds = Number(result.rows[0]?.retry_after_seconds);
+        return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : undefined;
+    }
+    const retryAt = (await readFileTasks())
+        .filter((task) => task.id !== excludeTaskId && task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && isActiveConcurrencyPhase(task.executionPhase) && task.updatedAt >= activeAfter && task.expiresAt > now)
+        .reduce((earliest, task) => Math.min(earliest, task.leaseUntil && task.leaseUntil > now ? task.leaseUntil : task.nextPollAt && task.nextPollAt > now ? task.nextPollAt : now), Number.POSITIVE_INFINITY);
+    return Number.isFinite(retryAt) ? Math.max(1, Math.ceil((retryAt - now) / 1000)) : undefined;
+}
+
 export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>, excludeTaskId?: string): Promise<T | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();

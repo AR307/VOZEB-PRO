@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     getStoredGenerationTaskByRequest: vi.fn(),
+    generationCapacityRetryAfterSeconds: vi.fn(),
     rate: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(),
 }));
@@ -14,6 +15,7 @@ vi.mock("@/lib/auth/store", () => ({
     refundUserPoints: vi.fn(),
 }));
 vi.mock("@/lib/server/generation-task-store", () => ({
+    generationCapacityRetryAfterSeconds: mocks.generationCapacityRetryAfterSeconds,
     getStoredGenerationTaskByRequest: mocks.getStoredGenerationTaskByRequest,
     linkStoredGenerationTask: vi.fn(),
     withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit,
@@ -29,6 +31,9 @@ import { maxDuration, POST } from "./route";
 describe("image task route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.getStoredGenerationTaskByRequest.mockResolvedValue(null);
+        mocks.rate.mockResolvedValue({ allowed: true, remaining: 1, resetAt: Date.now() + 60_000 });
+        mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { image: 1 } });
     });
 
     it("keeps background image submission alive past the five minute route default", () => {
@@ -61,5 +66,22 @@ describe("image task route", () => {
         expect(mocks.getAuthSettings).not.toHaveBeenCalled();
         expect(mocks.rate).not.toHaveBeenCalled();
         expect(mocks.withGenerationConcurrencyLimit).not.toHaveBeenCalled();
+    });
+
+    it("returns the active task scheduler retry time when image capacity is full", async () => {
+        mocks.withGenerationConcurrencyLimit.mockResolvedValue(null);
+        mocks.generationCapacityRetryAfterSeconds.mockResolvedValue(8);
+
+        const response = await POST(
+            new Request("http://localhost/api/image-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: "new image" }),
+            }),
+        );
+
+        expect(response.status).toBe(429);
+        expect(response.headers.get("retry-after")).toBe("8");
+        expect(mocks.generationCapacityRetryAfterSeconds).toHaveBeenCalledWith("user-one", "image", 10 * 60 * 1000);
     });
 });

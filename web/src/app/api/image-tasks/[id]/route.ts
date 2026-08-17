@@ -29,10 +29,6 @@ export async function GET(request: Request, context: RouteContext) {
     if (!task || (task.userId !== currentUser.id && currentUser.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
     const schedule = await getStoredGenerationTaskRecord("image", task.id);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
-    if (isRecoverableImageTask(task, executionPhase)) {
-        const origin = resolveInternalOrigin(new URL(request.url).origin);
-        after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin: requestPublicOrigin(request), cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id] }));
-    }
     const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundImageTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : currentUser;
@@ -54,10 +50,6 @@ export async function GET(request: Request, context: RouteContext) {
         },
         { headers: pointsResponseHeaders(refreshedUser) },
     );
-}
-
-function isRecoverableImageTask(task: NonNullable<Awaited<ReturnType<typeof getImageTask>>>, executionPhase: string) {
-    return ((task.status === "pending" || task.status === "running") && executionPhase !== "needs_review") || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"));
 }
 
 function settledExecutionPhase(status: string) {

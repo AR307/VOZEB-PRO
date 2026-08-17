@@ -136,6 +136,7 @@ export function CreativeComposer({
     const allMediaAttachments = attachments.filter((asset) => (asset.type === "image" || asset.type === "video") && Boolean(asset.serverUrl || asset.remoteUrl));
     const visibleAttachments = attachments.filter((asset) => !showVideoFrames || !frameAssetIds.has(asset.id));
     const mediaAttachments = visibleAttachments.filter((asset) => (asset.type === "image" || asset.type === "video") && Boolean(asset.serverUrl || asset.remoteUrl));
+    const inputMediaAttachments = compact ? allMediaAttachments.filter((asset) => !frameAssetIds.has(asset.id)) : mediaAttachments;
     const otherAttachments = visibleAttachments.filter((asset) => !mediaAttachments.some((media) => media.id === asset.id));
 
     useEffect(() => setReady(true), []);
@@ -268,86 +269,19 @@ export function CreativeComposer({
         </Popover>
     );
 
-    if (compact) {
-        return (
-            <div data-testid="creative-composer-compact-shell" className="pointer-events-auto mx-auto w-full max-w-[1036px] px-3 pb-3 transition-[max-width,padding] duration-200 sm:px-6 sm:pb-4">
-                <div
-                    data-ready={ready}
-                    data-compact="true"
-                    className="creative-composer flex min-h-[60px] items-center gap-2 rounded-[20px] border border-[#e2e6ea] bg-white p-2 shadow-[0_10px_35px_rgba(15,23,42,0.055)] transition-[border-radius,padding,box-shadow] duration-200 dark:border-[#30363e] dark:bg-[#181b20] dark:shadow-black/24"
-                    onClick={onExpand}
-                >
-                    <div className="hide-scrollbar flex max-w-[42%] shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden pl-1">
-                        {allMediaAttachments.map((asset) => (
-                            <ComposerMediaThumbnail key={asset.id} asset={asset} compact onRemove={onRemoveAttachment} />
-                        ))}
-                        <Tooltip title={allMediaAttachments.length ? "继续添加参考素材" : "添加素材"}>
-                            <Button
-                                type="text"
-                                className="!size-11 !min-w-11 !shrink-0 !rounded-xl !border !border-[#dedcff] !bg-[#f8f7ff] !text-[#5f61d8] hover:!border-[#cbc7ff] hover:!bg-[#f1efff] hover:!text-[#4f52c4] dark:!border-[#45416d] dark:!bg-[#29263d] dark:!text-[#aaa6ff] dark:hover:!border-[#5b558c] dark:hover:!bg-[#302d47] dark:hover:!text-white"
-                                icon={<Plus className="size-4" />}
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    onAttachment();
-                                }}
-                                loading={uploading}
-                                aria-label={allMediaAttachments.length ? "继续添加参考素材" : "添加素材"}
-                            />
-                        </Tooltip>
-                    </div>
-                    {composerInput(true)}
-                    <Tooltip title="引用当前对话资产">
-                        <Button
-                            type="text"
-                            className="!size-11 !min-w-11 !shrink-0 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white"
-                            icon={<AtSign className="size-4" />}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                openAssetMention();
-                            }}
-                            aria-label="引用当前对话资产"
-                        />
-                    </Tooltip>
-                    <Tooltip title="优化提示词">
-                        <Button
-                            type="text"
-                            className="!size-11 !min-w-11 !shrink-0 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] disabled:!bg-transparent disabled:!text-[#b3bac4] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white dark:disabled:!text-[#5f6873]"
-                            icon={<WandSparkles className="size-4" />}
-                            loading={optimizing}
-                            disabled={busy || !value.trim()}
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                onOptimize();
-                            }}
-                            aria-label={optimizing ? "正在优化提示词" : "优化提示词"}
-                        />
-                    </Tooltip>
-                    <Tooltip title={busy ? "停止生成" : "发送"}>
-                        <Button
-                            type="primary"
-                            shape="circle"
-                            className="!size-11 !min-w-11 !shrink-0 !border-0 !bg-[linear-gradient(135deg,#5968ff,#604dff)] !text-white !shadow-[0_6px_16px_rgba(89,104,255,0.22)] hover:!bg-[linear-gradient(135deg,#5261f3,#5846ee)] disabled:!bg-none disabled:!bg-[#e2e5e8] disabled:!text-[#aeb5bd] disabled:!shadow-none dark:disabled:!bg-[#30353c] dark:disabled:!text-[#68717d]"
-                            icon={busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
-                            disabled={!busy && !value.trim()}
-                            onClick={busy ? onCancel : onSubmit}
-                            aria-label={busy ? "停止生成" : "发送"}
-                        />
-                    </Tooltip>
-                </div>
-            </div>
-        );
-    }
-
     return (
-        <div className={cn("mx-auto w-full", centered ? "max-w-[1080px]" : "max-w-[1120px] px-3 pb-3 sm:px-6 sm:pb-5")}>
+        <div className={cn("pointer-events-auto mx-auto w-full overflow-hidden transition-[max-width,padding] duration-300", compact ? "max-w-[1036px] px-3 pb-3 sm:px-6 sm:pb-4" : centered ? "max-w-[1080px]" : "max-w-[1120px] px-3 pb-3 sm:px-6 sm:pb-5")}>
             <div
                 data-ready={ready}
-                data-compact="false"
-                className={cn("creative-composer border border-[#e2e6ea] bg-white shadow-[0_10px_32px_rgba(32,36,42,0.06)] dark:border-[#30363e] dark:bg-[#181b20] dark:shadow-black/24", centered ? "rounded-[22px] p-3 sm:p-4" : "rounded-2xl p-2.5")}
+                data-compact={compact ? "true" : "false"}
+                className={cn(
+                    "creative-composer border border-[#e2e6ea] bg-white shadow-[0_10px_32px_rgba(32,36,42,0.06)] transition-[border-radius,padding,box-shadow,min-height] duration-300 dark:border-[#30363e] dark:bg-[#181b20] dark:shadow-black/24",
+                    compact ? "min-h-[60px] rounded-[20px] p-2" : centered ? "rounded-[22px] p-3 sm:p-4" : "rounded-2xl p-2.5",
+                )}
+                onClick={compact ? onExpand : undefined}
             >
                 {selectedSkill || otherAttachments.length ? (
-                    <div className="flex gap-2 overflow-x-auto px-2 pb-1 pt-1">
+                    <div className={cn("flex gap-2 overflow-hidden px-2 pb-1 pt-1 transition-[max-height,opacity,transform] duration-300", compact ? "pointer-events-none max-h-0 -translate-y-2 p-0 opacity-0" : "max-h-20 opacity-100")}>
                         {selectedSkill ? (
                             <span className="flex h-9 max-w-60 shrink-0 items-center gap-2 rounded-lg border border-[#d6dee8] bg-[#f1f4f8] px-2.5 text-xs font-medium text-[#344152] shadow-[0_2px_8px_rgba(38,49,65,0.07)] dark:border-[#3b4653] dark:bg-[#252b33] dark:text-[#edf1f5] dark:shadow-black/20">
                                 <span className="grid size-5 shrink-0 place-items-center rounded-md bg-[#d3a44f]/16 text-[#95681d] dark:bg-[#e4bb70]/14 dark:text-[#e4bb70]">
@@ -384,7 +318,7 @@ export function CreativeComposer({
                         })}
                     </div>
                 ) : null}
-                <div data-testid="creative-composer-input-row" className={cn("flex min-w-0 items-start gap-2 sm:gap-3", centered ? "min-h-[112px]" : "min-h-[64px]")}>
+                <div data-testid="creative-composer-input-row" className={cn("flex min-w-0 items-center gap-2 transition-[min-height] duration-300 sm:gap-3", compact ? "min-h-[60px]" : centered ? "min-h-[112px] items-start" : "min-h-[64px] items-start")}>
                     <div className="hide-scrollbar flex max-w-[46%] shrink-0 items-start gap-1.5 overflow-x-auto px-1 pb-1 pt-1 sm:max-w-[320px]">
                         {showVideoFrames ? (
                             <CreativeVideoFrameControls
@@ -400,8 +334,8 @@ export function CreativeComposer({
                             />
                         ) : (
                             <>
-                                {mediaAttachments.map((asset) => {
-                                    return <ComposerMediaThumbnail key={asset.id} asset={asset} onRemove={onRemoveAttachment} />;
+                                {inputMediaAttachments.map((asset) => {
+                                    return <ComposerMediaThumbnail key={asset.id} asset={asset} compact={compact} onRemove={onRemoveAttachment} />;
                                 })}
                                 <Tooltip title={mediaAttachments.length ? "继续添加参考素材" : "添加素材"}>
                                     <Button
@@ -419,9 +353,53 @@ export function CreativeComposer({
                             </>
                         )}
                     </div>
-                    {composerInput(false)}
+                    {composerInput(compact)}
+                    {compact ? (
+                        <div className="flex shrink-0 items-center gap-1">
+                            <Tooltip title="引用当前对话资产">
+                                <Button
+                                    type="text"
+                                    className="!size-10 !min-w-10 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white"
+                                    icon={<AtSign className="size-4" />}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        openAssetMention();
+                                    }}
+                                    aria-label="引用当前对话资产"
+                                />
+                            </Tooltip>
+                            <Tooltip title="优化提示词">
+                                <Button
+                                    type="text"
+                                    className="!size-10 !min-w-10 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] disabled:!bg-transparent disabled:!text-[#b3bac4] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white"
+                                    icon={<WandSparkles className="size-4" />}
+                                    loading={optimizing}
+                                    disabled={busy || !value.trim()}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        onOptimize();
+                                    }}
+                                    aria-label={optimizing ? "正在优化提示词" : "优化提示词"}
+                                />
+                            </Tooltip>
+                            <Tooltip title={busy ? "停止生成" : "发送"}>
+                                <Button
+                                    type="primary"
+                                    shape="circle"
+                                    className="!size-10 !min-w-10 !border-0 !bg-[linear-gradient(135deg,#5968ff,#604dff)] !text-white !shadow-[0_6px_16px_rgba(89,104,255,0.22)] hover:!bg-[linear-gradient(135deg,#5261f3,#5846ee)] disabled:!bg-[#e2e5e8] disabled:!text-[#aeb5bd] disabled:!shadow-none dark:disabled:!bg-[#30353c] dark:disabled:!text-[#68717d]"
+                                    icon={busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
+                                    disabled={!busy && !value.trim()}
+                                    onClick={busy ? onCancel : onSubmit}
+                                    aria-label={busy ? "停止生成" : "发送"}
+                                />
+                            </Tooltip>
+                        </div>
+                    ) : null}
                 </div>
-                <div className="flex min-w-0 items-center gap-2 px-0.5 pb-0.5 pt-2">
+                <div
+                    className={cn("flex min-w-0 items-center gap-2 overflow-hidden px-0.5 pb-0.5 pt-2 transition-[max-height,opacity,transform] duration-300", compact ? "pointer-events-none max-h-0 -translate-y-2 p-0 opacity-0" : "max-h-20 opacity-100")}
+                >
                     <div className="hide-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto sm:gap-2">
                         <Popover
                             trigger="click"

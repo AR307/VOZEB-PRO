@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     getVideoTask: vi.fn(),
     linkStoredGenerationTask: vi.fn(),
     getStoredGenerationTaskByRequest: vi.fn(),
+    generationCapacityRetryAfterSeconds: vi.fn(),
     touchVideoTask: vi.fn(),
     transitionVideoTask: vi.fn(),
     updateVideoTask: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/lib/auth/store", () => {
 });
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi, resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 vi.mock("@/lib/server/generation-task-store", () => ({
+    generationCapacityRetryAfterSeconds: mocks.generationCapacityRetryAfterSeconds,
     withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit,
     linkStoredGenerationTask: mocks.linkStoredGenerationTask,
     getStoredGenerationTaskByRequest: mocks.getStoredGenerationTaskByRequest,
@@ -90,6 +92,7 @@ describe("video generation candidate failover", () => {
         mocks.fetchInternalApi.mockReset();
         resetChannelRuntimeHealth();
         mocks.getAuthSettings.mockResolvedValue(settings);
+        mocks.generationCapacityRetryAfterSeconds.mockResolvedValue(undefined);
         storedTask = undefined;
         mocks.createVideoTask.mockImplementation(async (input) => {
             storedTask = { ...input, id: "local-task", status: "running", createdAt: Date.now(), updatedAt: Date.now() };
@@ -131,6 +134,18 @@ describe("video generation candidate failover", () => {
         expect(mocks.getStoredGenerationTaskByRequest).toHaveBeenCalledWith("video", "user", "same-request", 2);
         expect(mocks.getAuthSettings).not.toHaveBeenCalled();
         expect(mocks.withGenerationConcurrencyLimit).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("returns the active task scheduler retry time when video capacity is full", async () => {
+        mocks.withGenerationConcurrencyLimit.mockResolvedValueOnce(null);
+        mocks.generationCapacityRetryAfterSeconds.mockResolvedValueOnce(9);
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(429);
+        expect(response.headers.get("retry-after")).toBe("9");
+        expect(mocks.generationCapacityRetryAfterSeconds).toHaveBeenCalledWith("user", "video", 30 * 60_000);
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 

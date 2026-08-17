@@ -23,6 +23,7 @@ import {
     getStoredGenerationTask,
     getStoredGenerationTaskByRequest,
     getStoredGenerationTaskByUpstream,
+    generationCapacityRetryAfterSeconds,
     generationTaskPointsCost,
     listStoredGenerationTaskRecordsByRunIds,
     listStoredGenerationTaskRecords,
@@ -133,6 +134,38 @@ describe("mutateStoredGenerationTask", () => {
 
         await expect(withGenerationConcurrencyLimit("user", "agent", 60_000, 1, async () => "retried", "agent-run")).resolves.toBe("retried");
         await expect(withGenerationConcurrencyLimit("user", "agent", 60_000, 1, async () => "other-run")).resolves.toBeNull();
+    });
+
+    it("derives capacity retry timing from the active task scheduler state", async () => {
+        const now = Date.now();
+        mocks.records = [
+            {
+                id: "image-running",
+                userId: "user",
+                type: "image",
+                status: "running",
+                executionPhase: "polling",
+                nextPollAt: now + 4_000,
+                payload: {},
+                createdAt: now,
+                updatedAt: now,
+                expiresAt: now + 60_000,
+            },
+        ];
+
+        await expect(generationCapacityRetryAfterSeconds("user", "image", 60_000)).resolves.toBeGreaterThanOrEqual(3);
+        await expect(generationCapacityRetryAfterSeconds("other", "image", 60_000)).resolves.toBeUndefined();
+    });
+
+    it("uses one scoped PostgreSQL aggregate for capacity retry timing", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [{ retry_after_seconds: 6 }], command: "SELECT", rowCount: 1, oid: 0, fields: [] });
+
+        await expect(generationCapacityRetryAfterSeconds("user", "video", 60_000)).resolves.toBe(6);
+        const [statement, params] = vi.mocked(postgresQuery).mock.calls[0];
+        expect(String(statement)).toContain("MIN(CASE");
+        expect(String(statement)).toContain("user_id = $1 AND task_type = $2");
+        expect(params).toEqual(["user", "video", expect.any(Date), expect.any(Array)]);
     });
 
     it("restores a safe review reason for a legacy uncertain submission", async () => {

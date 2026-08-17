@@ -28,7 +28,7 @@ describe("publicAgentRun", () => {
                     title: "视频",
                     type: "video",
                     model: "video-pro",
-                    prompt: "电影感海边日落运镜，人物动作自然流畅\n\n统一创作约束：\n内部执行提示词-secret",
+                    prompt: "电影感海边日落运镜，人物动作自然流畅\n\n以下为内部执行上下文，只用于理解连续创作关系和指代；当前用户需求优先：\n内部执行提示词-secret",
                     count: 1,
                     ratio: "16:9",
                     quality: "2160",
