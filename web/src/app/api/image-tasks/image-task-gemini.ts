@@ -1,4 +1,3 @@
-import { referenceRequestUrl } from "./image-task-reference-urls";
 import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
@@ -95,6 +94,7 @@ import {
     inlineRemoteImageResult,
     directRemoteImageResult,
     resolveProxiedMediaSource,
+    imageReferenceToDataUrl,
     shouldFallbackToJsonImageEdit,
     shouldTryNextImageResponseFormat,
     shouldRetryJsonImageEditPayload,
@@ -125,7 +125,8 @@ export async function runGeminiImageTask(task: ImageTask, origin: string, cookie
     if (task.mask) throw new GenerationSubmissionSafeFailure("Gemini 暂不支持蒙版编辑");
     const config = task.config;
     const parts: GeminiPart[] = [{ text: withSystemPrompt(config, buildImageReferencePromptText(task.prompt, task.references)) }];
-    task.references.forEach((reference) => parts.push(toGeminiImagePart(referenceRequestUrl(reference, origin), reference.type)));
+    const referenceDataUrls = await Promise.all(task.references.map((reference, index) => imageReferenceToDataUrl(reference, reference.name || `reference-${index + 1}.png`, origin, cookie)));
+    referenceDataUrls.forEach((dataUrl, index) => parts.push(toGeminiImagePart(dataUrl, task.references[index]?.type)));
     const response = await imageSubmissionFetch(config, `${geminiApiUrl(config, "generateContent", origin)}`, {
         method: "POST",
         headers: geminiHeaders(config, cookie, imagePointsIdempotencyKey(task)),

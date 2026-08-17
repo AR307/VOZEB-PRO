@@ -218,7 +218,7 @@ describe("OpenAI image provider over a live compatible fixture", () => {
         const task = liveImageTask(origin, {
             id: "image-gemini-edit-live",
             kind: "edit",
-            references: [{ name: "reference.png", type: "image/png", dataUrl: PNG_DATA_URL }],
+            references: [{ name: "reference.png", type: "image/png", dataUrl: "/media/fixture.png" }],
             config: {
                 baseUrl: origin,
                 apiKey: "fixture-key",
@@ -230,11 +230,12 @@ describe("OpenAI image provider over a live compatible fixture", () => {
         });
 
         try {
-            await expect(runGeminiImageTask(task, origin, "")).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
-            expect(fixture.requests).toHaveLength(1);
-            expect(fixture.requests[0]?.path).toBe("/v1beta/models/gemini-image:generateContent");
-            const body = JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}");
+            await expect(runGeminiImageTask(task, origin, "session=fixture")).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            expect(fixture.requests.map((request) => request.path)).toEqual(["/media/fixture.png", "/v1beta/models/gemini-image:generateContent"]);
+            expect(fixture.requests[0]?.headers.cookie).toBe("session=fixture");
+            const body = JSON.parse(fixture.requests[1]?.body.toString("utf8") || "{}");
             expect(body.contents[0].parts[1]).toEqual({ inlineData: { mimeType: "image/png", data: PNG_BASE64 } });
+            expect(body.contents[0].parts[1].fileData).toBeUndefined();
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }
