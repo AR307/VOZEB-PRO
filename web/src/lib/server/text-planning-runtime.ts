@@ -34,13 +34,17 @@ export type StructuredTextRequest = {
     messages: Array<{ role: string; content: string }>;
     tool: TextPlanningTool;
     headers?: HeadersInit;
+    fallbackHeaders?: HeadersInit;
     signal?: AbortSignal;
     allowNaturalLanguage?: boolean;
+    preferNativeTools?: boolean;
+    validateArguments?: (argumentsText: string) => boolean;
     onInvalidResponse?: (headers: Headers) => Promise<unknown>;
 };
 
 type ProtocolRequest = {
     protocol: TextPlanningProtocol;
+    variant: "json" | "tool";
     path: string;
     body: Record<string, unknown>;
     resultField?: string;
@@ -74,10 +78,18 @@ export function preferredTextPlanningProtocol(candidate: TextPlanningCandidate):
 
 export async function requestStructuredText(input: StructuredTextRequest): Promise<TextPlanningCall> {
     const startedAt = Date.now();
-    const request = planningProtocolRequest(input.candidate, planningMessages(input));
+    const messages = planningMessages(input);
+    const requests = planningProtocolRequests(input, messages);
     try {
-        const response = await requestTextProtocol(input, request);
-        return await readStructuredResponse(input, request, response, startedAt);
+        for (const [index, request] of requests.entries()) {
+            try {
+                const response = await requestTextProtocol(input, request);
+                return await readStructuredResponse(input, request, response, startedAt);
+            } catch (error) {
+                if (index === requests.length - 1 || !shouldFallbackFromNativeTool(error)) throw error;
+            }
+        }
+        throw new TextPlanningRequestError("模型没有返回所需的结构化结果", 502, false);
     } catch (error) {
         recordTextFailure(input.candidate, error);
         throw error;
@@ -93,28 +105,52 @@ export function resetTextPlanningRuntime() {
     states.clear();
 }
 
-function planningProtocolRequest(candidate: TextPlanningCandidate, messages: Array<{ role: string; content: string }>): ProtocolRequest {
+function planningProtocolRequests(input: StructuredTextRequest, messages: Array<{ role: string; content: string }>) {
+    const promptRequest = planningProtocolRequest(input.candidate, messages);
+    if (!input.preferNativeTools || promptRequest.protocol === "custom") return [promptRequest];
+    return [planningProtocolRequest(input.candidate, messages, input.tool), promptRequest];
+}
+
+function planningProtocolRequest(candidate: TextPlanningCandidate, messages: Array<{ role: string; content: string }>, tool?: TextPlanningTool): ProtocolRequest {
     const resolved = resolveTextProtocol({
         model: candidate.upstreamModel,
         apiFormat: candidate.channel.apiFormat,
         advancedConfig: candidate.channel.advancedConfig,
         throughSystemProxy: true,
     });
-    if (resolved.kind === "responses") return responsesRequest(candidate.upstreamModel, messages, resolved.path);
-    if (resolved.kind === "gemini") return geminiRequest(candidate.upstreamModel, resolved.path, messages);
+    if (resolved.kind === "responses") return responsesRequest(candidate.upstreamModel, messages, resolved.path, tool);
+    if (resolved.kind === "gemini") return geminiRequest(candidate.upstreamModel, resolved.path, messages, tool);
     if (resolved.kind === "custom") return customRequest(candidate.upstreamModel, resolved.path, resolved.requestTemplate!, resolved.resultField!, messages);
-    return chatRequest(candidate.upstreamModel, messages, resolved.path);
+    return chatRequest(candidate.upstreamModel, messages, resolved.path, tool);
 }
 
-function chatRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/chat/completions"): ProtocolRequest {
-    return { protocol: "chat", path, body: { model, messages } };
+function chatRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/chat/completions", tool?: TextPlanningTool): ProtocolRequest {
+    return {
+        protocol: "chat",
+        variant: tool ? "tool" : "json",
+        path,
+        body: {
+            model,
+            messages,
+            ...(tool ? { tools: [{ type: "function", function: tool }], tool_choice: { type: "function", function: { name: tool.name } } } : {}),
+        },
+    };
 }
 
-function responsesRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/responses"): ProtocolRequest {
-    return { protocol: "responses", path, body: { model, input: messages } };
+function responsesRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/responses", tool?: TextPlanningTool): ProtocolRequest {
+    return {
+        protocol: "responses",
+        variant: tool ? "tool" : "json",
+        path,
+        body: {
+            model,
+            input: messages,
+            ...(tool ? { tools: [{ type: "function", ...tool }], tool_choice: { type: "function", name: tool.name } } : {}),
+        },
+    };
 }
 
-function geminiRequest(model: string, configuredPath: string, messages: Array<{ role: string; content: string }>): ProtocolRequest {
+function geminiRequest(model: string, configuredPath: string, messages: Array<{ role: string; content: string }>, tool?: TextPlanningTool): ProtocolRequest {
     const systemText = messages
         .filter((message) => message.role === "system")
         .map((message) => message.content)
@@ -122,10 +158,12 @@ function geminiRequest(model: string, configuredPath: string, messages: Array<{ 
     const path = configuredPath || `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:generateContent`;
     return {
         protocol: "gemini",
+        variant: tool ? "tool" : "json",
         path,
         body: {
             contents: messages.filter((message) => message.role !== "system").map((message) => ({ role: message.role === "assistant" ? "model" : "user", parts: [{ text: message.content }] })),
             ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+            ...(tool ? { tools: [{ functionDeclarations: [tool] }], toolConfig: { functionCallingConfig: { mode: "ANY", allowedFunctionNames: [tool.name] } } } : {}),
         },
     };
 }
@@ -133,15 +171,15 @@ function geminiRequest(model: string, configuredPath: string, messages: Array<{ 
 function customRequest(model: string, configuredPath: string, requestTemplate: string, resultField: string, messages: Array<{ role: string; content: string }>): ProtocolRequest {
     const prompt = messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
     const values = { model, messages, prompt, input: prompt, text: prompt };
-    return { protocol: "custom", path: configuredPath, body: buildProviderRequest(requestTemplate, values, values), resultField };
+    return { protocol: "custom", variant: "json", path: configuredPath, body: buildProviderRequest(requestTemplate, values, values), resultField };
 }
 
 async function requestTextProtocol(input: StructuredTextRequest, request: ProtocolRequest) {
     const base = `${input.origin}/api/ai/system/${encodeURIComponent(input.candidate.channelId)}`;
-    const headers = new Headers(input.headers);
+    const headers = new Headers(request.variant === "json" && input.fallbackHeaders ? input.fallbackHeaders : input.headers);
     headers.set("content-type", "application/json");
     if (input.cookie) headers.set("cookie", input.cookie);
-    scopeProtocolIdempotency(headers, request.protocol);
+    scopeProtocolIdempotency(headers, request.protocol, request.variant);
     const timeoutSignal = AbortSignal.timeout(resolveModelRequestTimeoutMs(input.candidate, "text"));
     const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
     try {
@@ -152,10 +190,10 @@ async function requestTextProtocol(input: StructuredTextRequest, request: Protoc
     }
 }
 
-function scopeProtocolIdempotency(headers: Headers, protocol: TextPlanningProtocol) {
+function scopeProtocolIdempotency(headers: Headers, protocol: TextPlanningProtocol, variant: ProtocolRequest["variant"]) {
     for (const name of ["idempotency-key", "x-client-request-id"]) {
         const value = headers.get(name)?.trim();
-        if (value) headers.set(name, `${value}:${protocol}-json`);
+        if (value) headers.set(name, `${value}:${protocol}-${variant}`);
     }
 }
 
@@ -168,7 +206,7 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
     if (!payload) throw new TextPlanningRequestError("文本模型返回了无效 JSON");
     if (request.protocol === "custom" && isProviderBusinessError(payload)) throw new TextPlanningRequestError(readProviderError(payload) || "自定义文本协议返回失败");
     const argumentsText = readProtocolArguments(payload, input.tool.name, request, input.allowNaturalLanguage);
-    if (!argumentsText) {
+    if (!argumentsText || !validArguments(input, argumentsText)) {
         await input.onInvalidResponse?.(response.headers);
         throw new TextPlanningRequestError("模型没有返回所需的结构化结果", 502, false);
     }
@@ -196,9 +234,9 @@ function planningMessages(input: StructuredTextRequest) {
 function chatArguments(payload: Record<string, unknown>, toolName: string, allowNaturalLanguage: boolean) {
     const message = firstRecord(payload.choices)?.message as Record<string, unknown> | undefined;
     const call = records(message?.tool_calls).find((item) => record(item.function)?.name === toolName);
-    const argumentsText = record(call?.function)?.arguments;
-    if (typeof argumentsText === "string" && argumentsText.trim()) return argumentsText.trim();
-    const content = typeof message?.content === "string" ? message.content.trim() : "";
+    const argumentsText = jsonObjectArguments(record(call?.function)?.arguments);
+    if (argumentsText) return argumentsText;
+    const content = textContent(message?.content);
     if (content) return strictJsonObjectText(content) || (allowNaturalLanguage ? content : "");
     // Some compatible gateways wrap a Chat result as a Responses payload.
     return responsesArguments(payload, toolName, allowNaturalLanguage);
@@ -207,13 +245,13 @@ function chatArguments(payload: Record<string, unknown>, toolName: string, allow
 function responsesArguments(payload: Record<string, unknown>, toolName: string, allowNaturalLanguage: boolean) {
     const output = records(payload.output);
     const call = output.find((item) => item.type === "function_call" && item.name === toolName);
-    if (typeof call?.arguments === "string" && call.arguments.trim()) return call.arguments.trim();
+    const argumentsText = jsonObjectArguments(call?.arguments);
+    if (argumentsText) return argumentsText;
     const direct = typeof payload.output_text === "string" ? payload.output_text.trim() : "";
     const content =
         direct ||
         output
-            .flatMap((item) => records(item.content))
-            .map((item) => (typeof item.text === "string" ? item.text : ""))
+            .flatMap((item) => [typeof item.text === "string" ? item.text : "", ...records(item.content).map((content) => (typeof content.text === "string" ? content.text : ""))])
             .join("")
             .trim();
     return strictJsonObjectText(content) || (allowNaturalLanguage ? content : "");
@@ -301,8 +339,40 @@ function firstRecord(value: unknown) {
     return records(value)[0];
 }
 
+function jsonObjectArguments(value: unknown) {
+    if (typeof value === "string") return value.trim();
+    const object = record(value);
+    if (!object) return "";
+    try {
+        return JSON.stringify(object);
+    } catch {
+        return "";
+    }
+}
+
+function textContent(value: unknown) {
+    if (typeof value === "string") return value.trim();
+    return records(value)
+        .map((item) => (typeof item.text === "string" ? item.text : ""))
+        .join("")
+        .trim();
+}
+
+function validArguments(input: StructuredTextRequest, argumentsText: string) {
+    if (!input.validateArguments) return true;
+    try {
+        return input.validateArguments(argumentsText);
+    } catch {
+        return false;
+    }
+}
+
 function retryableStatus(status: number) {
     return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function shouldFallbackFromNativeTool(error: unknown) {
+    return error instanceof TextPlanningRequestError && (error.message === "模型没有返回所需的结构化结果" || error.status === 400 || error.status === 422);
 }
 
 function isTimeoutError(error: unknown) {

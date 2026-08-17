@@ -28,6 +28,70 @@ describe("text planning runtime protocol matrix", () => {
         expectBasicJsonMessages(requestBody());
     });
 
+    it("需要结构化结果时优先使用 Chat 原生函数工具", async () => {
+        mockedFetch.mockResolvedValue(
+            Response.json({
+                choices: [{ message: { tool_calls: [{ type: "function", function: { name: "make_plan", arguments: '{"result":"ok"}' } }] } }],
+            }),
+        );
+
+        const result = await requestStructuredText({ ...requestInput(candidate("newapi")), preferNativeTools: true });
+
+        expect(result.arguments).toBe('{"result":"ok"}');
+        expect(requestBody()).toMatchObject({
+            tools: [{ type: "function", function: tool }],
+            tool_choice: { type: "function", function: { name: "make_plan" } },
+        });
+    });
+
+    it("接受代理返回的对象型工具参数和 Chat 文本数组", async () => {
+        mockedFetch
+            .mockResolvedValueOnce(Response.json({ choices: [{ message: { tool_calls: [{ function: { name: "make_plan", arguments: { result: "object" } } }] } }] }))
+            .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: [{ type: "text", text: '{"result":"array"}' }] } }] }));
+
+        await expect(requestStructuredText(requestInput(candidate("newapi")))).resolves.toMatchObject({ arguments: '{"result":"object"}' });
+        await expect(requestStructuredText(requestInput(candidate("newapi")))).resolves.toMatchObject({ arguments: '{"result":"array"}' });
+    });
+
+    it("为 Responses 和 Gemini 发送各自的原生函数声明", async () => {
+        mockedFetch
+            .mockResolvedValueOnce(Response.json({ output: [{ type: "function_call", name: "make_plan", arguments: '{"result":"responses"}' }] }))
+            .mockResolvedValueOnce(Response.json({ candidates: [{ content: { parts: [{ functionCall: { name: "make_plan", args: { result: "gemini" } } }] } }] }));
+
+        await requestStructuredText({ ...requestInput(candidate("compatible", { createPath: "/responses" })), preferNativeTools: true });
+        expect(requestBody()).toMatchObject({ tools: [{ type: "function", name: "make_plan", parameters: tool.parameters }], tool_choice: { type: "function", name: "make_plan" } });
+
+        await requestStructuredText({ ...requestInput(candidate("compatible", { apiFormat: "gemini", createPath: "/models/:model:generateContent" })), preferNativeTools: true });
+        expect(requestBody()).toMatchObject({
+            tools: [{ functionDeclarations: [tool] }],
+            toolConfig: { functionCallingConfig: { mode: "ANY", allowedFunctionNames: ["make_plan"] } },
+        });
+    });
+
+    it("原生工具被代理忽略时退款无效响应并降级到严格 JSON 提示词", async () => {
+        const onInvalidResponse = vi.fn();
+        mockedFetch.mockResolvedValueOnce(Response.json({ choices: [{ message: { content: '{"script":"输入回显"}' } }] })).mockResolvedValueOnce(chatJsonResponse());
+
+        const result = await requestStructuredText({
+            ...requestInput(candidate("newapi")),
+            headers: { "idempotency-key": "planning-one", "x-vozeb-pro-points-idempotency-key": "billing-tool" },
+            fallbackHeaders: { "idempotency-key": "planning-one", "x-vozeb-pro-points-idempotency-key": "billing-json" },
+            preferNativeTools: true,
+            validateArguments: (argumentsText) => !("script" in JSON.parse(argumentsText)),
+            onInvalidResponse,
+        });
+
+        expect(result.arguments).toBe("{}");
+        expect(mockedFetch).toHaveBeenCalledTimes(2);
+        expect(JSON.parse(String(mockedFetch.mock.calls[0]?.[1]?.body))).toHaveProperty("tools");
+        expect(JSON.parse(String(mockedFetch.mock.calls[1]?.[1]?.body))).not.toHaveProperty("tools");
+        expect(new Headers(mockedFetch.mock.calls[0]?.[1]?.headers).get("idempotency-key")).toBe("planning-one:chat-tool");
+        expect(new Headers(mockedFetch.mock.calls[1]?.[1]?.headers).get("idempotency-key")).toBe("planning-one:chat-json");
+        expect(new Headers(mockedFetch.mock.calls[0]?.[1]?.headers).get("x-vozeb-pro-points-idempotency-key")).toBe("billing-tool");
+        expect(new Headers(mockedFetch.mock.calls[1]?.[1]?.headers).get("x-vozeb-pro-points-idempotency-key")).toBe("billing-json");
+        expect(onInvalidResponse).toHaveBeenCalledOnce();
+    });
+
     it("compatible 模型明确配置 Responses 时直接使用 Responses", async () => {
         mockedFetch.mockResolvedValue(Response.json({ output_text: "{}" }));
 

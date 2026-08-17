@@ -102,7 +102,8 @@ async function requestFunctionCall(
     tool: { name: string; description: string; parameters: Record<string, unknown> },
     idempotencyKey: string,
 ) {
-    const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, idempotencyKey, candidate.upstreamModel) };
+    const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, `${idempotencyKey}:tool`, candidate.upstreamModel) };
+    const fallbackHeaders = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, `${idempotencyKey}:json`, candidate.upstreamModel) };
     const call = await requestStructuredText({
         origin,
         cookie,
@@ -110,6 +111,9 @@ async function requestFunctionCall(
         messages,
         tool,
         headers,
+        fallbackHeaders,
+        preferNativeTools: true,
+        validateArguments: (argumentsText) => hasUsableDramaToolArguments(argumentsText, tool.name),
         onInvalidResponse: (responseHeaders) => refund(userId, billingModel, responseHeaders),
     });
     if (!hasUsableDramaToolArguments(call.arguments, tool.name)) {
