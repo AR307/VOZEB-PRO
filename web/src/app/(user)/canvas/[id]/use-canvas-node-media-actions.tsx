@@ -6,6 +6,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { getDataUrlByteSize } from "@/lib/image-utils";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalImageDownloadUrl, originalMediaDownloadUrl } from "@/lib/media-image-url";
+import { requestCanvasImageDecomposition } from "@/services/api/canvas-image-decomposition";
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { type UploadedImage } from "@/services/image-storage";
 import { defaultConfig } from "@/stores/use-config-store";
@@ -18,7 +19,7 @@ import { type CanvasImageSplitParams } from "../components/canvas-node-split-dia
 import { type CanvasImageUpscaleParams } from "../components/canvas-node-upscale-dialog";
 import { NODE_DEFAULT_SIZE } from "../constants";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasNodeData } from "../types";
-import { cropDataUrl, splitDataUrl, splitSubjectAndBackgroundDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
+import { buildCanvasImageDecompositionData, cropDataUrl, splitDataUrl, splitSubjectAndBackgroundDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
 import { downloadCanvasMediaBundle, selectedCanvasMediaNodes } from "../utils/canvas-media-download";
 import { fitNodeSize } from "../utils/canvas-node-size";
 
@@ -341,50 +342,71 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
             }
             const messageKey = `canvas-layers-${node.id}`;
             subjectOperationIdsRef.current.add(node.id);
-            message.loading({ key: messageKey, content: "正在识别主体并生成图层…", duration: 0 });
+            message.loading({ key: messageKey, content: "正在识别商品、文字和装饰元素…", duration: 0 });
             try {
-                const layers = await splitSubjectAndBackgroundDataUrl(node.metadata.content);
-                const [foregroundImage, maskImage] = await Promise.all([uploadCanvasImage(layers.foregroundBlob), uploadCanvasImage(layers.editMaskBlob)]);
+                const decomposition = await requestCanvasImageDecomposition({ requestId: nanoid(), source: node.metadata.content });
+                const layers = await buildCanvasImageDecompositionData(node.metadata.content, decomposition);
+                message.loading({ key: messageKey, content: `已识别 ${layers.layers.length} 个元素，正在生成独立图层…`, duration: 0 });
+                const [maskImage, uploadedLayers] = await Promise.all([
+                    uploadCanvasImage(layers.editMaskBlob),
+                    Promise.all(
+                        layers.layers.map(async (layer) => ({
+                            ...layer,
+                            image: await uploadCanvasImage(layer.blob),
+                        })),
+                    ),
+                ]);
                 const generationConfig = { ...baseConfig, size: `${layers.width}x${layers.height}` };
                 const source = canvasNodeReferenceImage(node);
-                const prompt = "移除主体并自然补全被遮挡的背景，保持原图背景、构图、光线、色彩和尺寸，除主体区域外不要修改。";
-                const foregroundId = nanoid();
+                const prompt = `移除蒙版覆盖的全部前景元素并自然补全被遮挡的背景，保持原图背景、构图、光线、色彩和尺寸，蒙版外不要修改。${decomposition.backgroundDescription ? `背景应延续：${decomposition.backgroundDescription}` : ""}`;
                 const backgroundId = nanoid();
                 const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
-                const children: CanvasNodeData[] = [
-                    {
-                        id: foregroundId,
+                const outputX = node.position.x + node.width + 96;
+                let outputY = node.position.y + node.height + 28;
+                const layerNodes = uploadedLayers.map(({ candidate, image, width, height }) => {
+                    const id = nanoid();
+                    const displaySize = fitNodeSize(width, height, node.width, node.height);
+                    const layerNode = {
+                        id,
                         type: CanvasNodeType.Image,
-                        title: `${node.title || "图片"} · 主体图层`,
-                        position: { x: node.position.x + node.width + 96, y: node.position.y },
-                        width: node.width,
-                        height: node.height,
-                        metadata: { ...imageMetadata(foregroundImage), prompt: node.metadata?.prompt, layerName: "主体", sourceLayerNodeId: node.id },
-                    },
-                    {
-                        id: backgroundId,
-                        type: CanvasNodeType.Image,
-                        title: `${node.title || "图片"} · 背景图层`,
-                        position: { x: node.position.x + node.width + 96, y: node.position.y + node.height + 28 },
-                        width: node.width,
-                        height: node.height,
+                        title: `${node.title || "图片"} · ${candidate.name}`,
+                        position: { x: outputX, y: outputY },
+                        ...displaySize,
                         metadata: {
-                            prompt,
-                            status: NODE_STATUS_LOADING,
-                            ...generationMetadata,
-                            layerName: "背景",
+                            ...imageMetadata(image),
+                            prompt: node.metadata?.prompt,
+                            layerName: candidate.name,
                             sourceLayerNodeId: node.id,
-                            imageEditMask: { storageKey: maskImage.storageKey, serverUrl: maskImage.serverUrl || maskImage.url, mimeType: maskImage.mimeType, width: maskImage.width, height: maskImage.height },
+                            imageLayer: { kind: candidate.kind, bbox: candidate.bbox, zIndex: candidate.zIndex, sourceWidth: decomposition.width, sourceHeight: decomposition.height },
                         },
+                    } satisfies CanvasNodeData;
+                    outputY += displaySize.height + 28;
+                    return layerNode;
+                });
+                const backgroundNode: CanvasNodeData = {
+                    id: backgroundId,
+                    type: CanvasNodeType.Image,
+                    title: `${node.title || "图片"} · 背景图层`,
+                    position: { x: outputX, y: node.position.y },
+                    width: node.width,
+                    height: node.height,
+                    metadata: {
+                        prompt,
+                        status: NODE_STATUS_LOADING,
+                        ...generationMetadata,
+                        layerName: "背景",
+                        sourceLayerNodeId: node.id,
+                        imageEditMask: { storageKey: maskImage.storageKey, serverUrl: maskImage.serverUrl || maskImage.url, mimeType: maskImage.mimeType, width: maskImage.width, height: maskImage.height },
                     },
-                ];
+                };
+                const children: CanvasNodeData[] = [backgroundNode, ...layerNodes];
                 setNodes((prev) => [...prev, ...children]);
                 setConnections((prev) => [...prev, ...children.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }))]);
-                setSelectedNodeIds(new Set([foregroundId, backgroundId]));
+                setSelectedNodeIds(new Set(children.map((child) => child.id)));
                 setSelectedConnectionId(null);
                 setDialogNodeId(backgroundId);
                 setRunningNodeId(backgroundId);
-                message.loading({ key: messageKey, content: "主体图层已完成，正在补全背景…", duration: 0 });
+                message.loading({ key: messageKey, content: `${layerNodes.length} 个元素图层已完成，正在补全背景…`, duration: 0 });
                 const controller = startGenerationRequest(backgroundId, node.id, backgroundId);
                 try {
                     await startAndCompleteImageTask(
@@ -404,7 +426,7 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
                         },
                         controller,
                     );
-                    message.success({ key: messageKey, content: "已生成主体和补全背景两个图层" });
+                    message.success({ key: messageKey, content: `已生成 ${layerNodes.length} 个元素图层和补全背景` });
                 } catch (error) {
                     if (isGenerationCanceled(error)) {
                         message.destroy(messageKey);

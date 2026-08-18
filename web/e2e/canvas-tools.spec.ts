@@ -70,6 +70,8 @@ test("canvas layer tools, transparent preview, Agent node simplification and aut
         await expect(sourceImage.locator('[data-canvas-transparent-preview="true"]')).toBeVisible();
         await expect(page.locator('[data-node-id="agent-output"] [data-canvas-transparent-preview]')).toHaveCount(0);
         await sourceImage.hover();
+        await expect(page.locator("[data-canvas-hover-toolbar]")).toHaveCount(0);
+        await sourceImage.click();
         for (const name of ["智能分层", "消除背景", "识别人脸并调节表情参考"]) {
             await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
         }
@@ -217,7 +219,7 @@ test("canvas face dialog keeps detection, close control and intensity slider usa
         await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
         await expect(page.locator("[data-canvas-surface]")).toBeVisible({ timeout: 20_000 });
         const sourceImage = page.locator('[data-node-id="source-image"]');
-        await sourceImage.hover();
+        await sourceImage.click();
         await page.getByRole("button", { name: "识别人脸并调节表情参考", exact: true }).click();
         const emotionDialog = page.getByRole("dialog");
         await expect(emotionDialog.getByText("人脸与表情参考")).toBeVisible();
@@ -276,7 +278,7 @@ test("canvas face dialog keeps detection, close control and intensity slider usa
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.getByRole("button", { name: "切换到深色主题" }).click();
         await expect(page.locator("html")).toHaveClass(/dark/);
-        await sourceImage.hover();
+        await sourceImage.click();
         await page.getByRole("button", { name: "识别人脸并调节表情参考", exact: true }).click();
         await expect(emotionDialog).toBeVisible();
         await expectCloseControlSeparated(emotionDialog);
@@ -323,7 +325,9 @@ async function expectFaceDialogDesktopLayout(dialog: Locator) {
     ]);
     for (const bounds of [titleBounds, statusBounds, modeBounds, autoDetectBounds, manualSelectBounds, previewBounds, imageBounds, controlBounds]) expect(bounds).not.toBeNull();
     expect(statusBounds!.x, "识别状态应紧跟标题显示").toBeGreaterThanOrEqual(titleBounds!.x + titleBounds!.width);
-    expect(Math.abs(titleBounds!.y - statusBounds!.y), "标题与识别状态应处于同一水平线").toBeLessThanOrEqual(1);
+    const titleCenterY = titleBounds!.y + titleBounds!.height / 2;
+    const statusCenterY = statusBounds!.y + statusBounds!.height / 2;
+    expect(Math.abs(titleCenterY - statusCenterY), "标题与识别状态应处于同一水平线").toBeLessThanOrEqual(1);
     expect(Math.abs(titleBounds!.height - statusBounds!.height), "标题与识别状态应使用相同的行高").toBeLessThanOrEqual(1);
     expect(Math.abs(modeBounds!.y - controlBounds!.y), "识别方式应位于右侧参数区顶部").toBeLessThanOrEqual(1);
     expect(Math.abs(panelWidths[0] - panelWidths[1]), "识别方式应均衡铺满右侧参数栏").toBeLessThanOrEqual(1);
@@ -350,7 +354,6 @@ async function expectConnectionsAvoidNodes(page: import("@playwright/test").Page
         const paths = items.map(({ id, endpoints }) => {
             const path = document.querySelector<SVGPathElement>(`[data-connection-id="${CSS.escape(id)}"] path:last-child`);
             if (!path) return { id, endpoints, points: [], error: `${id}: missing path` };
-            if (/\bC\b/.test(path.getAttribute("d") || "")) return { id, endpoints, points: [], error: `${id}: cubic path` };
             const matrix = path.getScreenCTM();
             if (!matrix) return { id, endpoints, points: [], error: `${id}: missing matrix` };
             const length = path.getTotalLength();

@@ -244,17 +244,78 @@ function selectedToolName(payload) {
     const explicit = tool?.name || tool?.function?.name || "";
     if (explicit) return explicit;
     const source = JSON.stringify(payload);
-    return ["create_agent_plan", "plan_workbench_action", "review_creative_outputs", "analyze_drama_content", "design_drama_visuals", "make_plan"].find((name) => source.includes(name)) || "";
+    return ["create_agent_plan", "plan_workbench_action", "review_creative_outputs", "analyze_drama_content", "design_drama_visuals", "decompose_ecommerce_image", "make_plan"].find((name) => source.includes(name)) || "";
 }
 
 function toolArguments(name, payload) {
+    if (name === "decompose_ecommerce_image") {
+        const { width, height } = imageRequestDimensions(payload);
+        return {
+            backgroundDescription: "协议夹具蓝色渐变背景",
+            layers: [
+                fixtureLayer("product", "商品组合", width * 0.2, height * 0.25, width * 0.52, height * 0.65, 3),
+                fixtureLayer("headline", "主标题", width * 0.05, height * 0.05, width * 0.55, height * 0.12, 5),
+                fixtureLayer("logo", "品牌 Logo", width * 0.8, height * 0.05, width * 0.15, height * 0.1, 7),
+                fixtureLayer("badge", "促销角标", width * 0.72, height * 0.25, width * 0.2, height * 0.18, 6),
+                fixtureLayer("decoration", "前景装饰", width * 0.03, height * 0.65, width * 0.18, height * 0.28, 1),
+            ],
+        };
+    }
     if (name === "create_agent_plan") {
+        const imageAndVideo = /图片.*视频|视频.*图片/.test(plannerRequestText(payload));
+        if (imageAndVideo) {
+            return {
+                intent: "generation",
+                objective: "验证 Agent 图片与视频完整生成链路",
+                audience: "协议测试用户",
+                reply: "已收到，我会生成一张图片和一段视频。",
+                decisions: [
+                    { label: "图片模型", value: "e2e-image", reason: "使用本地协议测试模型" },
+                    { label: "视频模型", value: "e2e-video", reason: "使用本地协议测试模型" },
+                ],
+                foundation: {
+                    complexity: "simple",
+                    brief: { objective: "验证 Agent 图片与视频完整生成链路" },
+                    direction: { summary: "清晰的蓝色横版测试画面" },
+                },
+                deliverables: [
+                    {
+                        id: "fixture-image",
+                        title: "协议测试图片",
+                        type: "image",
+                        model: "e2e-image",
+                        prompt: "内部协议图片执行提示：生成蓝色横版测试画面",
+                        count: 1,
+                        ratio: "16:9",
+                        quality: "high",
+                        dependencies: [],
+                    },
+                    {
+                        id: "fixture-video",
+                        title: "协议测试视频",
+                        type: "video",
+                        model: "e2e-video",
+                        prompt: "内部协议视频执行提示：镜头缓慢推进",
+                        count: 1,
+                        ratio: "16:9",
+                        quality: "720",
+                        seconds: 5,
+                        dependencies: [],
+                    },
+                ],
+            };
+        }
         return {
             intent: "generation",
             objective: "验证 Canvas Agent 稳定生成链路",
             audience: "协议测试用户",
             reply: "已收到，我会生成一张横版协议测试图片。",
             decisions: [{ label: "模型", value: "mock-image", reason: "使用本地协议测试模型" }],
+            foundation: {
+                complexity: "simple",
+                brief: { objective: "验证 Canvas Agent 稳定生成链路" },
+                direction: { summary: "清晰的蓝色横版测试画面" },
+            },
             deliverables: [{ id: "fixture-image", title: "协议测试图片", type: "image", model: "mock-image", prompt: "生成一张蓝色横版协议测试图片", count: 1, ratio: "16:9", quality: "high", dependencies: [] }],
         };
     }
@@ -325,6 +386,29 @@ function toolArguments(name, payload) {
         };
     }
     return {};
+}
+
+function plannerRequestText(payload) {
+    const messages = [...(Array.isArray(payload.input) ? payload.input : []), ...(Array.isArray(payload.messages) ? payload.messages : [])];
+    const userMessage = messages.findLast((message) => message?.role === "user");
+    const content = userMessage?.content ?? (typeof payload.input === "string" ? payload.input : "");
+    return typeof content === "string" ? content : JSON.stringify(content);
+}
+
+function imageRequestDimensions(payload) {
+    const match = plannerRequestText(payload).match(/(\d+)x(\d+)/i);
+    return { width: Math.max(1, Number(match?.[1]) || 1024), height: Math.max(1, Number(match?.[2]) || 1024) };
+}
+
+function fixtureLayer(kind, name, x, y, width, height, zIndex) {
+    return {
+        id: `${kind}-${zIndex}`,
+        kind,
+        name,
+        bbox: { x: Math.round(x), y: Math.round(y), width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) },
+        zIndex,
+        confidence: 0.95,
+    };
 }
 
 function firstShotId(payload) {

@@ -722,10 +722,10 @@ test("canvas remains operable with 2000 nodes and 5000 connections", async ({ pa
         await page.waitForTimeout(500);
         await expectCanvasSaved(page);
 
-        const saveStartedAt = Date.now();
         const firstNode = page.locator('[data-node-id="perf-node-0"]');
         const firstBounds = await firstNode.boundingBox();
         expect(firstBounds).not.toBeNull();
+        const saveStartedAt = Date.now();
         const patchRequest = page.waitForRequest((request) => request.method() === "PATCH" && new URL(request.url()).pathname === `/api/canvas/projects/${project.id}`);
         await page.mouse.move(firstBounds!.x + 80, firstBounds!.y + 16);
         await page.mouse.down();
@@ -807,6 +807,32 @@ test("canvas restores all nine node types and opens text editing on a single cli
         await expect(page.locator('[data-node-id="matrix-video"] video')).toBeVisible();
         await expect(page.locator('[data-node-id="matrix-audio"] audio')).toBeVisible();
         await expectNodeTheme("light");
+
+        const surface = page.locator("[data-canvas-surface]");
+        const imageNode = page.locator('[data-node-id="matrix-image"]');
+        const nodeToolbar = page.locator("[data-canvas-hover-toolbar]");
+        await imageNode.hover();
+        await expect(nodeToolbar).toHaveCount(0);
+        await imageNode.click({ position: { x: 48, y: 48 } });
+        await expect(nodeToolbar).toBeVisible();
+        await surface.click({ position: { x: 20, y: 20 } });
+        await expect(nodeToolbar).toHaveCount(0);
+
+        for (const item of [
+            { id: "matrix-panorama", x: 340 },
+            { id: "matrix-video", x: 40 },
+        ]) {
+            const movableNode = page.locator(`[data-node-id="${item.id}"]`);
+            const bounds = await movableNode.boundingBox();
+            expect(bounds).not.toBeNull();
+            const start = { x: bounds!.x + bounds!.width * 0.35, y: bounds!.y + bounds!.height * 0.35 };
+            await page.mouse.move(start.x, start.y);
+            await page.mouse.down();
+            await page.mouse.move(start.x + 64, start.y + 36, { steps: 6 });
+            await page.mouse.up();
+            await expect.poll(async () => (await readCanvasProject(request, `/api/canvas/projects/${project.id}`)).nodes.find((current) => current.id === item.id)?.position.x).toBeGreaterThan(item.x + 50);
+        }
+        await expectCanvasSaved(page);
 
         const textNode = page.locator('[data-node-id="matrix-text"]');
         await textNode.click({ position: { x: 50, y: 80 } });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applySubjectMaskToImageData } from "./canvas-image-data";
+import { applySubjectMaskToImageData, scaleLayerBox } from "./canvas-image-data";
 
 describe("Canvas 智能分层", () => {
     it("按语义蒙版保留浅色主体，不再根据主体与背景色差判断", () => {
@@ -26,5 +26,10 @@ describe("Canvas 智能分层", () => {
         expect(result.foreground[(4 - 1) * 4 + 3]).toBe(255);
         expect(result.foreground[1 * 4 + 3]).toBeGreaterThan(0);
         expect(result.foreground[1 * 4 + 3]).toBeLessThan(255);
+    });
+
+    it("按服务端原图坐标缩放电商元素边界且不裁掉边缘", () => {
+        expect(scaleLayerBox({ x: 101, y: 51, width: 199, height: 99 }, 1000, 500, 500, 250)).toEqual({ x: 50, y: 25, width: 100, height: 50 });
+        expect(scaleLayerBox({ x: 900, y: 450, width: 100, height: 50 }, 1000, 500, 333, 167)).toEqual({ x: 299, y: 150, width: 34, height: 17 });
     });
 });

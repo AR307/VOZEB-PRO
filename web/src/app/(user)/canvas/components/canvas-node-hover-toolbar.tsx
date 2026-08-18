@@ -16,7 +16,6 @@ type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
     viewport: ViewportTransform;
     onKeep: (nodeId: string) => void;
-    onLeave: () => void;
     onInfo: (node: CanvasNodeData) => void;
     onEditText: (node: CanvasNodeData) => void;
     onDecreaseFont: (node: CanvasNodeData) => void;
@@ -56,7 +55,6 @@ export function CanvasNodeHoverToolbar({
     node,
     viewport,
     onKeep,
-    onLeave,
     onInfo,
     onEditText,
     onDecreaseFont,
@@ -195,7 +193,6 @@ export function CanvasNodeHoverToolbar({
 
     const closeImageToolSettings = () => {
         setImageToolSettingsOpen(false);
-        onLeave();
     };
 
     const setDraftImageToolVisible = (id: ImageQuickToolId, visible: boolean) => {
@@ -222,9 +219,6 @@ export function CanvasNodeHoverToolbar({
                 className="hide-scrollbar absolute z-[70] flex h-10 max-w-[calc(100vw-32px)] items-center overflow-x-auto overflow-y-hidden rounded-xl border shadow-[0_7px_22px_rgba(15,23,42,.10)]"
                 style={{ left: toolbarLeft, top, transform: "translate(-50%, -100%)", background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}
                 onMouseEnter={() => onKeep(node.id)}
-                onMouseLeave={() => {
-                    if (!imageToolSettingsOpen) onLeave();
-                }}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
             >

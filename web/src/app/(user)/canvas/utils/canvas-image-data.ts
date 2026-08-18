@@ -1,5 +1,6 @@
 "use client";
 
+import type { CanvasImageDecomposition, CanvasImageLayerBox, CanvasImageLayerCandidate } from "@/lib/canvas-image-decomposition";
 import { renderCanvasSubjectLayers, type CanvasSubjectMask } from "./canvas-subject-segmentation";
 
 type ImageCropRect = {
@@ -16,6 +17,13 @@ export type CanvasImageLayerData = {
     height: number;
     foregroundPixels: number;
     backgroundPixels: number;
+};
+
+export type CanvasImageDecompositionData = {
+    width: number;
+    height: number;
+    editMaskBlob: Blob;
+    layers: Array<{ candidate: CanvasImageLayerCandidate; blob: Blob; width: number; height: number }>;
 };
 
 export type ImageUpscaleAlgorithm = "nearest" | "bilinear" | "high";
@@ -92,6 +100,36 @@ export async function splitSubjectAndBackgroundDataUrl(dataUrl: string, signal?:
     };
 }
 
+export async function buildCanvasImageDecompositionData(dataUrl: string, decomposition: CanvasImageDecomposition): Promise<CanvasImageDecompositionData> {
+    const image = await loadImage(dataUrl);
+    const boxes = decomposition.layers.map((candidate) => ({ candidate, box: scaleLayerBox(candidate.bbox, decomposition.width, decomposition.height, image.width, image.height) }));
+    const layers = await Promise.all(
+        boxes.map(async ({ candidate, box }) => ({
+            candidate,
+            blob: await drawCropBlob(image, box),
+            width: box.width,
+            height: box.height,
+        })),
+    );
+    const mask = document.createElement("canvas");
+    mask.width = image.width;
+    mask.height = image.height;
+    const context = mask.getContext("2d");
+    if (!context) throw new Error("浏览器不支持图片处理");
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, mask.width, mask.height);
+    boxes.forEach(({ box }) => context.clearRect(box.x, box.y, box.width, box.height));
+    return { width: image.width, height: image.height, editMaskBlob: await canvasBlob(mask), layers };
+}
+
+export function scaleLayerBox(box: CanvasImageLayerBox, sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number): CanvasImageLayerBox {
+    const left = Math.max(0, Math.floor((box.x / sourceWidth) * targetWidth));
+    const top = Math.max(0, Math.floor((box.y / sourceHeight) * targetHeight));
+    const right = Math.min(targetWidth, Math.ceil(((box.x + box.width) / sourceWidth) * targetWidth));
+    const bottom = Math.min(targetHeight, Math.ceil(((box.y + box.height) / sourceHeight) * targetHeight));
+    return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
+}
+
 export function applySubjectMaskToImageData(source: Pick<ImageData, "data" | "width" | "height">, subjectMask: CanvasSubjectMask) {
     if (source.width < 1 || source.height < 1 || source.data.length !== source.width * source.height * 4) throw new Error("源图片像素数据无效");
     if (subjectMask.width < 1 || subjectMask.height < 1 || subjectMask.data.length !== subjectMask.width * subjectMask.height) throw new Error("主体蒙版尺寸无效");
@@ -136,6 +174,16 @@ function drawCrop(image: HTMLImageElement, sx: number, sy: number, sw: number, s
     if (!context) return image.src;
     context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/png");
+}
+
+function drawCropBlob(image: HTMLImageElement, box: CanvasImageLayerBox) {
+    const canvas = document.createElement("canvas");
+    canvas.width = box.width;
+    canvas.height = box.height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("浏览器不支持图片处理");
+    context.drawImage(image, box.x, box.y, box.width, box.height, 0, 0, canvas.width, canvas.height);
+    return canvasBlob(canvas);
 }
 
 function drawStepUpscale(image: HTMLImageElement, width: number, height: number) {
@@ -203,5 +251,9 @@ function imageDataBlob(data: Uint8ClampedArray, width: number, height: number) {
     const pixels = new Uint8ClampedArray(data.length);
     pixels.set(data);
     context.putImageData(new ImageData(pixels, width, height), 0, 0);
+    return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("图片编码失败，无法生成图层"))), "image/png"));
+}
+
+function canvasBlob(canvas: HTMLCanvasElement) {
     return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("图片编码失败，无法生成图层"))), "image/png"));
 }

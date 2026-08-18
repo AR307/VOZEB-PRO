@@ -181,7 +181,6 @@ function VozebProCanvasPage() {
         completeAudioTask,
         getCanvasCenter,
         keepNodeToolbar,
-        hideNodeToolbar,
         connectNodes,
         createConnectedNode,
         cancelPendingConnectionCreate,
@@ -329,11 +328,9 @@ function VozebProCanvasPage() {
                         onHoverStart: (nodeId) => {
                             if (nodeDraggingRef.current) return;
                             setHoveredNodeId(nodeId);
-                            keepNodeToolbar(nodeId);
                         },
                         onHoverEnd: (nodeId) => {
                             setHoveredNodeId((current) => (current === nodeId ? null : current));
-                            hideNodeToolbar();
                         },
                         onContentChange: handleNodeContentChange,
                         onToggleBatch: toggleBatchExpanded,
@@ -343,6 +340,7 @@ function VozebProCanvasPage() {
                         onOpenPanel: (node) => {
                             setSelectedNodeIds(new Set([node.id]));
                             setSelectedConnectionId(null);
+                            setToolbarNodeId(node.id);
                             setDialogNodeId(node.id);
                         },
                         onImageDimensions: handleImageDimensions,
@@ -419,6 +417,7 @@ function VozebProCanvasPage() {
                     onSelectionChange={(nodeIds, connectionId) => {
                         setSelectedNodeIds(nodeIds);
                         setSelectedConnectionId(connectionId);
+                        setToolbarNodeId(nodeIds.size === 1 && !connectionId ? Array.from(nodeIds)[0] : null);
                         setContextMenu(null);
                     }}
                     onViewportCommit={(next) => {
@@ -448,6 +447,7 @@ function VozebProCanvasPage() {
                     onEdgeContextMenu={(event, id) => {
                         setSelectedConnectionId(id);
                         setSelectedNodeIds(new Set());
+                        setToolbarNodeId(null);
                         setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: id });
                     }}
                     onDrop={(event) => handleDrop(event as React.DragEvent<HTMLDivElement>)}
@@ -476,7 +476,6 @@ function VozebProCanvasPage() {
                     node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
                     onKeep={keepNodeToolbar}
-                    onLeave={hideNodeToolbar}
                     onInfo={(node) => setInfoNodeId(node.id)}
                     onEditText={openTextEditor}
                     onDecreaseFont={(node) => handleFontSizeChange(node.id, Math.max(10, (node.metadata?.fontSize || 14) - 2))}

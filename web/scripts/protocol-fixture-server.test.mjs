@@ -35,6 +35,37 @@ describe("protocol fixture server", () => {
             body: JSON.stringify({ tools: [{ type: "function", name: "create_agent_plan" }], tool_choice: { type: "function", name: "create_agent_plan" } }),
         }).then((value) => value.json());
         expect(JSON.parse(response.output[0].arguments)).toMatchObject({ intent: "generation", deliverables: [{ type: "image", model: "mock-image", ratio: "16:9" }] });
+
+        const combined = await fetch(`${origin}/v1/responses`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                input: "生成一张图片和一段视频",
+                tools: [{ type: "function", name: "create_agent_plan" }],
+                tool_choice: { type: "function", name: "create_agent_plan" },
+            }),
+        }).then((value) => value.json());
+        expect(JSON.parse(combined.output[0].arguments)).toMatchObject({
+            intent: "generation",
+            deliverables: [
+                { type: "image", model: "e2e-image", ratio: "16:9" },
+                { type: "video", model: "e2e-video", ratio: "16:9", seconds: 5 },
+            ],
+        });
+
+        const decomposition = await fetch(`${origin}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                messages: [{ role: "user", content: "请分析这张 1000x800 图片" }],
+                tools: [{ type: "function", function: { name: "decompose_ecommerce_image" } }],
+                tool_choice: { type: "function", function: { name: "decompose_ecommerce_image" } },
+            }),
+        }).then((value) => value.json());
+        expect(JSON.parse(decomposition.choices[0].message.tool_calls[0].function.arguments)).toMatchObject({
+            backgroundDescription: "协议夹具蓝色渐变背景",
+            layers: [{ kind: "product" }, { kind: "headline" }, { kind: "logo" }, { kind: "badge" }, { kind: "decoration" }],
+        });
     });
 
     it("serves OpenAI and Stable Diffusion image results", async () => {

@@ -1,3 +1,4 @@
+import type { CanvasImageLayerBox, CanvasImageLayerKind } from "@/lib/canvas-image-decomposition";
 import type { CreativeVideoReferenceMode, VideoReferenceRole } from "@/lib/video-reference-contract";
 
 export type Position = {
@@ -131,6 +132,13 @@ export type CanvasNodeMetadata = {
     layerName?: string;
     layerVisible?: boolean;
     sourceLayerNodeId?: string;
+    imageLayer?: {
+        kind: CanvasImageLayerKind;
+        bbox: CanvasImageLayerBox;
+        zIndex: number;
+        sourceWidth: number;
+        sourceHeight: number;
+    };
     imageEditMask?: {
         storageKey: string;
         serverUrl?: string;
