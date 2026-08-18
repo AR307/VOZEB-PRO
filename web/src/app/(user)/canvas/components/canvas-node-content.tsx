@@ -200,7 +200,10 @@ export function ReviewContent({ node, theme, onRetry }: Pick<NodeContentRenderer
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 overflow-hidden px-5 py-4 text-center">
             <Clock3 className="size-6 shrink-0" style={{ color: theme.node.warningText }} />
             <div className="max-h-[55%] max-w-[280px] overflow-y-auto text-xs leading-5" style={{ color: theme.node.text }}>
-                {node.metadata?.errorDetails || "任务创建结果待管理员确认，系统未重复提交。"}
+                <div className="font-medium" style={{ color: theme.node.warningText }}>
+                    等待管理员确认
+                </div>
+                <div className="mt-1">{node.metadata?.errorDetails || "任务创建结果尚未确认，系统不会重复提交。"}</div>
             </div>
             <button
                 type="button"
@@ -213,7 +216,7 @@ export function ReviewContent({ node, theme, onRetry }: Pick<NodeContentRenderer
                 onMouseDown={(event) => event.stopPropagation()}
             >
                 <RefreshCw className="size-3.5" />
-                检查状态
+                重新检查处理结果
             </button>
         </div>
     );

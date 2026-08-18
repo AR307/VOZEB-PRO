@@ -73,6 +73,9 @@ describe("publicAgentRun", () => {
             review: { mode: "visual", status: "needs_revision", summary: "secret", issues: [], retryTaskIds: [] },
             reviewed: true,
             cancellation: { requestedAt: 1, pendingChildTaskIds: ["child-secret"], lastError: "secret" },
+            failure: "internal-failure-secret",
+            failureStage: "planning",
+            candidateFailures: [{ channelId: "channel-failure-secret", upstreamModel: "model-failure-secret", error: "candidate-failure-secret" }],
             createdAt: 1,
             updatedAt: 2,
         });
@@ -95,6 +98,9 @@ describe("publicAgentRun", () => {
         expect(serialized).not.toContain("secret-skill-instructions");
         expect(serialized).not.toContain('"review"');
         expect(serialized).not.toContain('"result"');
+        expect(serialized).not.toContain("internal-failure-secret");
+        expect(serialized).not.toContain("channel-failure-secret");
+        expect(serialized).not.toContain("candidate-failure-secret");
     });
 
     it("removes review details and internal Canvas planning nodes from SSE events", () => {

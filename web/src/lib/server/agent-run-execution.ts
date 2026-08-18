@@ -1,9 +1,10 @@
 import { getAuthSettings, refundUserPoints, type LogicalModelCapability } from "@/lib/auth/store";
 import { withCreativeFoundation, type CreativeReview } from "@/lib/creative-agent-contract";
-import type { CreativeAsset, CreativeGenerationPreferences, CreativeSurface } from "@/lib/creative-runtime-contract";
+import { isCreativeAutoValue, type CreativeAsset, type CreativeGenerationPreferences, type CreativeSurface } from "@/lib/creative-runtime-contract";
 import { creativeAssetReferenceAliases } from "@/lib/creative-asset-references";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
-import { resolveLogicalModel } from "@/lib/server/logical-model-router";
+import { resolveLogicalModel, resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
+import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { reviewCreativeOutputs } from "@/lib/server/creative-review-service";
 import { requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
 import { registerAgentTaskAssets } from "@/lib/server/agent-run-assets";
@@ -169,10 +170,13 @@ export function normalizeTasks(
         referencedAssets.map((asset) => asset.id),
     );
     const configuredImageSize = agentSurfaceImageSize(surface, snapshot);
-    return plan.deliverables.map((item, index) => {
+    const tasks: AgentRunTask[] = plan.deliverables.map((item, index) => {
         const optimizedPrompt = item.prompt.trim();
         const preferredSize = item.type === "image" ? generationPreferences?.image?.size : item.type === "video" ? generationPreferences?.video?.size : undefined;
         const preferredQuality = item.type === "image" ? generationPreferences?.image?.quality : item.type === "video" ? generationPreferences?.video?.quality : undefined;
+        const smartQuality = isCreativeAutoValue(preferredQuality) || isCreativeAutoValue(item.quality);
+        const concretePreferredQuality = preferredQuality && !isCreativeAutoValue(preferredQuality) ? preferredQuality : undefined;
+        const concretePlannedQuality = item.quality && !isCreativeAutoValue(item.quality) ? item.quality.trim() : undefined;
         const targetNodeId = surface === "canvas" ? resolveCanvasTaskTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
         const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
         const canvasReferences = selectedCanvasReferences.filter((reference) => canvasReferenceSupportsTask(reference.type, item.type));
@@ -221,17 +225,16 @@ export function normalizeTasks(
             ratio: resolveAgentTaskRatio({
                 type: item.type,
                 requestedImageSize,
-                configuredImageSize: preferredSize || configuredImageSize,
+                configuredImageSize: preferredSize !== undefined ? preferredSize : configuredImageSize,
                 plannedRatio: item.ratio,
                 defaultSize: textDefault(defaults.size),
                 globalSize: ["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined,
                 reference: target || canvasReferences.find((reference) => reference.type === "image") || (selectedAssets[0]?.type === "image" ? selectedAssets[0] : undefined),
             }),
             quality:
-                preferredQuality ||
-                item.quality?.trim() ||
-                textDefault(item.type === "video" ? defaults.vquality : defaults.quality) ||
-                (item.type === "video" ? globalDefaults.videoQuality : item.type === "image" ? globalDefaults.imageQuality : undefined),
+                concretePreferredQuality ||
+                concretePlannedQuality ||
+                (!smartQuality ? textDefault(item.type === "video" ? defaults.vquality : defaults.quality) || (item.type === "video" ? globalDefaults.videoQuality : item.type === "image" ? globalDefaults.imageQuality : undefined) : "auto"),
             seconds: item.type === "video" && generationPreferences?.video?.seconds ? generationPreferences.video.seconds : resolveAgentVideoSeconds(item.type, item.seconds, defaults.videoSeconds, globalDefaults.videoSeconds),
             voice: item.type === "audio" ? generationPreferences?.audio?.voice || item.voice?.trim() || textDefault(defaults.voice) || globalDefaults.audioVoice : item.voice?.trim() || textDefault(defaults.voice),
             format: item.type === "audio" ? generationPreferences?.audio?.format || item.format?.trim() || textDefault(defaults.format) || globalDefaults.audioFormat : item.format?.trim() || textDefault(defaults.format),
@@ -243,6 +246,8 @@ export function normalizeTasks(
             attempts: 0,
         };
     });
+    tasks.forEach((task) => assertAgentTaskCapabilities(settings, task));
+    return tasks;
 }
 
 export function agentModelOptions(settings: Awaited<ReturnType<typeof getAuthSettings>>) {
@@ -254,8 +259,16 @@ export function agentModelOptions(settings: Awaited<ReturnType<typeof getAuthSet
         });
 }
 
-export function directAgentPlan(models: Array<ReturnType<typeof agentModelOptions>[number]>, prompt: string, assetIds: string[]): AgentPlan {
+type DirectAgentModelOption = {
+    id: string;
+    name: string;
+    capability: LogicalModelCapability;
+    capabilityProfile?: { maxBatchSize?: number };
+};
+
+export function directAgentPlan(models: DirectAgentModelOption[], prompt: string, assetIds: string[], preferences?: CreativeGenerationPreferences): AgentPlan {
     if (!models.length || models.some((model) => model.capability === "text")) throw new Error("当前模型不支持直接生成媒体");
+    const allocations = directModelAllocations(models, preferences);
     return {
         intent: "generation",
         objective: prompt,
@@ -266,17 +279,69 @@ export function directAgentPlan(models: Array<ReturnType<typeof agentModelOption
             brief: { objective: prompt, ...(assetIds.length ? { referenceStrategy: "使用已引用素材作为生成参考" } : {}) },
             direction: { summary: "严格执行用户当前描述和所选 Skill 约束" },
         },
-        deliverables: models.map((model, index) => ({
+        deliverables: allocations.map(({ model, count }, index) => ({
             id: `direct-model-task-${index + 1}`,
             title: `${model.name} 生成`,
             type: model.capability as "image" | "video" | "audio",
             model: model.id,
             prompt,
-            count: 1,
+            count,
             dependencies: [],
             assetIds,
         })),
     };
+}
+
+export function directGenerationPreferences(preferences?: CreativeGenerationPreferences): CreativeGenerationPreferences | undefined {
+    if (!preferences) return undefined;
+    return {
+        ...preferences,
+        ...(preferences.image ? { image: { ...preferences.image, count: undefined } } : {}),
+        ...(preferences.video ? { video: { ...preferences.video, count: undefined } } : {}),
+    };
+}
+
+function directModelAllocations(models: DirectAgentModelOption[], preferences?: CreativeGenerationPreferences) {
+    const counts = new Map<string, number>();
+    for (const capability of ["image", "video", "audio"] as const) {
+        const peers = models.filter((model) => model.capability === capability);
+        if (!peers.length) continue;
+        const requested = capability === "image" ? preferences?.image?.count : capability === "video" ? preferences?.video?.count : undefined;
+        let remaining = Math.max(requested || peers.length, peers.length) - peers.length;
+        peers.forEach((model) => counts.set(model.id, 1));
+        while (remaining > 0) {
+            const available = peers.filter((model) => !model.capabilityProfile?.maxBatchSize || (counts.get(model.id) || 0) < model.capabilityProfile.maxBatchSize);
+            if (!available.length) throw new Error("所选模型无法承载当前生成总数，请减少数量或调整模型");
+            const share = Math.max(1, Math.floor(remaining / available.length));
+            for (const model of available) {
+                if (!remaining) break;
+                const current = counts.get(model.id) || 0;
+                const capacity = model.capabilityProfile?.maxBatchSize ? model.capabilityProfile.maxBatchSize - current : remaining;
+                const added = Math.min(share, capacity, remaining);
+                counts.set(model.id, current + added);
+                remaining -= added;
+            }
+        }
+    }
+    return models.map((model) => ({ model, count: counts.get(model.id) || 1 }));
+}
+
+function assertAgentTaskCapabilities(settings: Awaited<ReturnType<typeof getAuthSettings>>, task: AgentRunTask) {
+    if (!task.model) return;
+    const candidates = resolveLogicalModelCandidates(settings, task.type, task.model);
+    const input = { capability: task.type, batchSize: task.count, durationSeconds: task.seconds, aspectRatio: task.ratio, resolution: task.quality } as const;
+    if (candidates.some((candidate) => allowsCapability(candidate.capabilityProfile, input))) return;
+    assertCapabilityConstraints(candidates[0]?.capabilityProfile, input);
+    throw new Error("当前模型没有支持所选生成参数的可用渠道");
+}
+
+function allowsCapability(profile: Parameters<typeof assertCapabilityConstraints>[0], input: Parameters<typeof assertCapabilityConstraints>[1]) {
+    try {
+        assertCapabilityConstraints(profile, input);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function defaultModel(settings: Awaited<ReturnType<typeof getAuthSettings>>, capability: LogicalModelCapability) {
@@ -406,7 +471,8 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                 );
                 return;
             }
-            await updateAgentRunById(runId, { status: "failed", executionId: undefined, tasks: terminalTasks }, { type: "run.failed", data: { message: agentRunFailureMessage(terminalTasks) } }, ["running"], executionId);
+            const failure = agentRunFailureMessage(terminalTasks);
+            await updateAgentRunById(runId, { status: "failed", executionId: undefined, tasks: terminalTasks, failure, failureStage: "task_execution" }, { type: "run.failed", data: { message: failure } }, ["running"], executionId);
             return;
         }
         const results = await Promise.all(ready.map((task) => runTaskWithRetry(runId, task, origin, cookie, executionId, settings)));

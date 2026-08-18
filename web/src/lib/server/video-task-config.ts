@@ -12,6 +12,7 @@ export function resolveVideoGenerationParameters(raw: Record<string, unknown>, d
 
 export function normalizeVideoSize(value: unknown, fallback = "16:9") {
     const textValue = text(value);
+    if (textValue.toLowerCase() === "auto") return "auto";
     const dimensions = parseImageDimensions(textValue);
     if (dimensions) return `${dimensions.width}x${dimensions.height}`;
     return normalizeVideoAspectRatio(textValue, fallback);

@@ -47,6 +47,7 @@ import type { AdminDashboardState, UserEditorValue } from "./use-admin-dashboard
 
 export function useAdminDashboardDataActions({ state }: { state: AdminDashboardState }) {
     const settingsSaveCountRef = useRef(0);
+    const cdkRequestIdRef = useRef(0);
     const {
         currentUser,
         message,
@@ -538,6 +539,8 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     };
 
     const loadCdkCodes = async (override?: { page?: number; keyword?: string; filter?: typeof cdkFilter }) => {
+        const requestId = cdkRequestIdRef.current + 1;
+        cdkRequestIdRef.current = requestId;
         setCdkLoading(true);
         try {
             const nextPage = override?.page ?? cdkPage;
@@ -558,15 +561,16 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
                 error?: string;
             };
             if (!response.ok || !payload.codes) throw new Error(payload.error || "加载 CDK 失败");
+            if (requestId !== cdkRequestIdRef.current) return;
             setCdkCodes(payload.codes);
             setCdkTotal(payload.total || 0);
             setCdkStats(payload.stats || { total: 0, redeemed: 0, unused: 0, expired: 0 });
             if (payload.page && payload.page !== cdkPage) setCdkPage(payload.page);
             setSelectedCdkIds((current) => current.filter((id) => payload.codes!.some((code) => code.id === id)));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "加载 CDK 失败");
+            if (requestId === cdkRequestIdRef.current) message.error(error instanceof Error ? error.message : "加载 CDK 失败");
         } finally {
-            setCdkLoading(false);
+            if (requestId === cdkRequestIdRef.current) setCdkLoading(false);
         }
     };
 

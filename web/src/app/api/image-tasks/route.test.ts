@@ -1,13 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+    after: vi.fn(),
     getAuthSettings: vi.fn(),
     getStoredGenerationTaskByRequest: vi.fn(),
     generationCapacityRetryAfterSeconds: vi.fn(),
     rate: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(),
+    createImageTask: vi.fn(),
 }));
 
+vi.mock("next/server", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("next/server")>();
+    return { ...actual, after: mocks.after };
+});
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one", role: "user" })) }));
 vi.mock("@/lib/auth/store", () => ({
     getAuthSettings: mocks.getAuthSettings,
@@ -25,6 +31,15 @@ vi.mock("@/lib/server/security", () => ({
     rateLimitHeaders: vi.fn(() => ({})),
 }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
+vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: vi.fn() }));
+vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: vi.fn() }));
+vi.mock("@/lib/server/image-task-store", () => ({
+    createImageTask: mocks.createImageTask,
+    getImageTask: vi.fn(),
+    touchImageTask: vi.fn(),
+    transitionImageTask: vi.fn(),
+    updateImageTask: vi.fn(),
+}));
 
 import { maxDuration, POST } from "./route";
 
@@ -83,5 +98,66 @@ describe("image task route", () => {
         expect(response.status).toBe(429);
         expect(response.headers.get("retry-after")).toBe("8");
         expect(mocks.generationCapacityRetryAfterSeconds).toHaveBeenCalledWith("user-one", "image", 10 * 60 * 1000);
+    });
+
+    it("rejects unsupported ratio and resolution before creating an image task", async () => {
+        mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
+        mocks.getAuthSettings.mockResolvedValue({
+            generationConcurrency: { image: 1 },
+            generationDefaults: { imageSize: "1:1", imageQuality: "low" },
+            systemChannels: [{ id: "image-channel", name: "图片", enabled: true, baseUrl: "https://image.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["upstream-image"] }],
+            logicalModels: [
+                {
+                    id: "image",
+                    name: "图片",
+                    capability: "image",
+                    enabled: true,
+                    bindings: [{ id: "binding", channelId: "image-channel", upstreamModel: "upstream-image", enabled: true, priority: 1, capabilityProfile: { aspectRatios: ["9:16"], resolutions: ["2K"] } }],
+                },
+            ],
+            defaultModels: { imageModel: "image" },
+        });
+
+        const response = await POST(
+            new Request("http://localhost/api/image-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ config: { model: "image", size: "1:1", quality: "low" }, prompt: "竖版海报" }),
+            }),
+        );
+
+        expect(response.status).toBe(400);
+        expect(mocks.createImageTask).not.toHaveBeenCalled();
+    });
+
+    it("accepts intelligent ratio and quality without replacing them with fixed model options", async () => {
+        mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
+        mocks.getAuthSettings.mockResolvedValue({
+            generationConcurrency: { image: 1 },
+            generationDefaults: { imageSize: "1:1", imageQuality: "low" },
+            systemChannels: [{ id: "image-channel", name: "图片", enabled: true, baseUrl: "https://image.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["upstream-image"] }],
+            logicalModels: [
+                {
+                    id: "image",
+                    name: "图片",
+                    capability: "image",
+                    enabled: true,
+                    bindings: [{ id: "binding", channelId: "image-channel", upstreamModel: "upstream-image", enabled: true, priority: 1, capabilityProfile: { aspectRatios: ["9:16"], resolutions: ["2K"] } }],
+                },
+            ],
+            defaultModels: { imageModel: "image" },
+        });
+        mocks.createImageTask.mockImplementation(async (input) => ({ ...input, id: "image-task", status: "pending" }));
+
+        const response = await POST(
+            new Request("http://localhost/api/image-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ config: { model: "image", size: "auto", quality: "auto" }, prompt: "智能构图" }),
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.createImageTask).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ size: "auto", quality: "auto" }) }));
     });
 });

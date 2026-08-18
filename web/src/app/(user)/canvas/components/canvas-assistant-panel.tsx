@@ -24,6 +24,7 @@ import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessag
 import { useCanvasAgentAttachments } from "./use-canvas-agent-attachments";
 import { useCanvasAgentMessageScroll } from "./use-canvas-agent-message-scroll";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "./canvas-agent-panel-motion";
+import { reconcileCreativeGenerationPreferences } from "@/lib/creative-model-capabilities";
 import { clearCanvasAssistantRun, findCanvasAssistantRunSession, patchCanvasAssistantRun, setCanvasAssistantRun, type CanvasAssistantRunState, type CanvasAssistantRunStates } from "./canvas-assistant-run-state";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasAssistantMessage, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "../types";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
@@ -446,6 +447,12 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
             }
             const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id];
             setSmartPlanning(next.length === 0);
+            setGenerationPreferences((preferences) =>
+                reconcileCreativeGenerationPreferences(
+                    preferences,
+                    models.filter((option) => next.includes(option.id)),
+                ),
+            );
             return next;
         });
     };
@@ -693,7 +700,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
                                 models={models}
                                 selectedModels={selectedModels}
                                 smartPlanning={smartPlanning}
-                                middle={<CanvasAgentGenerationSettings preferences={generationPreferences} onChange={setGenerationPreferences} />}
+                                middle={<CanvasAgentGenerationSettings preferences={generationPreferences} models={selectedModels} onChange={setGenerationPreferences} />}
                                 onSelectSkill={(skill) => setSelectedSkillId(skill.id)}
                                 onToggleModel={toggleModel}
                                 onClearModels={enableSmartPlanning}

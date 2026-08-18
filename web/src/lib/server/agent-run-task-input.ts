@@ -1,5 +1,6 @@
 import type { AuthSettings } from "@/lib/auth/store";
 import { typedReferenceAliases } from "@/lib/creative-asset-references";
+import { isCreativeAutoValue } from "@/lib/creative-runtime-contract";
 import { closestImageAspectRatio, normalizeImageSizeValue, parseImageDimensions } from "@/lib/image-size";
 import type { AgentRun, AgentRunReference, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
@@ -94,11 +95,16 @@ export function resolveAgentTaskRatio(input: {
     reference?: Pick<CanvasTaskReferenceNode, "type" | "width" | "height" | "size">;
 }) {
     if (input.type !== "image" && input.type !== "video") return input.plannedRatio?.trim() || input.defaultSize?.trim() || input.globalSize?.trim() || undefined;
-    const explicit = normalizeImageSizeValue(input.requestedImageSize);
-    const configured = normalizeImageSizeValue(input.configuredImageSize);
+    const explicitValue = normalizeImageSizeValue(input.requestedImageSize);
+    const configuredValue = normalizeImageSizeValue(input.configuredImageSize);
+    const smart = isCreativeAutoValue(explicitValue) || isCreativeAutoValue(configuredValue);
+    const explicit = isCreativeAutoValue(explicitValue) ? "" : explicitValue;
+    const configured = isCreativeAutoValue(configuredValue) ? "" : configuredValue;
     const custom = parseImageDimensions(configured) ? configured : "";
     const reference = input.reference?.type === "image" ? normalizeImageSizeValue(input.reference.size) || closestImageAspectRatio(input.reference.width, input.reference.height) : "";
-    return explicit || custom || reference || configured || normalizeImageSizeValue(input.plannedRatio) || normalizeImageSizeValue(input.defaultSize) || normalizeImageSizeValue(input.globalSize) || "auto";
+    const planned = normalizeImageSizeValue(input.plannedRatio);
+    const fallback = smart ? "auto" : normalizeImageSizeValue(input.defaultSize) || normalizeImageSizeValue(input.globalSize) || "auto";
+    return explicit || custom || reference || configured || (isCreativeAutoValue(planned) ? "" : planned) || fallback;
 }
 
 export function agentSurfaceImageSize(surface: AgentRun["surface"], snapshot: unknown) {

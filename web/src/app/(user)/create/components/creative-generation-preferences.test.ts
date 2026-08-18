@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { normalizePositiveInteger, normalizePositiveNumber, normalizeVideoQuality } from "@/components/creative-generation-preference-fields";
-import { generationPreferenceSummary, normalizeGenerationCount } from "@/components/creative-generation-preferences";
+import { generationPreferenceSummary, generationRatioOptions, generationResolutionOptions, normalizeGenerationCount } from "@/components/creative-generation-preferences";
 
 describe("generationPreferenceSummary", () => {
     it("keeps image, video and audio settings readable in one compact label", () => {
@@ -28,6 +28,11 @@ describe("generationPreferenceSummary", () => {
         expect(normalizePositiveInteger(1.5)).toBe(0);
         expect(normalizePositiveNumber(8)).toBe(8);
         expect(normalizePositiveNumber(0)).toBe(0);
+    });
+
+    it("keeps intelligent ratio and quality available when a model declares fixed capabilities", () => {
+        expect(generationRatioOptions("image", { aspectRatios: ["9:16"] }).map((option) => option.value)).toEqual(["auto", "9:16"]);
+        expect(generationResolutionOptions("video", { resolutions: ["1080P"] }).map((option) => option.value)).toEqual(["auto", "1080P"]);
     });
 
     it("exposes the same positive custom pixel editor for images and videos", async () => {

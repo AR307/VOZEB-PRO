@@ -76,6 +76,36 @@ describe("audio API service", () => {
         expect(result.url).toBe("/api/reference-assets/resumed-audio");
     });
 
+    it("preserves drama episode, shot, and cost context when creating the task", async () => {
+        const fetchMock = vi.fn().mockResolvedValueOnce(json({ task: { id: "task-drama", status: "pending", model: "voice" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createAudioGenerationTask(config, "短剧台词", {
+            source: "drama",
+            surface: "drama",
+            projectId: "drama-one",
+            episodeId: "episode-one",
+            shotId: "shot-one",
+            estimatedPoints: 1.5,
+            attemptNo: 2,
+            clientRequestId: "drama-audio:one",
+        });
+        const createBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+
+        expect(createBody).toMatchObject({
+            source: "drama",
+            context: {
+                surface: "drama",
+                projectId: "drama-one",
+                episodeId: "episode-one",
+                shotId: "shot-one",
+                estimatedPoints: 1.5,
+                attemptNo: 2,
+                clientRequestId: "drama-audio:one",
+            },
+        });
+    });
+
     it("stops polling when the upstream submission needs manual review", async () => {
         const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "audio-review", status: "running", model: "voice", needsReview: true, reviewReason: "音频提交结果无法确认" } }));
         vi.stubGlobal("fetch", fetchMock);

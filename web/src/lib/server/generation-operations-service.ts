@@ -44,6 +44,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
     const config = object(payload.config);
     const upstream = object(payload.upstream);
     const plannerAudit = agentPlannerAudit(payload.plannerAudit);
+    const agentFailure = record.type === "agent" ? agentFailureSummary(payload) : undefined;
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(object) : [];
     const failedTask = tasks.find((task) => task.status === "failed" && text(task.id));
     const model = firstText(plannerAudit?.logicalModelId, payload.logicalModelId, payload.model, config.model, config.imageModel, config.videoModel, config.audioModel, upstream.model, tasks.find((task) => text(task.model))?.model);
@@ -87,17 +88,34 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         lastUpstreamStatus: record.lastUpstreamStatus,
         attempts: generationAttempts(payload.attempts),
         prompt: firstText(payload.prompt, config.prompt, tasks.find((task) => text(task.prompt))?.prompt).slice(0, 500),
-        error: firstText(payload.error, tasks.find((task) => text(task.error))?.error, resolveGenerationReviewReason(record)).slice(0, 1000) || undefined,
+        error: firstText(agentFailure?.message, payload.error, tasks.find((task) => text(task.error))?.error, resolveGenerationReviewReason(record)).slice(0, 1000) || undefined,
         durationMs: Math.max(0, record.updatedAt - record.createdAt),
         pointsCost,
         pointsBreakdown,
         plannerAudit,
+        agentFailure,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         canCancel: record.status === "pending" || record.status === "running" || record.status === "paused",
         retryTaskId: record.type === "agent" ? text(failedTask?.id) || undefined : undefined,
         canReview: record.executionPhase === "needs_review" && (record.type === "text" || record.type === "image" || record.type === "video" || record.type === "audio"),
     };
+}
+
+function agentFailureSummary(payload: Record<string, unknown>): AdminGenerationTask["agentFailure"] {
+    const message = text(payload.failure).slice(0, 1000);
+    const stage = payload.failureStage === "planning" || payload.failureStage === "task_execution" || payload.failureStage === "refund" ? payload.failureStage : undefined;
+    if (!message || !stage) return undefined;
+    const candidates = Array.isArray(payload.candidateFailures)
+        ? payload.candidateFailures.slice(0, 12).flatMap((value) => {
+              const candidate = object(value);
+              const channelId = text(candidate.channelId);
+              const upstreamModel = text(candidate.upstreamModel);
+              const error = text(candidate.error).slice(0, 500);
+              return channelId && upstreamModel && error ? [{ channelId, upstreamModel, error }] : [];
+          })
+        : [];
+    return { stage, message, candidates };
 }
 
 export function isGenerationLeaseExpired(record: Pick<StoredGenerationTaskRecord, "status" | "leaseUntil">, now = Date.now()) {

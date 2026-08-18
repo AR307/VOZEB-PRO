@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { CREATIVE_UPLOAD_ACCEPT, CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { CreateOverviewAsset } from "@/lib/create-workbench-overview";
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences, CreativeMessage } from "@/lib/creative-runtime-contract";
+import { reconcileCreativeGenerationPreferences } from "@/lib/creative-model-capabilities";
 import { cn } from "@/lib/utils";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
@@ -324,6 +325,12 @@ export default function CreatePage() {
         setSelectedModelIds((current) => {
             const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id];
             setSmartPlanning(next.length === 0);
+            setGenerationPreferences((preferences) =>
+                reconcileCreativeGenerationPreferences(
+                    preferences,
+                    modelOptions.filter((option) => next.includes(option.id)),
+                ),
+            );
             return next;
         });
         window.requestAnimationFrame(() => inputRef.current?.focus());

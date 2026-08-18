@@ -99,6 +99,7 @@ describe("GlobalAiOpc image task paths", () => {
         expect(imageRequestAspectRatio("1824x1024")).toBe("16:9");
         expect(imageRequestAspectRatio("1024x1536")).toBe("2:3");
         expect(imageRequestAspectRatio("9:16")).toBe("9:16");
+        expect(imageRequestAspectRatio("auto")).toBeUndefined();
     });
 
     it("uses the configured create and result endpoints instead of OpenAI defaults", async () => {

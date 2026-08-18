@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef } from "react";
 
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { isImageGenerationTaskDeferredError } from "@/services/api/image";
@@ -16,6 +16,8 @@ import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
 
 export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPageState; tasks: CanvasTaskRuntime }) {
     const skipInitialProjectSyncRef = useRef(false);
+    const videoRetryTimersRef = useRef(new Map<string, number>());
+    const [videoRetryNonce, triggerVideoRetry] = useReducer((value: number) => value + 1, 0);
     const {
         message,
         modal,
@@ -147,11 +149,23 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
     const deferVideoTask = useCallback(
         (nodeId: string) => {
             setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
-            window.setTimeout(() => {
-                setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask && item.metadata.status === NODE_STATUS_LOADING ? { ...item, metadata: { ...item.metadata } } : item)));
+            const existing = videoRetryTimersRef.current.get(nodeId);
+            if (existing) window.clearTimeout(existing);
+            const timer = window.setTimeout(() => {
+                videoRetryTimersRef.current.delete(nodeId);
+                triggerVideoRetry();
             }, 15_000);
+            videoRetryTimersRef.current.set(nodeId, timer);
         },
         [setNodes],
+    );
+
+    useEffect(
+        () => () => {
+            videoRetryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+            videoRetryTimersRef.current.clear();
+        },
+        [],
     );
 
     useEffect(() => {
@@ -162,7 +176,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         if (!userId) return;
         let cancelled = false;
         setProjectLoaded(false);
-        void loadProject(projectId)
+        void loadProject(projectId, true)
             .then((project) => {
                 const restoredNodes = prepareCanvasImages(project.nodes).map(normalizeCanvasConfigNodeLayout);
                 const restoredSessions = prepareAssistantImages(project.chatSessions || []);
@@ -270,7 +284,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     setRunningNodeId((current) => (current === node.id ? null : current));
                 });
         });
-    }, [completeVideoTask, deferVideoTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
+    }, [completeVideoTask, deferVideoTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest, videoRetryNonce]);
 
     useEffect(() => {
         if (!projectLoaded) return;

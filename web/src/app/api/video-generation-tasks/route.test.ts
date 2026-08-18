@@ -149,6 +149,46 @@ describe("video generation candidate failover", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
+    it("rejects unsupported video parameters before task creation or upstream submission", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: settings.logicalModels[0].bindings.map((binding) => ({ ...binding, capabilityProfile: { aspectRatios: ["9:16"], resolutions: ["1080"], durationSeconds: [8] } })),
+                },
+            ],
+        });
+
+        const response = await POST(request({ model: "video", size: "1:1", vquality: "720", videoSeconds: "6" }));
+
+        expect(response.status).toBe(400);
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("accepts intelligent video parameters and omits fixed ratio and resolution upstream", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: settings.logicalModels[0].bindings.map((binding) => ({ ...binding, capabilityProfile: { aspectRatios: ["9:16"], resolutions: ["1080"] } })),
+                },
+            ],
+        });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "smart-video", status: "queued" }));
+
+        const response = await POST(request({ model: "video", size: "auto", vquality: "auto", videoSeconds: "5" }));
+        const upstreamBody = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0] as [string, RequestInit])[1].body));
+
+        expect(response.status).toBe(200);
+        expect(upstreamBody).not.toHaveProperty("ratio");
+        expect(upstreamBody).not.toHaveProperty("aspect_ratio");
+        expect(upstreamBody).not.toHaveProperty("resolution");
+        expect(upstreamBody).not.toHaveProperty("quality");
+    });
+
     it("does not retry another binding after an ambiguous 2xx response", async () => {
         mocks.fetchInternalApi.mockResolvedValue(new Response("not-json", { status: 200 }));
 
@@ -377,6 +417,13 @@ describe("video generation candidate failover", () => {
         expect(body.get("seconds")).toBe("5");
         expect(body.get("size")).toBe("1280x720");
         expect(body.get("input_reference")).toBeInstanceOf(File);
+
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-openai-auto", status: "queued" }));
+        const intelligentResponse = await POST(request({ model: "video", videoSeconds: "5", size: "auto", vquality: "auto" }));
+        const intelligentBody = (mocks.fetchInternalApi.mock.calls[1] as [string, RequestInit])[1].body as FormData;
+
+        expect(intelligentResponse.status).toBe(200);
+        expect(intelligentBody.get("size")).toBeNull();
     });
 
     it("persists the Drama project, episode and shot task context", async () => {

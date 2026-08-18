@@ -16,6 +16,7 @@ import { applyModelProtocol, channelProtocolDefinition, channelProtocolOptions, 
 
 const protocolOptions = channelProtocolOptions().map(({ value, label }) => ({ value, label }));
 const ALL_GLOBAL_AIOPC_PRESETS = "__all_globalaiopc_presets__";
+const IMAGE_TEMPLATE_VARIABLE_HELP = "图片动态变量：{{ratio}} / {{aspect_ratio}}、{{size}}、{{resolution}} / {{quality}}、{{width}} / {{height}}、{{n}} / {{count}} / {{num_images}} / {{batch_size}}";
 const modelCapabilityOptions: Array<{ label: string; value: LogicalModelCapability }> = [
     { label: "文本", value: "text" },
     { label: "图片", value: "image" },
@@ -336,6 +337,7 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                                     <LabeledControl label="请求字段模板">
                                         <Input.TextArea value={advanced.requestTemplate} rows={3} placeholder='{"model":"{{model}}","prompt":"{{prompt}}"}' onChange={(event) => updateAdvanced({ requestTemplate: event.target.value })} />
                                     </LabeledControl>
+                                    {detectedCapabilities.has("image") ? <div className="mt-1 text-[11px] leading-5 text-stone-500 dark:text-stone-400">{IMAGE_TEMPLATE_VARIABLE_HELP}</div> : null}
                                 </div>
                                 <div className="md:col-span-2">
                                     <LabeledControl label="参考素材规则">
@@ -520,6 +522,7 @@ function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: Syst
                                         onChange={(event) => update({ requestTemplate: event.target.value })}
                                     />
                                 </LabeledControl>
+                                {config.capability === "image" ? <div className="mt-1 text-[11px] leading-5 text-stone-500 dark:text-stone-400">{IMAGE_TEMPLATE_VARIABLE_HELP}</div> : null}
                             </div>
                             <div className="sm:col-span-2 flex flex-wrap gap-4 text-xs text-stone-600 dark:text-stone-300">
                                 <Checkbox disabled={definition.strict} checked={config.supportsReferenceImage === true} onChange={(event) => update({ supportsReferenceImage: event.target.checked })}>

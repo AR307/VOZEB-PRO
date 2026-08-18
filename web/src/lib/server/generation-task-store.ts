@@ -726,17 +726,39 @@ export async function generationCapacityRetryAfterSeconds(userId: string, type: 
     return Number.isFinite(retryAt) ? Math.max(1, Math.ceil((retryAt - now) / 1000)) : undefined;
 }
 
-export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>, excludeTaskId?: string): Promise<T | null> {
+export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>, excludeTaskId?: string, requestId?: string): Promise<T | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        return withPostgresTransaction(async (client) => {
+        const reservationId = requestId?.trim() || `reservation:${crypto.randomUUID()}`;
+        const admitted = await withPostgresTransaction(async (client) => {
             await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [userId, type]);
+            await client.query("DELETE FROM generation_concurrency_reservations WHERE expires_at <= now()");
+            const duplicate = await client.query("SELECT 1 FROM generation_concurrency_reservations WHERE user_id = $1 AND task_type = $2 AND request_id = $3 AND expires_at > now()", [userId, type, reservationId]);
+            if (duplicate.rows.length) return false;
             const result = await client.query<{ total: string | number }>(
-                `SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()${excludeTaskId ? " AND id <> $5" : ""}`,
+                `SELECT
+                    (SELECT count(*) FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()${excludeTaskId ? " AND id <> $5" : ""})
+                    +
+                    (SELECT count(*) FROM generation_concurrency_reservations AS reservation
+                     WHERE reservation.user_id = $1 AND reservation.task_type = $2 AND reservation.expires_at > now()
+                       AND NOT EXISTS (
+                           SELECT 1 FROM generation_tasks AS task
+                           WHERE task.user_id = reservation.user_id AND task.task_type = reservation.task_type
+                             AND task.client_request_id = reservation.request_id AND task.status IN ('pending', 'running')
+                             AND task.execution_phase = ANY($4::text[]) AND task.updated_at >= $3 AND task.expires_at > now()
+                       )) AS total`,
                 [userId, type, new Date(Date.now() - staleMs), ACTIVE_CONCURRENCY_PHASES, ...(excludeTaskId ? [excludeTaskId] : [])],
             );
-            return Number(result.rows[0]?.total || 0) >= limit ? null : handler();
+            if (Number(result.rows[0]?.total || 0) >= limit) return false;
+            await client.query("INSERT INTO generation_concurrency_reservations (user_id, task_type, request_id, expires_at) VALUES ($1, $2, $3, $4)", [userId, type, reservationId, new Date(Date.now() + staleMs)]);
+            return true;
         });
+        if (!admitted) return null;
+        try {
+            return await handler();
+        } finally {
+            await postgresQuery("DELETE FROM generation_concurrency_reservations WHERE user_id = $1 AND task_type = $2 AND request_id = $3", [userId, type, reservationId]);
+        }
     }
 
     const key = `${userId}:${type}`;

@@ -141,6 +141,44 @@ describe("generation operations aggregation", () => {
         });
     });
 
+    it("exposes compact persisted Agent failure diagnostics only to generation operations", async () => {
+        mocks.listStoredGenerationTaskRecords.mockResolvedValue({
+            items: [
+                {
+                    ...task(),
+                    payload: {
+                        ...task().payload,
+                        failure: "全部规划渠道不可用",
+                        failureStage: "planning",
+                        candidateFailures: [
+                            { channelId: "channel-one", upstreamModel: "planner-a", error: "鉴权失败" },
+                            { channelId: "channel-two", upstreamModel: "planner-b", error: "请求超时" },
+                        ],
+                    },
+                },
+            ],
+            all: [],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            summary: { total: 1, active: 0, success: 0, failed: 1, averageDurationMs: 0, totalPointsCost: 0, byType: { agent: 1 }, byStatus: { error: 1 } },
+        });
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+
+        expect(result.items[0]).toMatchObject({
+            error: "全部规划渠道不可用",
+            agentFailure: {
+                stage: "planning",
+                message: "全部规划渠道不可用",
+                candidates: [
+                    { channelId: "channel-one", upstreamModel: "planner-a", error: "鉴权失败" },
+                    { channelId: "channel-two", upstreamModel: "planner-b", error: "请求超时" },
+                ],
+            },
+        });
+    });
+
     it("shows the persisted review reason when a task has no terminal error", async () => {
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
             items: [{ ...task(), type: "image", status: "running", executionPhase: "needs_review", payload: { config: { model: "image-model" } }, resultPayload: { reviewReason: "生成渠道暂时无法连接，请稍后重试或联系管理员。" } }],

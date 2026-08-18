@@ -7,7 +7,7 @@ import { agentPlannerSystemPrompt, agentPlanReply, buildAgentPlannerInput, conve
 import { getCreativeAssetsByIds, getCreativeConversationContext, listRecentCreativeMediaAssets } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { parseAgentPlanCall, type AgentFunctionCallResult } from "./agent-function-call";
-import { agentModelOptions, agentPlanFallbackExample, agentPlanTool, canContinue, directAgentPlan, executeTasks, normalizeTasks, planToOps, refundFunctionCall, requestFunctionCall } from "./agent-run-execution";
+import { agentModelOptions, agentPlanFallbackExample, agentPlanTool, canContinue, directAgentPlan, directGenerationPreferences, executeTasks, normalizeTasks, planToOps, refundFunctionCall, requestFunctionCall } from "./agent-run-execution";
 import { isExplicitProjectHandoffRequest, normalizeAgentProjectHandoff } from "./agent-run-project-handoff";
 import { normalizeCanvasPlanForSelection } from "./agent-run-task-input";
 import { GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
@@ -30,6 +30,8 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
     const executionId = nanoid();
     let acceptedPlan: { userId: string; model: string; channelId: string; upstreamModel: string; call: AgentFunctionCallResult } | undefined;
     let planningPersisted = false;
+    let failureStage: NonNullable<AgentRun["failureStage"]> = run.tasks.length ? "task_execution" : "planning";
+    const candidateFailures: NonNullable<AgentRun["candidateFailures"]> = [];
     const refundAcceptedPlan = async () => {
         if (!acceptedPlan || planningPersisted) return;
         await refundFunctionCall(acceptedPlan.userId, acceptedPlan.model, acceptedPlan.call);
@@ -45,6 +47,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         );
         if (!claimed) return;
         if (claimed.tasks.length) {
+            failureStage = "task_execution";
             const settings = await getAuthSettings();
             await executeTasks(run.id, origin, cookie, executionId, settings);
             return;
@@ -67,9 +70,9 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             const directModelOptions = claimed.generationPreferences?.mode ? availableModels : allModels;
             const selectedModels = claimed.requestedModelIds.map((id) => directModelOptions.find((item) => item.id === id && item.capability !== "text")).filter((item): item is ReturnType<typeof agentModelOptions>[number] => Boolean(item));
             if (selectedModels.length !== claimed.requestedModelIds.length) throw new Error("部分所选模型当前不可用，请重新选择");
-            const plan = directAgentPlan(selectedModels, claimed.prompt, claimed.referencedAssetIds);
+            const plan = directAgentPlan(selectedModels, claimed.prompt, claimed.referencedAssetIds, claimed.generationPreferences);
             const tasks = withDirectAgentExecutionContext(
-                normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize, claimed.generationPreferences),
+                normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize, directGenerationPreferences(claimed.generationPreferences)),
                 claimed.surface,
                 claimed.snapshot,
                 conversationContext,
@@ -131,6 +134,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 if (controller.signal.aborted) throw error;
                 if (error instanceof GenerationSubmissionUncertainError) throw error;
                 latestPlanningError = error;
+                candidateFailures.push({ channelId: candidate.channel.id, upstreamModel: candidate.upstreamModel, error: toSafeGenerationErrorMessage(error, "规划渠道调用失败") });
             }
         }
         if (!plan) throw latestPlanningError instanceof Error ? latestPlanningError : new Error("没有可用的文本模型渠道");
@@ -188,6 +192,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             return;
         }
         planningPersisted = true;
+        failureStage = "task_execution";
         await executeTasks(run.id, origin, cookie, executionId, settings);
     } catch (error) {
         let failure = error;
@@ -196,12 +201,20 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         } catch (refundError) {
             console.error("Agent planning refund failed", refundError instanceof Error ? refundError.message : refundError);
             failure = refundError;
+            failureStage = "refund";
         }
         const latest = await getAgentRun(run.id);
         if (latest && !["paused", "cancelled"].includes(latest.status))
             await updateAgentRunById(
                 run.id,
-                { status: "failed", executionId: undefined, timings: { ...(latest.timings || { requestAcceptedAt: latest.createdAt }), runCompletedAt: Date.now() } },
+                {
+                    status: "failed",
+                    executionId: undefined,
+                    failure: toSafeGenerationErrorMessage(failure, "Agent 执行失败"),
+                    failureStage,
+                    candidateFailures: candidateFailures.length ? candidateFailures : undefined,
+                    timings: { ...(latest.timings || { requestAcceptedAt: latest.createdAt }), runCompletedAt: Date.now() },
+                },
                 { type: "run.failed", data: { message: toSafeGenerationErrorMessage(failure, "Agent 执行失败") } },
                 ["planning", "running"],
                 executionId,

@@ -93,7 +93,9 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             expect(fixture.requests[0]?.headers.authorization).toBe("Bearer fixture-key");
             expect(fixture.requests[0]?.headers["idempotency-key"]).toBe("image-task:image-global-live:attempt:1");
             const body = JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}");
-            expect(body).toMatchObject({ model: "gpt-image-2", prompt: "create a blue protocol test image", resolution: "2k" });
+            expect(body).toMatchObject({ model: "gpt-image-2", prompt: "create a blue protocol test image" });
+            expect(body).not.toHaveProperty("ratio");
+            expect(body).not.toHaveProperty("resolution");
 
             const { pollOpenAiImageTask } = await import("./image-task-support");
             const result = await pollOpenAiImageTask(task.config, submitted.pending!.id, origin, origin, "", "", true);
@@ -301,6 +303,54 @@ describe("OpenAI image provider over a live compatible fixture", () => {
         try {
             await expect(runCustomImageTask(task, "", "", "", true)).resolves.toMatchObject({ dataUrl: expect.any(String) });
             expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toMatchObject({ resolution: expectedResolution });
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("maps custom relay image ratio, resolution, dimensions and per-task count aliases", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-custom-relay-parameters",
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "midjourney-proxy",
+                channelId: "fixture-custom-relay",
+                size: "9:16",
+                quality: "2K",
+                advancedConfig: {
+                    ...emptyAdvancedConfig(),
+                    protocol: "custom",
+                    createPath: "/custom/images",
+                    requestTemplate:
+                        '{"model":"{{model}}","prompt":"{{prompt}}","ratio":"{{ratio}}","aspect_ratio":"{{aspect_ratio}}","size":"{{size}}","resolution":"{{resolution}}","quality":"{{quality}}","width":"{{width}}","height":"{{height}}","n":"{{n}}","count":"{{count}}","num_images":"{{num_images}}","batch_size":"{{batch_size}}"}',
+                    resultField: "data.image_url",
+                },
+            },
+        });
+
+        try {
+            await expect(runCustomImageTask(task, "", "", "", true)).resolves.toMatchObject({ dataUrl: expect.any(String) });
+            const body = JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}");
+            expect(body).toMatchObject({
+                ratio: "9:16",
+                aspect_ratio: "9:16",
+                size: "1024x1824",
+                resolution: "2K",
+                quality: "2K",
+                width: 1024,
+                height: 1824,
+                n: 1,
+                count: 1,
+                num_images: 1,
+                batch_size: 1,
+            });
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }

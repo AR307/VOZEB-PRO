@@ -209,7 +209,7 @@ async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOr
                 quality,
                 size: requestSize,
                 ratio,
-                resolution: quality === "high" ? "4k" : quality === "low" ? "1k" : "2k",
+                resolution: quality === "high" ? "4k" : quality === "medium" ? "2k" : quality === "low" ? "1k" : undefined,
                 imageUrls,
             }),
         ),

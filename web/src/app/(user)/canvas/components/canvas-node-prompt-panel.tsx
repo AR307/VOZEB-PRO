@@ -18,6 +18,7 @@ import { CanvasCameraControl } from "./canvas-camera-control";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasGenerationMode, type CanvasNodeData } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 import { buildCanvasNodeConfig, canvasAudioConfigPatch, canvasVideoConfigPatch } from "../utils/canvas-node-config";
+import { canvasModelConfigPatch } from "../utils/canvas-model-capabilities";
 import { PANORAMA_IMAGE_SIZE } from "../utils/canvas-panorama";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -126,7 +127,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <CanvasPromptLibrary onSelect={updatePrompt} />
                     {mode === "image" ? (
                         <>
-                            <ModelPicker className="min-w-[9rem] flex-1" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} />
+                            <ModelPicker
+                                className="min-w-[9rem] flex-1"
+                                config={config}
+                                value={config.model}
+                                onChange={(model) => onConfigChange(node.id, canvasModelConfigPatch(config, model, "image"))}
+                                capability="image"
+                                onMissingConfig={() => openConfigDialog(true)}
+                            />
                             <CanvasImageSettingsPopover
                                 config={config}
                                 placement="topLeft"
@@ -145,7 +153,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         </>
                     ) : mode === "video" ? (
                         <>
-                            <ModelPicker className="min-w-[9rem] flex-1" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} />
+                            <ModelPicker
+                                className="min-w-[9rem] flex-1"
+                                config={config}
+                                value={config.model}
+                                onChange={(model) => onConfigChange(node.id, canvasModelConfigPatch(config, model, "video"))}
+                                capability="video"
+                                onMissingConfig={() => openConfigDialog(true)}
+                            />
                             <CanvasVideoSettingsPopover
                                 config={config}
                                 metadata={node.metadata}

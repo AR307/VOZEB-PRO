@@ -44,12 +44,16 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         model: config.model,
         prompt: withSystemPrompt(config, task.prompt),
         size,
+        ratio: imageRequestAspectRatio(config.size || "auto"),
         aspect_ratio: imageRequestAspectRatio(config.size || "auto"),
         resolution: advanced.protocol === "yumeng" ? resolveYumengImageResolution(config.model, config.quality) : config.quality || "auto",
         width,
         height,
         quality: config.quality || "auto",
         n: 1,
+        count: 1,
+        num_images: 1,
+        batch_size: 1,
         image: images[0] || "",
         images,
     };
@@ -77,7 +81,7 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
 
 export function resolveDeclarativeImageSize(config: Pick<ImageTask["config"], "quality" | "size" | "advancedConfig">) {
     const size = resolveRequestSize(config.quality, config.size || "auto") || config.size || "";
-    return !size || size.toLowerCase() === "auto" ? (config.advancedConfig?.protocol === "stable-diffusion" ? "1024x1024" : "") : size;
+    return !size || size.toLowerCase() === "auto" ? "" : size;
 }
 
 export async function pollCustomImageTask(task: ImageTask, taskId: string, requestUrl: string, cookie: string, singleStep = false) {

@@ -270,7 +270,7 @@ export function CreativeComposer({
     );
 
     return (
-        <div className={cn("pointer-events-auto mx-auto w-full overflow-hidden transition-[max-width,padding] duration-300", compact ? "max-w-[1036px] px-3 pb-3 sm:px-6 sm:pb-4" : centered ? "max-w-[1080px]" : "max-w-[1120px] px-3 pb-3 sm:px-6 sm:pb-5")}>
+        <div className={cn("pointer-events-auto mx-auto w-full overflow-hidden transition-[max-width,padding] duration-300", compact ? "max-w-[1036px] px-3 sm:px-6" : centered ? "max-w-[1080px]" : "mb-3 max-w-[1120px] px-3 sm:mb-5 sm:px-6")}>
             <div
                 data-ready={ready}
                 data-compact={compact ? "true" : "false"}

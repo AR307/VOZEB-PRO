@@ -424,7 +424,7 @@ describe("executeAgentRun backend settings", () => {
 
         expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(1);
         expect(mocks.run?.tasks[0]).toMatchObject({ status: "failed", attempts: 1, taskId: "child-error", childTasks: [{ id: "child-error", status: "failed", attempt: 1, error: "上游生成失败" }], error: "上游生成失败" });
-        expect(mocks.run?.status).toBe("failed");
+        expect(mocks.run).toMatchObject({ status: "failed", failureStage: "task_execution", failure: expect.stringContaining("上游生成失败") });
     });
 
     it("turns explicit canvas text-node content into a node result without calling the text task API", async () => {
@@ -1062,7 +1062,12 @@ describe("executeAgentRun backend settings", () => {
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
         expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 2, "text", 1, undefined, "points-agent-plan");
-        expect(mocks.run?.status).toBe("failed");
+        expect(mocks.run).toMatchObject({
+            status: "failed",
+            failureStage: "planning",
+            failure: expect.any(String),
+            candidateFailures: [{ channelId: "planner-channel", upstreamModel: "vendor/planner", error: expect.any(String) }],
+        });
     });
 
     it("refunds a zero-cost planning record when persisting the conversation reply fails", async () => {

@@ -13,6 +13,8 @@ import { normalizeAgentRunCanvasSnapshot, selectedCanvasNodeIds } from "./agent-
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentRunReviewStatus = "review_pending" | "reviewing" | "review_completed" | "review_unavailable";
+export type AgentRunFailureStage = "planning" | "task_execution" | "refund";
+export type AgentRunCandidateFailure = { channelId: string; upstreamModel: string; error: string };
 export type AgentRunReference = {
     assetId?: string;
     nodeId?: string;
@@ -90,6 +92,9 @@ export type AgentRun = {
     plannerContext?: AgentRunPlannerContextSummary;
     plannerAudit?: AgentRunPlannerAudit;
     cancellation?: AgentRunCancellation;
+    failure?: string;
+    failureStage?: AgentRunFailureStage;
+    candidateFailures?: AgentRunCandidateFailure[];
     timings?: AgentRunTimings;
     createdAt: number;
     updatedAt: number;
@@ -212,7 +217,24 @@ export async function updateAgentRunById(
     patch: Partial<
         Pick<
             AgentRun,
-            "status" | "executionId" | "tasks" | "foundation" | "projectHandoff" | "projectHandoffEmitted" | "review" | "reviewed" | "reviewStatus" | "reviewAttempts" | "plannerContext" | "plannerAudit" | "cancellation" | "assetIds" | "timings"
+            | "status"
+            | "executionId"
+            | "tasks"
+            | "foundation"
+            | "projectHandoff"
+            | "projectHandoffEmitted"
+            | "review"
+            | "reviewed"
+            | "reviewStatus"
+            | "reviewAttempts"
+            | "plannerContext"
+            | "plannerAudit"
+            | "cancellation"
+            | "failure"
+            | "failureStage"
+            | "candidateFailures"
+            | "assetIds"
+            | "timings"
         >
     >,
     event?: { type: string; data?: unknown },

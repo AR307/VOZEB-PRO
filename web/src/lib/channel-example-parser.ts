@@ -321,6 +321,7 @@ function templateValue(value: unknown, key = ""): unknown {
     if (lowerKey === "seconds") return "{{seconds}}";
     if (lowerKey === "ratio" || lowerKey === "aspect_ratio") return "{{ratio}}";
     if (lowerKey === "resolution") return "{{resolution}}";
+    if (lowerKey === "n" || lowerKey === "count" || lowerKey === "num_images" || lowerKey === "batch_size") return "{{n}}";
     if (lowerKey === "width") return "{{width}}";
     if (lowerKey === "height") return "{{height}}";
     if (isReferenceKey(key)) return "{{image}}";

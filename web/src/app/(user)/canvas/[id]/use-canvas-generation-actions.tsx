@@ -77,11 +77,8 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
     const { startGenerationRequest, finishGenerationRequest, completeVideoTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
     const { screenToCanvas, applyAgentOps } = interactions;
     const deferVideoTask = useCallback(
-        (nodeId: string, errorDetails?: string, delayMs = 15_000) => {
+        (nodeId: string, errorDetails?: string) => {
             setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails } } : item)));
-            window.setTimeout(() => {
-                setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask && item.metadata.status === NODE_STATUS_LOADING ? { ...item, metadata: { ...item.metadata } } : item)));
-            }, delayMs);
         },
         [setNodes],
     );
