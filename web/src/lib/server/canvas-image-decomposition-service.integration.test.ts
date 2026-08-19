@@ -69,6 +69,7 @@ describe("canvas image decomposition service protocol integration", () => {
             width: 1000,
             height: 800,
             backgroundDescription: "协议夹具蓝色渐变背景",
+            backgroundPreservedVisuals: ["蓝色渐变", "柔和环境光"],
             layers: [{ kind: "decoration" }, { kind: "product" }, { kind: "headline" }, { kind: "badge" }, { kind: "logo" }],
         });
         expect(fixture.requests).toHaveLength(1);

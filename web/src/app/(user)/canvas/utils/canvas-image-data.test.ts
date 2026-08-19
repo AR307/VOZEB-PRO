@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applySubjectMaskToImageData, scaleLayerBox } from "./canvas-image-data";
+import { applySubjectMaskToImageData, compositeImageDataWithinMask, scaleLayerBox } from "./canvas-image-data";
 
 describe("Canvas 智能分层", () => {
     it("按语义蒙版保留浅色主体，不再根据主体与背景色差判断", () => {
@@ -32,4 +32,18 @@ describe("Canvas 智能分层", () => {
         expect(scaleLayerBox({ x: 101, y: 51, width: 199, height: 99 }, 1000, 500, 500, 250)).toEqual({ x: 50, y: 25, width: 100, height: 50 });
         expect(scaleLayerBox({ x: 900, y: 450, width: 100, height: 50 }, 1000, 500, 333, 167)).toEqual({ x: 299, y: 150, width: 34, height: 17 });
     });
+
+    it("背景补全只替换透明蒙版区域并保留其余原始像素", () => {
+        const source = pixels([10, 20, 30, 255], [40, 50, 60, 255], [70, 80, 90, 255]);
+        const generated = pixels([110, 120, 130, 255], [140, 150, 160, 255], [170, 180, 190, 255]);
+        const mask = pixels([255, 255, 255, 255], [255, 255, 255, 0], [255, 255, 255, 128]);
+
+        const result = compositeImageDataWithinMask(source, generated, mask);
+
+        expect([...result.data]).toEqual([10, 20, 30, 255, 140, 150, 160, 255, 120, 130, 140, 255]);
+    });
 });
+
+function pixels(...values: number[][]) {
+    return { data: new Uint8ClampedArray(values.flat()), width: values.length, height: 1 };
+}

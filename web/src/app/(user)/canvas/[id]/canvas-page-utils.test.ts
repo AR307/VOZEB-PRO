@@ -134,6 +134,7 @@ describe("Canvas media replacement", () => {
                 videoTask: { id: "video-task", provider: "generation", model: "video-model" },
                 imageTask: { id: "image-task", kind: "generation", model: "image-model" },
                 imageEditMask: { storageKey: "mask.png" },
+                preserveUnmaskedPixels: true,
                 isBatchRoot: true,
                 batchChildIds: ["child"],
             },
@@ -145,6 +146,7 @@ describe("Canvas media replacement", () => {
         expect(metadata.prompt).toBeUndefined();
         expect(metadata.imageTask).toBeUndefined();
         expect(metadata.imageEditMask).toBeUndefined();
+        expect(metadata.preserveUnmaskedPixels).toBeUndefined();
         expect(metadata.videoTask).toBeUndefined();
         expect(metadata.isBatchRoot).toBeUndefined();
         expect(metadata.batchChildIds).toBeUndefined();

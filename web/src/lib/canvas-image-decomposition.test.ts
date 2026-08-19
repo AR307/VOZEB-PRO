@@ -7,6 +7,7 @@ describe("canvas image decomposition", () => {
         const result = normalizeCanvasImageDecomposition(
             {
                 backgroundDescription: "蓝色渐变背景",
+                backgroundPreservedVisuals: ["柔和渐变", "环境光影"],
                 layers: [
                     layer("product", "商品组合", 220, 180, 480, 600, 3),
                     layer("headline", "主标题", 40, 40, 500, 100, 5),
@@ -21,6 +22,7 @@ describe("canvas image decomposition", () => {
 
         expect(result?.layers.map((item) => item.kind)).toEqual(["decoration", "product", "headline", "badge", "logo"]);
         expect(result?.backgroundDescription).toBe("蓝色渐变背景");
+        expect(result?.backgroundPreservedVisuals).toEqual(["柔和渐变", "环境光影"]);
     });
 
     it("clamps model boxes to source pixels and removes exact duplicates across categories", () => {
@@ -38,6 +40,10 @@ describe("canvas image decomposition", () => {
 
     it("rejects a whole-poster box masquerading as one foreground layer", () => {
         expect(normalizeCanvasImageDecomposition({ layers: [layer("product", "整张海报", 0, 0, 1000, 1000, 1)] }, 1000, 1000)).toBeNull();
+    });
+
+    it("treats a missing preserved-visual list as empty at the untrusted model boundary", () => {
+        expect(normalizeCanvasImageDecomposition({ layers: [layer("product", "商品", 20, 20, 60, 60, 1)] }, 100, 100)?.backgroundPreservedVisuals).toEqual([]);
     });
 
     it("drops a whole-poster box without hiding the valid independent layers", () => {

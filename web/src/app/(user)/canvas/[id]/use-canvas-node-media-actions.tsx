@@ -358,7 +358,8 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
                 ]);
                 const generationConfig = { ...baseConfig, size: `${layers.width}x${layers.height}` };
                 const source = canvasNodeReferenceImage(node);
-                const prompt = `移除蒙版覆盖的全部前景元素并自然补全被遮挡的背景，保持原图背景、构图、光线、色彩和尺寸，蒙版外不要修改。${decomposition.backgroundDescription ? `背景应延续：${decomposition.backgroundDescription}` : ""}`;
+                const preservedVisuals = decomposition.backgroundPreservedVisuals.length ? `必须保留这些背景内嵌视觉：${decomposition.backgroundPreservedVisuals.join("、")}。` : "";
+                const prompt = `移除蒙版覆盖的全部独立前景元素并自然补全被遮挡的背景，保持原图背景、构图、光线、色彩和尺寸，蒙版外不要修改。${preservedVisuals}${decomposition.backgroundDescription ? `背景应延续：${decomposition.backgroundDescription}` : ""}`;
                 const backgroundId = nanoid();
                 const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
                 const outputX = node.position.x + node.width + 96;
@@ -397,6 +398,7 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
                         layerName: "背景",
                         sourceLayerNodeId: node.id,
                         imageEditMask: { storageKey: maskImage.storageKey, serverUrl: maskImage.serverUrl || maskImage.url, mimeType: maskImage.mimeType, width: maskImage.width, height: maskImage.height },
+                        preserveUnmaskedPixels: true,
                     },
                 };
                 const children: CanvasNodeData[] = [backgroundNode, ...layerNodes];

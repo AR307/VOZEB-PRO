@@ -103,14 +103,16 @@ export async function splitSubjectAndBackgroundDataUrl(dataUrl: string, signal?:
 export async function buildCanvasImageDecompositionData(dataUrl: string, decomposition: CanvasImageDecomposition): Promise<CanvasImageDecompositionData> {
     const image = await loadImage(dataUrl);
     const boxes = decomposition.layers.map((candidate) => ({ candidate, box: scaleLayerBox(candidate.bbox, decomposition.width, decomposition.height, image.width, image.height) }));
-    const layers = await Promise.all(
-        boxes.map(async ({ candidate, box }) => ({
+    const layers: CanvasImageDecompositionData["layers"] = [];
+    for (const { candidate, box } of boxes) {
+        await yieldToBrowser();
+        layers.push({
             candidate,
             blob: await drawCropBlob(image, box),
             width: box.width,
             height: box.height,
-        })),
-    );
+        });
+    }
     const mask = document.createElement("canvas");
     mask.width = image.width;
     mask.height = image.height;
@@ -120,6 +122,31 @@ export async function buildCanvasImageDecompositionData(dataUrl: string, decompo
     context.fillRect(0, 0, mask.width, mask.height);
     boxes.forEach(({ box }) => context.clearRect(box.x, box.y, box.width, box.height));
     return { width: image.width, height: image.height, editMaskBlob: await canvasBlob(mask), layers };
+}
+
+export async function compositeCanvasImageEditResult(sourceUrl: string, generatedUrl: string, editMaskUrl: string) {
+    const [sourceImage, generatedImage, maskImage] = await Promise.all([loadImage(sourceUrl), loadImage(generatedUrl), loadImage(editMaskUrl)]);
+    const width = sourceImage.width;
+    const height = sourceImage.height;
+    const source = drawImageData(sourceImage, width, height);
+    const generated = drawImageData(generatedImage, width, height);
+    const mask = drawImageData(maskImage, width, height);
+    const composite = compositeImageDataWithinMask(source, generated, mask);
+    return imageDataBlob(composite.data, width, height);
+}
+
+export function compositeImageDataWithinMask(source: Pick<ImageData, "data" | "width" | "height">, generated: Pick<ImageData, "data" | "width" | "height">, editMask: Pick<ImageData, "data" | "width" | "height">) {
+    const expectedLength = source.width * source.height * 4;
+    if (source.width < 1 || source.height < 1 || source.data.length !== expectedLength) throw new Error("源图片像素数据无效");
+    if (generated.width !== source.width || generated.height !== source.height || generated.data.length !== expectedLength) throw new Error("背景补全结果尺寸无效");
+    if (editMask.width !== source.width || editMask.height !== source.height || editMask.data.length !== expectedLength) throw new Error("背景补全蒙版尺寸无效");
+    const data = new Uint8ClampedArray(expectedLength);
+    for (let offset = 0; offset < expectedLength; offset += 4) {
+        const preserveWeight = editMask.data[offset + 3] / 255;
+        const editWeight = 1 - preserveWeight;
+        for (let channel = 0; channel < 4; channel += 1) data[offset + channel] = Math.round(source.data[offset + channel] * preserveWeight + generated.data[offset + channel] * editWeight);
+    }
+    return { data, width: source.width, height: source.height };
 }
 
 export function scaleLayerBox(box: CanvasImageLayerBox, sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number): CanvasImageLayerBox {
@@ -184,6 +211,22 @@ function drawCropBlob(image: HTMLImageElement, box: CanvasImageLayerBox) {
     if (!context) throw new Error("浏览器不支持图片处理");
     context.drawImage(image, box.x, box.y, box.width, box.height, 0, 0, canvas.width, canvas.height);
     return canvasBlob(canvas);
+}
+
+function drawImageData(image: CanvasImageSource, width: number, height: number) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("浏览器不支持图片处理");
+    context.drawImage(image, 0, 0, width, height);
+    return context.getImageData(0, 0, width, height);
+}
+
+async function yieldToBrowser() {
+    const scheduler = (globalThis as typeof globalThis & { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+    if (scheduler?.yield) return scheduler.yield();
+    if (typeof requestAnimationFrame === "function") await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function drawStepUpscale(image: HTMLImageElement, width: number, height: number) {

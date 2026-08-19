@@ -11,9 +11,10 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasNodeMetadata } from "../types";
 import { fitNodeSize } from "../utils/canvas-node-size";
+import { compositeCanvasImageEditResult } from "../utils/canvas-image-data";
 
 import { CanvasHistoryEntry, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH } from "./canvas-page-elements";
-import { audioMetadata, imageMetadata, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
+import { audioMetadata, imageMetadata, resolveMetadataImageEditMask, resolveMetadataReferences, uploadCanvasImage, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
 import { applyCanvasImageTaskResults } from "./canvas-image-task-results";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
@@ -234,7 +235,19 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
     const completeImageTask = useCallback(async (nodeId: string, generationConfig: AiConfig, task: NonNullable<CanvasNodeMetadata["imageTask"]> | ImageGenerationTask, controller: AbortController, prompt?: string) => {
         const result = await waitForImageGenerationTask(generationConfig, task, { signal: controller.signal });
         const outputs = result.results?.length ? result.results : [result];
-        const uploaded = await Promise.all(outputs.map((image) => uploadGeneratedCanvasImage(image.dataUrl, image.remoteUrl, image.serverUrl)));
+        let uploaded = await Promise.all(outputs.map((image) => uploadGeneratedCanvasImage(image.dataUrl, image.remoteUrl, image.serverUrl)));
+        const target = nodesRef.current.find((node) => node.id === nodeId);
+        if (target?.metadata?.preserveUnmaskedPixels) {
+            const [references, mask] = await Promise.all([resolveMetadataReferences(target.metadata), resolveMetadataImageEditMask(target.metadata)]);
+            const source = references?.[0];
+            if (!source || !mask) throw new Error("背景补全缺少原图或蒙版，无法保护未选区域");
+            uploaded = await Promise.all(
+                uploaded.map(async (image) => {
+                    const composite = await compositeCanvasImageEditResult(source.dataUrl, image.serverUrl || image.url, mask.dataUrl);
+                    return uploadCanvasImage(composite);
+                }),
+            );
+        }
         setNodes((prev) =>
             applyCanvasImageTaskResults(prev, {
                 nodeId,
@@ -245,6 +258,7 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
                 size: generationConfig.size,
             }),
         );
+        return uploaded;
     }, []);
 
     const startAndCompleteImageTask = useCallback(

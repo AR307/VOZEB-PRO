@@ -252,6 +252,7 @@ function toolArguments(name, payload) {
         const { width, height } = imageRequestDimensions(payload);
         return {
             backgroundDescription: "协议夹具蓝色渐变背景",
+            backgroundPreservedVisuals: ["蓝色渐变", "柔和环境光"],
             layers: [
                 fixtureLayer("product", "商品组合", width * 0.2, height * 0.25, width * 0.52, height * 0.65, 3),
                 fixtureLayer("headline", "主标题", width * 0.05, height * 0.05, width * 0.55, height * 0.12, 5),

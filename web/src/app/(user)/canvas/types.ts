@@ -146,6 +146,7 @@ export type CanvasNodeMetadata = {
         width?: number;
         height?: number;
     };
+    preserveUnmaskedPixels?: boolean;
     internalOnly?: boolean;
     cameraControl?: CameraControlOptions;
     panoramaProjection?: "equirectangular";
