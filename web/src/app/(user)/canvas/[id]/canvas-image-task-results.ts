@@ -70,6 +70,44 @@ export function applyCanvasImageTaskResults(
     return next;
 }
 
+export function applyCanvasImageLayerTaskResults(nodes: CanvasNodeData[], input: { nodeId: string; taskId: string; images: CompletedCanvasImage[]; prompt?: string; model: string; size?: string }) {
+    const target = nodes.find((node) => node.id === input.nodeId);
+    const primary = input.images[0];
+    if (!target || !primary) return nodes;
+    const imageLayers = input.images.map((image, index) => ({
+        id: image.metadata.storageKey || `image-layer-${input.taskId}-${index + 1}`,
+        name: `图层 ${index + 1}`,
+        kind: "foreground" as const,
+        content: image.metadata.content || "",
+        storageKey: image.metadata.storageKey,
+        serverUrl: image.metadata.serverUrl,
+        mimeType: image.metadata.mimeType,
+        width: image.width,
+        height: image.height,
+        zIndex: index,
+    }));
+    return nodes.map((node) =>
+        node.id === input.nodeId
+            ? {
+                  ...node,
+                  title: `${node.title.replace(/ · 分层(?:中|结果(?:（\d+层）)?)$/, "")} · 分层结果（${imageLayers.length}层）`,
+                  metadata: {
+                      ...node.metadata,
+                      ...primary.metadata,
+                      prompt: input.prompt || node.metadata?.prompt,
+                      model: input.model,
+                      size: input.size || node.metadata?.size,
+                      count: imageLayers.length,
+                      imageLayers,
+                      imageOutputMode: "layers" as const,
+                      imageTask: undefined,
+                      errorDetails: undefined,
+                  },
+              }
+            : node,
+    );
+}
+
 function completedImageNode(node: CanvasNodeData, image: CompletedCanvasImage, input: { nodeId: string; prompt?: string; model: string; size?: string }, updateBatchRoot: boolean) {
     const isPanorama = node.type === CanvasNodeType.Panorama;
     const imageSize = isPanorama ? NODE_DEFAULT_SIZE[CanvasNodeType.Panorama] : fitNodeSize(image.width, image.height, node.width || NODE_DEFAULT_SIZE[CanvasNodeType.Image].width, node.height || NODE_DEFAULT_SIZE[CanvasNodeType.Image].height);

@@ -27,6 +27,7 @@ import {
     prepareCanvasImages,
     replaceCanvasNodeMediaMetadata,
     resolveMetadataImageEditMask,
+    resolveMetadataImageEditValidationMask,
     resolveMetadataReferences,
 } from "./canvas-page-utils";
 
@@ -134,6 +135,7 @@ describe("Canvas media replacement", () => {
                 videoTask: { id: "video-task", provider: "generation", model: "video-model" },
                 imageTask: { id: "image-task", kind: "generation", model: "image-model" },
                 imageEditMask: { storageKey: "mask.png" },
+                imageEditValidationMask: { storageKey: "validation-mask.png" },
                 preserveUnmaskedPixels: true,
                 isBatchRoot: true,
                 batchChildIds: ["child"],
@@ -146,6 +148,7 @@ describe("Canvas media replacement", () => {
         expect(metadata.prompt).toBeUndefined();
         expect(metadata.imageTask).toBeUndefined();
         expect(metadata.imageEditMask).toBeUndefined();
+        expect(metadata.imageEditValidationMask).toBeUndefined();
         expect(metadata.preserveUnmaskedPixels).toBeUndefined();
         expect(metadata.videoTask).toBeUndefined();
         expect(metadata.isBatchRoot).toBeUndefined();
@@ -157,6 +160,20 @@ describe("Canvas media replacement", () => {
             id: "mask-mask.png",
             dataUrl: "/api/reference-assets/mask.png",
             storageKey: "mask.png",
+            width: 512,
+            height: 512,
+        });
+    });
+
+    it("restores the persisted foreground validation mask for background checks", async () => {
+        await expect(
+            resolveMetadataImageEditValidationMask({
+                imageEditValidationMask: { storageKey: "validation-mask.png", serverUrl: "/api/reference-assets/validation-mask.png", mimeType: "image/png", width: 512, height: 512 },
+            }),
+        ).resolves.toMatchObject({
+            id: "validation-mask-validation-mask.png",
+            dataUrl: "/api/reference-assets/validation-mask.png",
+            storageKey: "validation-mask.png",
             width: 512,
             height: 512,
         });

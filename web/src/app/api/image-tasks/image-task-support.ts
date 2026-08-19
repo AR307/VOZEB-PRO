@@ -313,6 +313,14 @@ export function withSystemPrompt(config: ImageTaskConfig, prompt: string) {
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
 }
 
+export function withImageOutputInstructions(config: ImageTaskConfig, prompt: string) {
+    if (config.outputMode === "layers") {
+        return `${prompt}\n\n分层任务要求：一次请求返回全部独立图层图片；每张结果只包含一个原图元素或干净背景，并保持原图像素与真实透明 Alpha。不要把多个图层拼在一张图中，不要重绘元素。`;
+    }
+    if (config.outputBackground !== "transparent") return prompt;
+    return `${prompt}\n\n输出要求：只保留参考图中的目标元素，去除裁切范围外的背景，输出带真实透明 Alpha 的 PNG。不要补画背景、文字、装饰或其他元素，不要改变目标元素的颜色、结构、比例和边缘。`;
+}
+
 export async function parseImagePayloadOrPoll(config: ImageTaskConfig, payload: ImageApiResponse, mediaBaseUrl: string, cookie: string, pollBaseUrl = mediaBaseUrl, singleStep = false): Promise<ImageTaskResult> {
     const payloadError = readImagePayloadError(payload);
     if (payloadError) throw new GenerationSubmissionSafeFailure(payloadError);
@@ -675,14 +683,15 @@ export function toGeminiImagePart(dataUrl: string, fallbackType?: string): Gemin
 export async function buildImageEditFormData(task: ImageTask, quality: string | undefined, requestSize: string | undefined, origin: string, cookie: string, responseFormat: (typeof IMAGE_RESPONSE_FORMATS)[number], includeCompatibilityFields = true) {
     const formData = new FormData();
     formData.set("model", task.config.model);
-    formData.set("prompt", withSystemPrompt(task.config, buildImageReferencePromptText(task.prompt, task.references)));
-    formData.set("n", "1");
+    formData.set("prompt", withSystemPrompt(task.config, withImageOutputInstructions(task.config, buildImageReferencePromptText(task.prompt, task.references))));
+    if (task.config.outputMode !== "layers") formData.set("n", "1");
     if (includeCompatibilityFields) {
         formData.set("response_format", responseFormat);
         formData.set("output_format", IMAGE_OUTPUT_FORMAT);
     }
     if (quality) formData.set("quality", quality);
     if (requestSize) formData.set("size", requestSize);
+    if (task.config.outputBackground === "transparent") formData.set("background", "transparent");
     const referenceFiles = await Promise.all(task.references.map((reference, index) => imageReferenceToFile(reference, reference.name || `reference-${index + 1}.png`, origin, cookie)));
     referenceFiles.forEach((file) => formData.append("image", file));
     if (task.mask) formData.set("mask", await imageReferenceToFile(task.mask, task.mask.name || "mask.png", origin, cookie));

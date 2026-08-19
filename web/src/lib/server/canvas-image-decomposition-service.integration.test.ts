@@ -66,6 +66,7 @@ describe("canvas image decomposition service protocol integration", () => {
         const result = await decomposeCanvasImage({ origin, cookie: "session=fixture", userId: "user-one", requestId: "request-one", source });
 
         expect(result).toMatchObject({
+            strategy: "ecommerce",
             width: 1000,
             height: 800,
             backgroundDescription: "协议夹具蓝色渐变背景",

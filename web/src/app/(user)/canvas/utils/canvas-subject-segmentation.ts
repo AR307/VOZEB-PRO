@@ -7,6 +7,7 @@ export type CanvasSubjectMask = {
 };
 
 export type CanvasSubjectLayerResult = { kind: "blobs"; foregroundBlob: Blob; editMaskBlob: Blob; width: number; height: number; foregroundPixels: number; backgroundPixels: number } | { kind: "mask"; mask: CanvasSubjectMask };
+export type CanvasSubjectRegion = { x: number; y: number; width: number; height: number };
 
 type SubjectSegmentationWorkerResponse = {
     id: number;
@@ -32,24 +33,45 @@ let subjectSegmentationWorker: Worker | null = null;
 let subjectSegmentationSequence = 0;
 const pendingSubjectSegmentations = new Map<number, PendingSubjectSegmentation>();
 
-export async function segmentCanvasSubject(dataUrl: string, signal?: AbortSignal, targetPoint?: { x: number; y: number }): Promise<CanvasSubjectMask> {
-    const result = await requestCanvasSubjectWorker(dataUrl, "mask", signal, targetPoint);
+type CanvasSubjectSource = string | Blob;
+
+export async function segmentCanvasSubject(source: CanvasSubjectSource, signal?: AbortSignal, targetPoint?: { x: number; y: number }, targetRegion?: CanvasSubjectRegion): Promise<CanvasSubjectMask> {
+    const result = await requestCanvasSubjectWorker(source, "mask", signal, targetPoint, targetRegion);
     if (result.operation !== "mask") throw new Error("本地主体分割返回了错误结果");
     return result.mask;
 }
 
-export async function renderCanvasSubjectLayers(dataUrl: string, signal?: AbortSignal, targetPoint?: { x: number; y: number }): Promise<CanvasSubjectLayerResult> {
-    const result = await requestCanvasSubjectWorker(dataUrl, "layers", signal, targetPoint);
+export async function renderCanvasSubjectLayers(source: CanvasSubjectSource, signal?: AbortSignal, targetPoint?: { x: number; y: number }, targetRegion?: CanvasSubjectRegion, collectParts = false): Promise<CanvasSubjectLayerResult> {
+    const result = await requestCanvasSubjectWorker(source, "layers", signal, targetPoint, targetRegion, collectParts);
     if (result.operation !== "layers") throw new Error("本地主体分割返回了错误结果");
     return result.layers;
 }
 
-async function requestCanvasSubjectWorker(dataUrl: string, operation: "mask" | "layers", signal?: AbortSignal, targetPoint?: { x: number; y: number }) {
+export async function renderCanvasPromptedSubjectLayers(source: CanvasSubjectSource, targetPoints: Array<{ x: number; y: number }>, targetRegion: CanvasSubjectRegion, signal?: AbortSignal): Promise<CanvasSubjectLayerResult> {
+    const result = await requestCanvasSubjectWorker(source, "layers", signal, targetPoints[0], targetRegion, true, targetPoints);
+    if (result.operation !== "layers") throw new Error("本地主体分割返回了错误结果");
+    return result.layers;
+}
+
+async function requestCanvasSubjectWorker(
+    source: CanvasSubjectSource,
+    operation: "mask" | "layers",
+    signal?: AbortSignal,
+    targetPoint?: { x: number; y: number },
+    targetRegion?: CanvasSubjectRegion,
+    collectParts = false,
+    targetPoints?: Array<{ x: number; y: number }>,
+) {
     throwIfAborted(signal);
     if (typeof createImageBitmap !== "function") throw new Error("当前浏览器无法初始化本地主体分割");
-    const response = await fetch(dataUrl, { signal });
-    if (!response.ok) throw new Error("无法读取源图片，请重新上传后再试");
-    const image = await createImageBitmap(await response.blob());
+    const blob = typeof source === "string" ? await fetchImageBlob(source, signal) : source;
+    if (!blob.size || (blob.type && !blob.type.startsWith("image/"))) throw new Error("源图片文件无效，请重新上传后再试");
+    let image: ImageBitmap;
+    try {
+        image = await createImageBitmap(blob);
+    } catch {
+        throw new Error("源图片无法解码，请重新上传后再试");
+    }
     throwIfAborted(signal, () => image.close());
     const worker = getSubjectSegmentationWorker();
     const id = ++subjectSegmentationSequence;
@@ -65,7 +87,7 @@ async function requestCanvasSubjectWorker(dataUrl: string, operation: "mask" | "
         pendingSubjectSegmentations.set(id, { operation, resolve, reject, cleanup });
         signal?.addEventListener("abort", abort, { once: true });
         try {
-            worker.postMessage({ id, operation, image, targetPoint }, [image]);
+            worker.postMessage({ id, operation, image, targetPoint, targetRegion, collectParts, ...(targetPoints?.length ? { targetPoints } : {}) }, [image]);
         } catch (error) {
             pendingSubjectSegmentations.delete(id);
             cleanup();
@@ -73,6 +95,12 @@ async function requestCanvasSubjectWorker(dataUrl: string, operation: "mask" | "
             reject(error instanceof Error ? error : new Error("无法启动本地主体分割"));
         }
     });
+}
+
+async function fetchImageBlob(source: string, signal?: AbortSignal) {
+    const response = await fetch(source, { signal });
+    if (!response.ok) throw new Error("无法读取源图片，请重新上传后再试");
+    return response.blob();
 }
 
 export function readSubjectSegmentationWorkerResponse(value: unknown): SubjectSegmentationWorkerResponse | null {
@@ -118,7 +146,7 @@ export function validateCanvasSubjectMask(input: { width: number; height: number
 
 function getSubjectSegmentationWorker() {
     if (subjectSegmentationWorker) return subjectSegmentationWorker;
-    const worker = new Worker("/canvas/subject-segmenter-worker.js?v=3");
+    const worker = new Worker("/canvas/subject-segmenter-worker.js?v=9");
     worker.onmessage = (event: MessageEvent<unknown>) => {
         const response = readSubjectSegmentationWorkerResponse(event.data);
         if (!response) {

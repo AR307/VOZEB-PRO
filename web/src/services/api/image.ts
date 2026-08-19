@@ -27,6 +27,8 @@ type RequestOptions = {
     clientRequestId?: string;
     generationLogId?: string;
     generationSlotId?: string;
+    outputBackground?: "opaque" | "transparent";
+    outputMode?: "layers";
 };
 
 export type ImageGenerationTask = {
@@ -97,6 +99,8 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
                 model: requestConfig.model,
                 quality: requestConfig.quality,
                 size: requestConfig.size,
+                ...(options?.outputBackground ? { outputBackground: options.outputBackground } : {}),
+                ...(options?.outputMode ? { outputMode: options.outputMode } : {}),
             },
             prompt,
             references: taskReferences,

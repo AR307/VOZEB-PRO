@@ -11,13 +11,19 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasNodeMetadata } from "../types";
 import { fitNodeSize } from "../utils/canvas-node-size";
-import { compositeCanvasImageEditResult } from "../utils/canvas-image-data";
+import { compositeCanvasImageEditResult, validateAndTrimCanvasTransparentLayer } from "../utils/canvas-image-data";
 
 import { CanvasHistoryEntry, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH } from "./canvas-page-elements";
-import { audioMetadata, imageMetadata, resolveMetadataImageEditMask, resolveMetadataReferences, uploadCanvasImage, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
-import { applyCanvasImageTaskResults } from "./canvas-image-task-results";
+import { audioMetadata, imageMetadata, resolveMetadataImageEditMask, resolveMetadataImageEditValidationMask, resolveMetadataReferences, uploadCanvasImage, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
+import { applyCanvasImageLayerTaskResults, applyCanvasImageTaskResults } from "./canvas-image-task-results";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
+
+type CanvasImageTaskOptions = {
+    outputBackground?: "opaque" | "transparent";
+    outputMode?: "layers";
+    commitResult?: boolean;
+};
 
 export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
     const {
@@ -232,37 +238,56 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         );
     }, []);
 
-    const completeImageTask = useCallback(async (nodeId: string, generationConfig: AiConfig, task: NonNullable<CanvasNodeMetadata["imageTask"]> | ImageGenerationTask, controller: AbortController, prompt?: string) => {
+    const completeImageTask = useCallback(async (nodeId: string, generationConfig: AiConfig, task: NonNullable<CanvasNodeMetadata["imageTask"]> | ImageGenerationTask, controller: AbortController, prompt?: string, options?: CanvasImageTaskOptions) => {
         const result = await waitForImageGenerationTask(generationConfig, task, { signal: controller.signal });
         const outputs = result.results?.length ? result.results : [result];
         let uploaded = await Promise.all(outputs.map((image) => uploadGeneratedCanvasImage(image.dataUrl, image.remoteUrl, image.serverUrl)));
         const target = nodesRef.current.find((node) => node.id === nodeId);
+        if (options?.outputBackground === "transparent" || target?.metadata?.imageOutputBackground === "transparent") {
+            uploaded = await Promise.all(
+                uploaded.map(async (image) => {
+                    const transparent = await validateAndTrimCanvasTransparentLayer(image.serverUrl || image.url, target?.metadata?.layerName || target?.title || "图层");
+                    return uploadCanvasImage(transparent.blob);
+                }),
+            );
+        }
         if (target?.metadata?.preserveUnmaskedPixels) {
-            const [references, mask] = await Promise.all([resolveMetadataReferences(target.metadata), resolveMetadataImageEditMask(target.metadata)]);
+            const [references, mask, validationMask] = await Promise.all([resolveMetadataReferences(target.metadata), resolveMetadataImageEditMask(target.metadata), resolveMetadataImageEditValidationMask(target.metadata)]);
             const source = references?.[0];
             if (!source || !mask) throw new Error("背景补全缺少原图或蒙版，无法保护未选区域");
             uploaded = await Promise.all(
                 uploaded.map(async (image) => {
-                    const composite = await compositeCanvasImageEditResult(source.dataUrl, image.serverUrl || image.url, mask.dataUrl);
+                    const composite = await compositeCanvasImageEditResult(source.dataUrl, image.serverUrl || image.url, mask.dataUrl, validationMask?.dataUrl);
                     return uploadCanvasImage(composite);
                 }),
             );
         }
-        setNodes((prev) =>
-            applyCanvasImageTaskResults(prev, {
-                nodeId,
-                taskId: task.id,
-                images: uploaded.map((image) => ({ width: image.width, height: image.height, metadata: imageMetadata(image) })),
-                prompt,
-                model: generationConfig.model,
-                size: generationConfig.size,
-            }),
-        );
+        if (options?.commitResult !== false) {
+            setNodes((prev) =>
+                (options?.outputMode || target?.metadata?.imageOutputMode) === "layers"
+                    ? applyCanvasImageLayerTaskResults(prev, {
+                          nodeId,
+                          taskId: task.id,
+                          images: uploaded.map((image) => ({ width: image.width, height: image.height, metadata: imageMetadata(image) })),
+                          prompt,
+                          model: generationConfig.model,
+                          size: generationConfig.size,
+                      })
+                    : applyCanvasImageTaskResults(prev, {
+                          nodeId,
+                          taskId: task.id,
+                          images: uploaded.map((image) => ({ width: image.width, height: image.height, metadata: imageMetadata(image) })),
+                          prompt,
+                          model: generationConfig.model,
+                          size: generationConfig.size,
+                      }),
+            );
+        }
         return uploaded;
     }, []);
 
     const startAndCompleteImageTask = useCallback(
-        async (nodeId: string, generationConfig: AiConfig, prompt: string, references: ReferenceImage[] = [], mask: ReferenceImage | undefined, controller: AbortController) => {
+        async (nodeId: string, generationConfig: AiConfig, prompt: string, references: ReferenceImage[] = [], mask: ReferenceImage | undefined, controller: AbortController, options?: CanvasImageTaskOptions) => {
             const task = await createImageGenerationTask(generationConfig, prompt, references, mask, {
                 signal: controller.signal,
                 logSource: "canvas",
@@ -270,6 +295,8 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
                 conversationId: currentProject?.creativeConversationId,
                 surface: "canvas",
                 projectId,
+                outputBackground: options?.outputBackground,
+                outputMode: options?.outputMode,
                 ...createFreshGenerationTaskContext("canvas-image", [projectId, nodeId]),
             });
             setNodes((prev) =>
@@ -286,7 +313,7 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
                         : node,
                 ),
             );
-            await completeImageTask(nodeId, generationConfig, task, controller, prompt);
+            return completeImageTask(nodeId, generationConfig, task, controller, prompt, options);
         },
         [completeImageTask],
     );

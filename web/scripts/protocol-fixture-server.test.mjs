@@ -63,6 +63,7 @@ describe("protocol fixture server", () => {
             }),
         }).then((value) => value.json());
         expect(JSON.parse(decomposition.choices[0].message.tool_calls[0].function.arguments)).toMatchObject({
+            strategy: "ecommerce",
             backgroundDescription: "协议夹具蓝色渐变背景",
             backgroundPreservedVisuals: ["蓝色渐变", "柔和环境光"],
             layers: [{ kind: "product" }, { kind: "headline" }, { kind: "logo" }, { kind: "badge" }, { kind: "decoration" }],

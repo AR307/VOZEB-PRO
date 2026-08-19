@@ -65,15 +65,21 @@ function renderProviderRequest(template: string, values: TemplateValues, align?:
 }
 
 export function readProviderString(value: unknown, configuredPath: string | undefined, fallbackKeys: string[]) {
+    const configured = readProviderValue(value, configuredPath);
+    if (typeof configured === "string" && configured.trim()) return configured.trim();
+    if (typeof configured === "number") return String(configured);
+    return findString(value, new Set(fallbackKeys));
+}
+
+export function readProviderValue(value: unknown, configuredPath: string | undefined) {
     for (const path of (configuredPath || "")
         .split(/\s+\/\s+/)
         .map((item) => item.trim())
         .filter(Boolean)) {
         const configured = readFieldPath(value, path);
-        if (typeof configured === "string" && configured.trim()) return configured.trim();
-        if (typeof configured === "number") return String(configured);
+        if (configured !== undefined && configured !== null) return configured;
     }
-    return findString(value, new Set(fallbackKeys));
+    return undefined;
 }
 
 export function readProviderError(value: unknown) {

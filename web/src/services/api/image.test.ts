@@ -78,6 +78,30 @@ describe("图片任务轮询", () => {
         expect(body.references[0]?.dataUrl).toBe(inlineImage);
     });
 
+    it("requests transparent output only for an explicit transparent image task", async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ task: { id: "image-task", kind: "edit", model: "image-model" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createImageGenerationTask({ apiSource: "system", model: "image-model", imageModel: "image-model" } as AiConfig, "提取透明元素", [{ id: "source", name: "source.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" }], undefined, {
+            outputBackground: "transparent",
+        });
+
+        const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { config?: { outputBackground?: string } };
+        expect(body.config?.outputBackground).toBe("transparent");
+    });
+
+    it("marks a single upstream edit request as a layer-output task", async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ task: { id: "layer-task", kind: "edit", model: "image-model" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createImageGenerationTask({ apiSource: "system", model: "image-model", imageModel: "image-model" } as AiConfig, "分层", [{ id: "source", name: "source.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" }], undefined, {
+            outputMode: "layers",
+        });
+
+        const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { kind?: string; config?: { outputMode?: string } };
+        expect(body).toMatchObject({ kind: "edit", config: { outputMode: "layers" } });
+    });
+
     it("stops polling when the upstream submission needs manual review", async () => {
         const fetchMock = vi.fn(async () => Response.json({ task: { id: "review-task", kind: "generation", model: "image-model", status: "running", needsReview: true, reviewReason: "渠道未返回可查询任务 ID" } }));
         vi.stubGlobal("fetch", fetchMock);

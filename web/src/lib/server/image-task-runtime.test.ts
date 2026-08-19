@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 
 const mocks = vi.hoisted(() => ({
     runCustom: vi.fn(),
@@ -206,6 +207,24 @@ describe("image task runtime submission safety", () => {
                 ],
             }),
         );
+    });
+
+    it("fails and refunds a charged transparent task when the provider returns an opaque image", async () => {
+        const opaque = await sharp({ create: { width: 4, height: 4, channels: 3, background: "#ef4444" } })
+            .png()
+            .toBuffer();
+        state = {
+            ...imageTask(),
+            status: "running",
+            config: { ...imageTask().config, outputBackground: "transparent" },
+            billing: { pointsCost: 3, pointsRecordId: "transparent-charge", refunded: false },
+            result: { dataUrl: `data:image/png;base64,${opaque.toString("base64")}` },
+        };
+        mocks.writeLog.mockResolvedValue(undefined);
+
+        await expect(persistImageTaskResult(state, "http://internal", "inline://image-task-result")).resolves.toMatchObject({ status: "error", billing: { refunded: true } });
+        expect(mocks.refund).toHaveBeenCalledWith("user-one", "image-one", 3, "image", 1, expect.stringContaining("image-task:image-one"), "transparent-charge");
+        expect(mocks.register).not.toHaveBeenCalled();
     });
 });
 

@@ -75,6 +75,7 @@ import {
     geminiHeaders,
     geminiApiUrl,
     withSystemPrompt,
+    withImageOutputInstructions,
     parseImagePayloadOrPoll,
     pollOpenAiImageTask,
     parseImagePayloadCompat,
@@ -161,8 +162,8 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
             headers,
             body: JSON.stringify({
                 model: config.model,
-                prompt: withSystemPrompt(config, task.prompt),
-                n: 1,
+                prompt: withSystemPrompt(config, withImageOutputInstructions(config, task.prompt)),
+                ...(config.outputMode === "layers" ? {} : { n: 1 }),
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(allowProtocolFallback ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
@@ -202,17 +203,18 @@ async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOr
     const response = await imageSubmissionFetch(config, url, {
         method: "POST",
         headers,
-        body: JSON.stringify(
-            buildGlobalAiOpcImageRequest(preset, {
+        body: JSON.stringify({
+            ...buildGlobalAiOpcImageRequest(preset, {
                 model: config.model,
-                prompt: withSystemPrompt(config, buildImageReferencePromptText(task.prompt, task.references)),
+                prompt: withSystemPrompt(config, withImageOutputInstructions(config, buildImageReferencePromptText(task.prompt, task.references))),
                 quality,
                 size: requestSize,
                 ratio,
                 resolution: quality === "high" ? "4k" : quality === "medium" ? "2k" : quality === "low" ? "1k" : undefined,
                 imageUrls,
             }),
-        ),
+            ...(config.outputBackground === "transparent" ? { background: "transparent", output_format: IMAGE_OUTPUT_FORMAT } : {}),
+        }),
         cache: "no-store",
     });
     if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "图片生成失败"));
@@ -306,7 +308,7 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
         body: JSON.stringify({
             model: config.model,
             prompt: withSystemPrompt(config, task.prompt),
-            n: 1,
+            ...(config.outputMode === "layers" ? {} : { n: 1 }),
             ...(quality ? { quality } : {}),
             ...(requestSize ? { size: requestSize } : {}),
             response_format: "b64_json",
@@ -348,14 +350,14 @@ export async function runOpenAiResponsesImageTask(task: ImageTask, origin: strin
 }
 
 export function buildResponsesImageBodies(task: ImageTask, origin: string) {
-    const prompt = withSystemPrompt(task.config, buildImageReferencePromptText(task.prompt, task.references));
+    const prompt = withSystemPrompt(task.config, withImageOutputInstructions(task.config, buildImageReferencePromptText(task.prompt, task.references)));
     const imageContent = task.references.map((reference) => ({ type: "input_image", image_url: referenceRequestUrl(reference, origin) }));
     const content = [{ type: "input_text", text: prompt }, ...imageContent];
     return [
         {
             model: task.config.model,
             input: [{ role: "user", content }],
-            tools: [{ type: "image_generation" }],
+            tools: [{ type: "image_generation", ...(task.config.outputBackground === "transparent" ? { background: "transparent", output_format: IMAGE_OUTPUT_FORMAT } : {}) }],
         },
         {
             model: task.config.model,
@@ -364,7 +366,7 @@ export function buildResponsesImageBodies(task: ImageTask, origin: string) {
         {
             model: task.config.model,
             input: prompt,
-            tools: [{ type: "image_generation" }],
+            tools: [{ type: "image_generation", ...(task.config.outputBackground === "transparent" ? { background: "transparent", output_format: IMAGE_OUTPUT_FORMAT } : {}) }],
         },
         {
             model: task.config.model,
@@ -389,14 +391,15 @@ export async function buildJsonImageEditBodies(
         await Promise.all(task.references.map((reference) => (publicUrlReferenceMode ? publicImageReferenceRequestUrl(reference, origin, publicOrigin, referenceContext) : Promise.resolve(jsonImageReferenceRequestUrl(reference, origin)))))
     ).filter(Boolean);
     const mask = task.mask ? (publicUrlReferenceMode ? await publicImageReferenceRequestUrl(task.mask, origin, publicOrigin, referenceContext) : jsonImageReferenceRequestUrl(task.mask, origin)) : "";
-    const prompt = imageUrlObjectOnlyMode ? buildSub2ApiImageEditPrompt(task.prompt, task.references) : buildImageReferencePromptText(task.prompt, task.references);
+    const prompt = withImageOutputInstructions(task.config, imageUrlObjectOnlyMode ? buildSub2ApiImageEditPrompt(task.prompt, task.references) : buildImageReferencePromptText(task.prompt, task.references));
     const base = {
         model: task.config.model,
         prompt: withSystemPrompt(task.config, prompt),
-        n: 1,
+        ...(task.config.outputMode === "layers" ? {} : { n: 1 }),
         ...(quality ? { quality } : {}),
         ...(requestSize ? { size: requestSize } : {}),
         ...(includeCompatibilityFields ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
+        ...(task.config.outputBackground === "transparent" ? { background: "transparent" } : {}),
         ...(mask ? { mask } : {}),
     };
     if (!images.length) return [base];
@@ -408,9 +411,10 @@ export async function buildJsonImageEditBodies(
             {
                 model: task.config.model,
                 prompt: withSystemPrompt(task.config, prompt),
-                n: 1,
+                ...(task.config.outputMode === "layers" ? {} : { n: 1 }),
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
+                ...(task.config.outputBackground === "transparent" ? { background: "transparent", output_format: IMAGE_OUTPUT_FORMAT } : {}),
                 ...(mask ? { mask } : {}),
                 image_urls: images,
             },

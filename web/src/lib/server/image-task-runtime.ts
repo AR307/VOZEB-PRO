@@ -14,6 +14,7 @@ import { refundImageTask } from "@/lib/server/image-task-refund";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { getImageTask, transitionImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
+import { assertTransparentImageOutput } from "@/lib/server/image-transparent-output";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 
 export type ImageUpstreamStep =
@@ -224,10 +225,18 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
     }
     task = beforePersistence;
     const settledResults = await Promise.allSettled(imageTaskMediaResults(result).map((item) => normalizeSafeImageResult(task, item, origin, authContext)));
-    const safeResults = dedupeImageResults(settledResults.flatMap((item) => (item.status === "fulfilled" && item.value?.dataUrl ? [item.value] : [])));
+    let safeResults = dedupeImageResults(settledResults.flatMap((item) => (item.status === "fulfilled" && item.value?.dataUrl ? [item.value] : [])));
     if (!safeResults.length) {
         const rejected = settledResults.find((item): item is PromiseRejectedResult => item.status === "rejected");
         throw rejected?.reason instanceof Error ? rejected.reason : new GenerationSubmissionSafeFailure("上游返回的图片文件无效或保存失败");
+    }
+    if (task.config.outputBackground === "transparent") {
+        const validated = await Promise.allSettled(safeResults.map(async (item) => (await assertTransparentImageOutput(item.dataUrl), item)));
+        safeResults = validated.flatMap((item) => (item.status === "fulfilled" ? [item.value] : []));
+        if (!safeResults.length) {
+            const rejected = validated.find((item): item is PromiseRejectedResult => item.status === "rejected");
+            return markImageTaskFailed(task, rejected?.reason instanceof Error ? rejected.reason.message : "上游没有生成有效透明图层");
+        }
     }
     const current = await getImageTask(task.id);
     if (!current || current.status === "cancelled") {

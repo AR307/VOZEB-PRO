@@ -138,7 +138,9 @@ export function replaceCanvasNodeMediaMetadata(current: CanvasNodeMetadata | und
         imageBatchExpanded: undefined,
         imageTask: undefined,
         imageEditMask: undefined,
+        imageEditValidationMask: undefined,
         preserveUnmaskedPixels: undefined,
+        imageOutputBackground: undefined,
         videoTask: undefined,
         textTask: undefined,
         audioTask: undefined,
@@ -203,6 +205,23 @@ export async function resolveMetadataImageEditMask(metadata: CanvasNodeMetadata)
     return {
         id: `mask-${mask.storageKey}`,
         name: "mask.png",
+        type: mask.mimeType || "image/png",
+        dataUrl,
+        storageKey: mask.storageKey,
+        serverUrl: mask.serverUrl,
+        width: mask.width,
+        height: mask.height,
+    };
+}
+
+export async function resolveMetadataImageEditValidationMask(metadata: CanvasNodeMetadata): Promise<ReferenceImage | null | undefined> {
+    const mask = metadata.imageEditValidationMask;
+    if (!mask) return undefined;
+    const dataUrl = await resolveStoredImageDataUrl(mask.storageKey, mask.serverUrl || "");
+    if (!dataUrl) return null;
+    return {
+        id: `validation-mask-${mask.storageKey}`,
+        name: "validation-mask.png",
         type: mask.mimeType || "image/png",
         dataUrl,
         storageKey: mask.storageKey,

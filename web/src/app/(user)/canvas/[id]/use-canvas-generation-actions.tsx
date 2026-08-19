@@ -102,9 +102,18 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             const runController = startGenerationRequest(nodeId, nodeId, nodeId);
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
-            const generationContext = await hydrateNodeGenerationContext(
-                buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
-            );
+            const rawGenerationContext = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt);
+            let generationContext = rawGenerationContext;
+            if (mode === "image" || mode === "text") {
+                try {
+                    generationContext = await hydrateNodeGenerationContext(rawGenerationContext);
+                } catch (error) {
+                    finishGenerationRequest(nodeId, runController);
+                    setRunningNodeId(null);
+                    message.error(error instanceof Error ? error.message : "参考图片读取失败");
+                    return;
+                }
+            }
             const sourcePrompt = generationContext.prompt.trim();
             const panoramaPrompt = sourceNode?.type === CanvasNodeType.Panorama ? buildPanoramaPrompt(sourcePrompt, generationContext.referenceImages.length > 0) : sourcePrompt;
             const effectivePrompt = applyCameraPrompt(panoramaPrompt, sourceNode?.type === CanvasNodeType.Panorama ? undefined : sourceNode?.metadata?.cameraControl);
@@ -572,7 +581,8 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 : sourceNode.type === CanvasNodeType.Config && sourceNode.metadata?.composerContent
                   ? sourceNode.metadata.composerContent
                   : sourceNode.metadata?.prompt || node.metadata?.prompt || "";
-            const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryPromptSource));
+            const rawContext = hasSavedImageMetadata ? null : buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryPromptSource);
+            const context = rawContext && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio ? await hydrateNodeGenerationContext(rawContext) : rawContext;
             const sourcePrompt = (savedImageMetadata?.sourcePrompt || sourceNode.metadata?.sourcePrompt || context?.prompt || savedImageMetadata?.prompt || sourceNode.metadata?.prompt || node.metadata?.prompt || "").trim();
             const panoramaPrompt = node.type === CanvasNodeType.Panorama ? buildPanoramaPrompt(sourcePrompt, Boolean(savedImageMetadata?.references?.length || context?.referenceImages.length)) : sourcePrompt;
             const prompt = applyCameraPrompt(panoramaPrompt, node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Panorama ? undefined : savedImageMetadata?.cameraControl || sourceNode.metadata?.cameraControl);
@@ -659,7 +669,10 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             : item,
                     ),
                 );
-                await startAndCompleteImageTask(node.id, generationConfig, prompt, retryImages, retryMask || undefined, controller);
+                await startAndCompleteImageTask(node.id, generationConfig, prompt, retryImages, retryMask || undefined, controller, {
+                    outputBackground: node.metadata?.imageOutputBackground,
+                    outputMode: node.metadata?.imageOutputMode,
+                });
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";

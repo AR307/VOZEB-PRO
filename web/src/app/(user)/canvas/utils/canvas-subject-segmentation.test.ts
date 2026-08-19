@@ -19,16 +19,18 @@ describe("Canvas 本地主体分割", () => {
             postMessage = postMessage;
             terminate = vi.fn();
         }
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: vi.fn().mockResolvedValue(new Blob(["fixture"])) }));
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: vi.fn().mockResolvedValue(new Blob(["fixture"], { type: "image/png" })) }));
         vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
         vi.stubGlobal("Worker", FakeWorker);
         const { segmentCanvasSubject } = await import("./canvas-subject-segmentation");
+        const targetPoint = { x: 0.45, y: 0.5 };
+        const targetRegion = { x: 0.1, y: 0.2, width: 0.7, height: 0.6 };
 
-        const result = await segmentCanvasSubject("/fixture.png");
+        const result = await segmentCanvasSubject("/fixture.png", undefined, targetPoint, targetRegion);
 
         expect(result).toMatchObject({ width: 2, height: 2 });
         expect(Array.from(result.data)).toEqual(expect.arrayContaining([expect.closeTo(0.1), expect.closeTo(0.9), expect.closeTo(0.8), expect.closeTo(0.2)]));
-        expect(postMessage).toHaveBeenCalledWith({ id: 1, operation: "mask", image: bitmap }, [bitmap]);
+        expect(postMessage).toHaveBeenCalledWith({ id: 1, operation: "mask", image: bitmap, targetPoint, targetRegion, collectParts: false }, [bitmap]);
     });
 
     it("直接接收 Worker 编码后的主体与编辑蒙版 Blob", async () => {
@@ -55,7 +57,7 @@ describe("Canvas 本地主体分割", () => {
             }
             terminate = vi.fn();
         }
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: vi.fn().mockResolvedValue(new Blob(["fixture"])) }));
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: vi.fn().mockResolvedValue(new Blob(["fixture"], { type: "image/png" })) }));
         vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
         vi.stubGlobal("Worker", FakeWorker);
         const { renderCanvasSubjectLayers } = await import("./canvas-subject-segmentation");
@@ -88,7 +90,7 @@ describe("Canvas 本地主体分割", () => {
             }
             terminate() {}
         }
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: vi.fn().mockResolvedValue(new Blob(["fixture"])) }));
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: vi.fn().mockResolvedValue(new Blob(["fixture"], { type: "image/png" })) }));
         vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue({ close: vi.fn() }));
         vi.stubGlobal("Worker", FakeWorker);
         const { segmentCanvasSubject } = await import("./canvas-subject-segmentation");
@@ -97,5 +99,23 @@ describe("Canvas 本地主体分割", () => {
         const controller = new AbortController();
         controller.abort();
         await expect(segmentCanvasSubject("/fixture.png", controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    });
+
+    it("区分源图片读取失败、文件无效和解码失败", async () => {
+        vi.stubGlobal("Worker", class {});
+        vi.stubGlobal("createImageBitmap", vi.fn().mockRejectedValue(new Error("decode")));
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce({ ok: false })
+                .mockResolvedValueOnce({ ok: true, blob: vi.fn().mockResolvedValue(new Blob(["html"], { type: "text/html" })) })
+                .mockResolvedValueOnce({ ok: true, blob: vi.fn().mockResolvedValue(new Blob(["png"], { type: "image/png" })) }),
+        );
+        const { segmentCanvasSubject } = await import("./canvas-subject-segmentation");
+
+        await expect(segmentCanvasSubject("/missing.png")).rejects.toThrow("无法读取源图片");
+        await expect(segmentCanvasSubject("/not-image.png")).rejects.toThrow("源图片文件无效");
+        await expect(segmentCanvasSubject("/broken.png")).rejects.toThrow("源图片无法解码");
     });
 });

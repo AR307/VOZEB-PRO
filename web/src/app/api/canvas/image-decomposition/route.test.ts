@@ -22,6 +22,7 @@ import { POST } from "./route";
 
 describe("canvas image decomposition route", () => {
     const decomposition = {
+        strategy: "ecommerce" as const,
         width: 1000,
         height: 1000,
         backgroundDescription: "蓝色背景",

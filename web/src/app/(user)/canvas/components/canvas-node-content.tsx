@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Clock3, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
+import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Clock3, Globe2, Image as ImageIcon, Layers, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -10,7 +10,7 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasPanoramaViewer } from "./canvas-panorama-viewer";
-import { CanvasNodeType, type CanvasNodeData } from "../types";
+import { CanvasNodeType, type CanvasImageLayerAsset, type CanvasNodeData } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 
 export type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -241,7 +241,13 @@ export function UnknownNodeContent({ theme }: Pick<NodeContentRendererProps, "th
 
 export function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, onContentChange, onStopEditing, onGenerateImage }: NodeContentRendererProps) {
     const fontSize = node.metadata?.fontSize || 14;
-    const textStyle = { fontSize: `${fontSize}px`, lineHeight: `${Math.round(fontSize * 1.65)}px`, color: theme.node.text, boxSizing: "border-box" } as React.CSSProperties;
+    const textStyle = {
+        fontSize: `${fontSize}px`,
+        lineHeight: `${Math.round(fontSize * 1.65)}px`,
+        color: theme.node.text,
+        boxSizing: "border-box",
+    } as React.CSSProperties;
+    const textClassName = "thin-scrollbar block h-full w-full overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent pl-4 pr-14 pt-0 pb-4 m-0 font-mono outline-none select-text appearance-none";
 
     return (
         <div className="flex h-full w-full flex-col overflow-hidden pt-8">
@@ -264,7 +270,7 @@ export function TextContent({ node, theme, isEditingContent, textareaRef, mentio
             {isEditingContent ? (
                 <CanvasResourceMentionTextarea
                     ref={textareaRef}
-                    className="thin-scrollbar block h-full w-full resize-none overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent pl-4 pr-14 pt-0 pb-4 m-0 font-mono outline-none select-text appearance-none"
+                    className={`${textClassName} resize-none`}
                     style={textStyle}
                     value={node.metadata?.content || ""}
                     references={mentionReferences}
@@ -279,7 +285,7 @@ export function TextContent({ node, theme, isEditingContent, textareaRef, mentio
                     onWheel={(event) => event.stopPropagation()}
                 />
             ) : (
-                <div className="thin-scrollbar block h-full w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent pl-4 pr-14 pt-0 pb-4 font-mono" style={textStyle} onWheel={(event) => event.stopPropagation()}>
+                <div className={textClassName} style={textStyle} onWheel={(event) => event.stopPropagation()}>
                     {node.metadata?.content || <span style={{ color: theme.node.placeholder }}>点击编辑文字</span>}
                 </div>
             )}
@@ -314,6 +320,7 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
         );
     }
     if (!props.node.metadata?.content) return <EmptyImageContent {...props} />;
+    if (props.node.metadata.imageLayers?.length) return <ImageLayerCollectionContent node={props.node} theme={props.theme} />;
 
     return (
         <ImageContent
@@ -327,6 +334,36 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
             onSetBatchPrimary={props.onSetBatchPrimary}
             onImageDimensions={props.onImageDimensions}
         />
+    );
+}
+
+function ImageLayerCollectionContent({ node, theme }: { node: CanvasNodeData; theme: NodeContentRendererProps["theme"] }) {
+    const layers = node.metadata?.imageLayers || [];
+    return (
+        <div className="relative h-full w-full overflow-hidden rounded-3xl" style={{ background: theme.node.subtleSurface, color: theme.node.text }} data-canvas-layer-collection data-canvas-no-zoom data-canvas-no-drag>
+            <div className="flex h-8 shrink-0 items-center gap-1.5 border-b px-3 text-[11px] font-semibold" style={{ borderColor: theme.node.subtleBorder, color: theme.node.muted }}>
+                <Layers className="size-3.5" />
+                <span>{layers.length} 个透明图层</span>
+            </div>
+            <div className="hide-scrollbar grid h-[calc(100%-2rem)] grid-cols-3 gap-2 overflow-y-auto p-2.5">
+                {layers.map((layer) => (
+                    <LayerThumbnail key={layer.id} layer={layer} theme={theme} />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function LayerThumbnail({ layer, theme }: { layer: CanvasImageLayerAsset; theme: NodeContentRendererProps["theme"] }) {
+    return (
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border" style={{ background: theme.node.fill, borderColor: theme.node.subtleBorder }} title={layer.name}>
+            <div className="flex min-h-0 flex-1 items-center justify-center p-1.5" style={{ background: theme.node.fill }}>
+                <img src={imagePreviewUrl(layer.content, 512)} alt={layer.name} draggable={false} className="block h-full w-full select-none object-contain" />
+            </div>
+            <div className="truncate border-t px-1.5 py-1 text-[10px]" style={{ borderColor: theme.node.subtleBorder, color: theme.node.muted }}>
+                {layer.name}
+            </div>
+        </div>
     );
 }
 
@@ -414,9 +451,6 @@ export function ImageContent({
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
-    const layerName = node.metadata?.layerName?.trim();
-    const showTransparencyGrid = layerName === "主体" || Boolean(layerName?.includes("透明背景"));
-    const checkerColor = colorTheme === "dark" ? "rgba(255,255,255,.10)" : "rgba(100,116,139,.18)";
     const imageRef = useRef<HTMLImageElement>(null);
     const reportDimensions = useCallback(
         (image: HTMLImageElement) => {
@@ -432,20 +466,7 @@ export function ImageContent({
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
-            <div
-                className="h-full w-full overflow-hidden rounded-3xl"
-                data-canvas-transparent-preview={showTransparencyGrid ? "true" : undefined}
-                style={
-                    showTransparencyGrid
-                        ? {
-                              backgroundColor: colorTheme === "dark" ? "#18181b" : "#f8fafc",
-                              backgroundImage: `linear-gradient(45deg, ${checkerColor} 25%, transparent 25%), linear-gradient(-45deg, ${checkerColor} 25%, transparent 25%), linear-gradient(45deg, transparent 75%, ${checkerColor} 75%), linear-gradient(-45deg, transparent 75%, ${checkerColor} 75%)`,
-                              backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0",
-                              backgroundSize: "16px 16px",
-                          }
-                        : undefined
-                }
-            >
+            <div className="h-full w-full overflow-hidden rounded-3xl" style={{ background: theme.node.fill }}>
                 <img
                     ref={imageRef}
                     src={imagePreviewUrl(node.metadata!.content!, 1920)}

@@ -1,12 +1,11 @@
 "use client";
 
 import { saveAs } from "file-saver";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { getDataUrlByteSize } from "@/lib/image-utils";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalImageDownloadUrl, originalMediaDownloadUrl } from "@/lib/media-image-url";
-import { requestCanvasImageDecomposition } from "@/services/api/canvas-image-decomposition";
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { type UploadedImage } from "@/services/image-storage";
 import { defaultConfig } from "@/stores/use-config-store";
@@ -19,8 +18,8 @@ import { type CanvasImageSplitParams } from "../components/canvas-node-split-dia
 import { type CanvasImageUpscaleParams } from "../components/canvas-node-upscale-dialog";
 import { NODE_DEFAULT_SIZE } from "../constants";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasNodeData } from "../types";
-import { buildCanvasImageDecompositionData, cropDataUrl, splitDataUrl, splitSubjectAndBackgroundDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
-import { downloadCanvasMediaBundle, selectedCanvasMediaNodes } from "../utils/canvas-media-download";
+import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
+import { downloadCanvasImageLayers, downloadCanvasMediaBundle, selectedCanvasMediaNodes } from "../utils/canvas-media-download";
 import { fitNodeSize } from "../utils/canvas-node-size";
 
 import { IMAGE_PROMPT_REVERSE_PRESET, NODE_STATUS_ERROR, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, createCanvasNode } from "./canvas-page-elements";
@@ -29,6 +28,7 @@ import { applyNodeConfigPatch, buildAngleLabel, buildAnglePrompt, buildGeneratio
 
 import type { CanvasInteractions } from "./use-canvas-interactions";
 import type { CanvasPageState } from "./use-canvas-page-state";
+import { useCanvasImageLayerActions } from "./use-canvas-image-layer-actions";
 import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
 
 export function useCanvasNodeMediaActions({ state, tasks, interactions }: { state: CanvasPageState; tasks: CanvasTaskRuntime; interactions: CanvasInteractions }) {
@@ -63,7 +63,6 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         nodesRef,
     } = state;
     const { startGenerationRequest, finishGenerationRequest, startAndCompleteImageTask } = tasks;
-    const subjectOperationIdsRef = useRef(new Set<string>());
     const [selectedMediaDownloadPending, setSelectedMediaDownloadPending] = useState(false);
     const selectedMediaNodes = useMemo(() => selectedCanvasMediaNodes(nodes, selectedNodeIds), [nodes, selectedNodeIds]);
 
@@ -154,12 +153,25 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
     }, []);
 
-    const downloadNodeImage = useCallback((node: CanvasNodeData) => {
-        if ((!isCanvasImageNodeType(node.type) && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-        const image = isCanvasImageNodeType(node.type);
-        const url = image ? originalImageDownloadUrl(node.metadata.content) : originalMediaDownloadUrl(node.metadata.content);
-        saveAs(url, mediaDownloadFileName(node.id, node.metadata.mimeType, node.metadata.storageKey || node.metadata.serverUrl || node.metadata.content));
-    }, []);
+    const downloadNodeImage = useCallback(
+        async (node: CanvasNodeData) => {
+            if (node.metadata?.imageLayers?.length) {
+                try {
+                    const result = await downloadCanvasImageLayers(node, currentProject?.title || "画布");
+                    if (result.failed) message.warning(`已下载 ${result.downloaded} 层，${result.failed} 层读取失败`);
+                    else message.success(`已打包下载 ${result.downloaded} 个分层`);
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "分层下载失败");
+                }
+                return;
+            }
+            if ((!isCanvasImageNodeType(node.type) && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
+            const image = isCanvasImageNodeType(node.type);
+            const url = image ? originalImageDownloadUrl(node.metadata.content) : originalMediaDownloadUrl(node.metadata.content);
+            saveAs(url, mediaDownloadFileName(node.id, node.metadata.mimeType, node.metadata.storageKey || node.metadata.serverUrl || node.metadata.content));
+        },
+        [currentProject?.title, message],
+    );
 
     const downloadSelectedMedia = useCallback(async () => {
         if (selectedMediaDownloadPending || selectedMediaNodes.length < 2) return;
@@ -308,154 +320,7 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         setSelectedNodeIds(new Set([childId]));
         setDialogNodeId(childId);
     }, []);
-
-    const removeBackgroundImageNode = useCallback(
-        async (node: CanvasNodeData) => {
-            if (!node.metadata?.content) return;
-            if (subjectOperationIdsRef.current.has(node.id)) return message.info("正在处理这张图片，请稍候");
-            const messageKey = `canvas-subject-${node.id}`;
-            subjectOperationIdsRef.current.add(node.id);
-            message.loading({ key: messageKey, content: "正在识别并提取主体…", duration: 0 });
-            try {
-                const layers = await splitSubjectAndBackgroundDataUrl(node.metadata.content);
-                const image = await uploadCanvasImage(layers.foregroundBlob);
-                appendDerivedImageNode(node, image, "主体（透明背景）", { width: node.width, height: node.height }, { layerName: "主体（透明背景）", sourceLayerNodeId: node.id });
-                message.success({ key: messageKey, content: "已生成透明主体图层" });
-            } catch (error) {
-                message.destroy(messageKey);
-                throw error;
-            } finally {
-                subjectOperationIdsRef.current.delete(node.id);
-            }
-        },
-        [appendDerivedImageNode, message],
-    );
-
-    const splitImageLayers = useCallback(
-        async (node: CanvasNodeData) => {
-            if (!node.metadata?.content) return;
-            if (subjectOperationIdsRef.current.has(node.id)) return message.info("正在处理这张图片，请稍候");
-            const baseConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
-            if (!isAiConfigReady(baseConfig, baseConfig.model)) {
-                openConfigDialog(true);
-                return;
-            }
-            const messageKey = `canvas-layers-${node.id}`;
-            subjectOperationIdsRef.current.add(node.id);
-            message.loading({ key: messageKey, content: "正在识别商品、文字和装饰元素…", duration: 0 });
-            try {
-                const decomposition = await requestCanvasImageDecomposition({ requestId: nanoid(), source: node.metadata.content });
-                const layers = await buildCanvasImageDecompositionData(node.metadata.content, decomposition);
-                message.loading({ key: messageKey, content: `已识别 ${layers.layers.length} 个元素，正在生成独立图层…`, duration: 0 });
-                const [maskImage, uploadedLayers] = await Promise.all([
-                    uploadCanvasImage(layers.editMaskBlob),
-                    Promise.all(
-                        layers.layers.map(async (layer) => ({
-                            ...layer,
-                            image: await uploadCanvasImage(layer.blob),
-                        })),
-                    ),
-                ]);
-                const generationConfig = { ...baseConfig, size: `${layers.width}x${layers.height}` };
-                const source = canvasNodeReferenceImage(node);
-                const preservedVisuals = decomposition.backgroundPreservedVisuals.length ? `必须保留这些背景内嵌视觉：${decomposition.backgroundPreservedVisuals.join("、")}。` : "";
-                const prompt = `移除蒙版覆盖的全部独立前景元素并自然补全被遮挡的背景，保持原图背景、构图、光线、色彩和尺寸，蒙版外不要修改。${preservedVisuals}${decomposition.backgroundDescription ? `背景应延续：${decomposition.backgroundDescription}` : ""}`;
-                const backgroundId = nanoid();
-                const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
-                const outputX = node.position.x + node.width + 96;
-                let outputY = node.position.y + node.height + 28;
-                const layerNodes = uploadedLayers.map(({ candidate, image, width, height }) => {
-                    const id = nanoid();
-                    const displaySize = fitNodeSize(width, height, node.width, node.height);
-                    const layerNode = {
-                        id,
-                        type: CanvasNodeType.Image,
-                        title: `${node.title || "图片"} · ${candidate.name}`,
-                        position: { x: outputX, y: outputY },
-                        ...displaySize,
-                        metadata: {
-                            ...imageMetadata(image),
-                            prompt: node.metadata?.prompt,
-                            layerName: candidate.name,
-                            sourceLayerNodeId: node.id,
-                            imageLayer: { kind: candidate.kind, bbox: candidate.bbox, zIndex: candidate.zIndex, sourceWidth: decomposition.width, sourceHeight: decomposition.height },
-                        },
-                    } satisfies CanvasNodeData;
-                    outputY += displaySize.height + 28;
-                    return layerNode;
-                });
-                const backgroundNode: CanvasNodeData = {
-                    id: backgroundId,
-                    type: CanvasNodeType.Image,
-                    title: `${node.title || "图片"} · 背景图层`,
-                    position: { x: outputX, y: node.position.y },
-                    width: node.width,
-                    height: node.height,
-                    metadata: {
-                        prompt,
-                        status: NODE_STATUS_LOADING,
-                        ...generationMetadata,
-                        layerName: "背景",
-                        sourceLayerNodeId: node.id,
-                        imageEditMask: { storageKey: maskImage.storageKey, serverUrl: maskImage.serverUrl || maskImage.url, mimeType: maskImage.mimeType, width: maskImage.width, height: maskImage.height },
-                        preserveUnmaskedPixels: true,
-                    },
-                };
-                const children: CanvasNodeData[] = [backgroundNode, ...layerNodes];
-                setNodes((prev) => [...prev, ...children]);
-                setConnections((prev) => [...prev, ...children.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }))]);
-                setSelectedNodeIds(new Set(children.map((child) => child.id)));
-                setSelectedConnectionId(null);
-                setDialogNodeId(backgroundId);
-                setRunningNodeId(backgroundId);
-                message.loading({ key: messageKey, content: `${layerNodes.length} 个元素图层已完成，正在补全背景…`, duration: 0 });
-                const controller = startGenerationRequest(backgroundId, node.id, backgroundId);
-                try {
-                    await startAndCompleteImageTask(
-                        backgroundId,
-                        generationConfig,
-                        prompt,
-                        [source],
-                        {
-                            id: `${backgroundId}-mask`,
-                            name: "mask.png",
-                            type: maskImage.mimeType || "image/png",
-                            dataUrl: maskImage.url,
-                            storageKey: maskImage.storageKey,
-                            serverUrl: maskImage.serverUrl || maskImage.url,
-                            width: maskImage.width,
-                            height: maskImage.height,
-                        },
-                        controller,
-                    );
-                    message.success({ key: messageKey, content: `已生成 ${layerNodes.length} 个元素图层和补全背景` });
-                } catch (error) {
-                    if (isGenerationCanceled(error)) {
-                        message.destroy(messageKey);
-                        return;
-                    }
-                    const errorDetails = error instanceof Error ? error.message : "背景补全失败";
-                    const needsReview = isGenerationTaskNeedsReviewError(error);
-                    if (needsReview) {
-                        message.destroy(messageKey);
-                        setNodes((prev) => pauseCanvasGenerationReview(prev, [backgroundId], errorDetails));
-                        return;
-                    }
-                    message.error({ key: messageKey, content: errorDetails });
-                    setNodes((prev) => prev.map((item) => (item.id === backgroundId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : item)));
-                } finally {
-                    finishGenerationRequest(backgroundId, controller);
-                    setRunningNodeId(null);
-                }
-            } catch (error) {
-                message.destroy(messageKey);
-                throw error;
-            } finally {
-                subjectOperationIdsRef.current.delete(node.id);
-            }
-        },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startAndCompleteImageTask, startGenerationRequest],
-    );
+    const { removeBackgroundImageNode, splitImageLayers } = useCanvasImageLayerActions({ state, tasks });
 
     const cropImageNode = useCallback(
         async (node: CanvasNodeData, crop: CanvasImageCropRect) => {

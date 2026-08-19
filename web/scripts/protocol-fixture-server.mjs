@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGPQq/3/H4QZYAwAWewKpRUlAtEAAAAASUVORK5CYII=";
+const TRANSPARENT_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAE0lEQVQImWPQq/3PoFf7H0KAOABK+winx6MN+QAAAABJRU5ErkJggg==";
 const FALLBACK_MP4 = Buffer.from("AAAAIGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQ==", "base64");
 
 const models = [
@@ -145,12 +146,15 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     if (request.method === "POST" && ["/images/generations", "/images/edits"].includes(path)) {
         const model = requestedModel(body, request.headers["content-type"] || "");
         if (options.failImage || shouldFailRequest(request, model)) return sendJson(response, options.failImage || model.includes("-fail") ? 400 : 503, { error: { message: "fixture image failure" } });
-        return sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ b64_json: (await fixtureImage(options)).toString("base64"), revised_prompt: "protocol fixture" }] });
+        const image = requestsTransparentBackground(body, request.headers["content-type"] || "") ? Buffer.from(TRANSPARENT_PNG_BASE64, "base64") : await fixtureImage(options);
+        const images = requestsLayeredOutput(body) ? [Buffer.from(TRANSPARENT_PNG_BASE64, "base64"), await fixtureImage(options)] : [image];
+        return sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: images.map((item) => ({ b64_json: item.toString("base64"), revised_prompt: "protocol fixture" })) });
     }
     if (request.method === "POST" && ["/sdapi/v1/txt2img", "/sdapi/v1/img2img"].includes(path)) {
         return sendJson(response, 200, { images: [(await fixtureImage(options)).toString("base64")], info: "{}" });
     }
     if (request.method === "POST" && path === "/custom/images") {
+        if (requestsLayeredOutput(body)) return sendJson(response, 200, { data: { layers: [`${url.origin}/media/fixture.png?layer=1`, `${url.origin}/media/fixture.png?layer=2`] } });
         return sendJson(response, 200, { data: { image_url: `${url.origin}/media/fixture.png` } });
     }
 
@@ -250,7 +254,56 @@ function selectedToolName(payload) {
 function toolArguments(name, payload) {
     if (name === "decompose_ecommerce_image") {
         const { width, height } = imageRequestDimensions(payload);
+        if (width === 640 && height === 960) {
+            return {
+                strategy: "subject",
+                backgroundDescription: "人物后的摄影背景",
+                backgroundPreservedVisuals: [],
+                layers: [],
+            };
+        }
+        if (width === 1000 && height === 801) {
+            return {
+                strategy: "ecommerce",
+                backgroundDescription: "浅灰电商测试背景",
+                backgroundPreservedVisuals: [],
+                layers: Array.from({ length: 20 }, (_, index) => fixtureLayer("product", `元素 ${String(index + 1).padStart(2, "0")}`, 40 + (index % 5) * 190, 40 + Math.floor(index / 5) * 180, 120, 120, index + 1)),
+            };
+        }
+        if (width === 1200 && height === 720) {
+            return {
+                strategy: "ecommerce",
+                backgroundDescription: "浅灰蓝电商背景",
+                backgroundPreservedVisuals: [],
+                layers: [
+                    fixtureLayer("product", "商品组合", 240, 180, 624, 468, 3, [
+                        [395, 355],
+                        [595, 330],
+                        [525, 495],
+                        [720, 450],
+                    ]),
+                    fixtureLayer(
+                        "headline",
+                        "主标题",
+                        52,
+                        40,
+                        620,
+                        76,
+                        5,
+                        Array.from({ length: 8 }, (_, index) => [87 + index * 78, 77]),
+                    ),
+                    fixtureLayer("logo", "品牌 Logo", 968, 36, 164, 72, 7, [[1050, 72]]),
+                    fixtureLayer("badge", "促销角标", 914, 175, 140, 140, 6, [[984, 245]]),
+                    fixtureLayer("decoration", "前景装饰", 35, 465, 220, 170, 1, [
+                        [92, 550],
+                        [158, 525],
+                        [205, 580],
+                    ]),
+                ],
+            };
+        }
         return {
+            strategy: "ecommerce",
             backgroundDescription: "协议夹具蓝色渐变背景",
             backgroundPreservedVisuals: ["蓝色渐变", "柔和环境光"],
             layers: [
@@ -401,12 +454,15 @@ function imageRequestDimensions(payload) {
     return { width: Math.max(1, Number(match?.[1]) || 1024), height: Math.max(1, Number(match?.[2]) || 1024) };
 }
 
-function fixtureLayer(kind, name, x, y, width, height, zIndex) {
+function fixtureLayer(kind, name, x, y, width, height, zIndex, focusPoints = []) {
+    const bbox = { x: Math.round(x), y: Math.round(y), width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
     return {
         id: `${kind}-${zIndex}`,
+        groupId: `${kind}-${zIndex}`,
         kind,
         name,
-        bbox: { x: Math.round(x), y: Math.round(y), width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) },
+        bbox,
+        focusPoints: focusPoints.length ? focusPoints.map(([pointX, pointY]) => ({ x: pointX, y: pointY })) : [{ x: bbox.x + Math.round(bbox.width / 2), y: bbox.y + Math.round(bbox.height / 2) }],
         zIndex,
         confidence: 0.95,
     };
@@ -477,6 +533,15 @@ function requestedModel(body, contentType = "") {
     }
     const text = body.toString("utf8");
     return text.match(/name="model"\r?\n\r?\n([^\r\n]+)/i)?.[1]?.trim() || "";
+}
+
+function requestsTransparentBackground(body, contentType = "") {
+    if (String(contentType).includes("application/json")) return jsonBody(body).background === "transparent";
+    return /name="background"\r?\n\r?\ntransparent(?:\r?\n|$)/i.test(body.toString("utf8"));
+}
+
+function requestsLayeredOutput(body) {
+    return body.toString("utf8").includes("分层任务要求");
 }
 
 function shouldFailRequest(request, model) {

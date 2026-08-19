@@ -90,18 +90,55 @@ describe("CanvasNode image border", () => {
         expect(markup).toContain(`class="relative h-full w-full overflow-visible rounded-3xl border-2" style="background:transparent;border-color:${canvasThemes.light.node.stroke}"`);
     });
 
-    it("只为透明主体图层显示棋盘格预览且继续使用原图片地址", () => {
+    it("透明主体图层使用干净预览且继续使用原图片地址", () => {
         const subject = renderContent({ ...imageNode, metadata: { ...imageNode.metadata, layerName: "主体" } }, canvasThemes.light);
         const removedBackground = renderContent({ ...imageNode, metadata: { ...imageNode.metadata, layerName: "主体（透明背景）" } }, canvasThemes.light);
         const background = renderContent({ ...imageNode, metadata: { ...imageNode.metadata, layerName: "背景" } }, canvasThemes.light);
         const ordinary = renderContent(imageNode, canvasThemes.light);
 
-        expect(subject).toContain('data-canvas-transparent-preview="true"');
-        expect(removedBackground).toContain('data-canvas-transparent-preview="true"');
-        expect(subject).toContain("background-image:linear-gradient");
+        expect(subject).not.toContain('data-canvas-transparent-preview="true"');
+        expect(removedBackground).not.toContain('data-canvas-transparent-preview="true"');
+        expect(subject).not.toContain("background-image:linear-gradient");
         expect(subject).toContain("/api/reference-assets/permanent/generated-image.png?format=webp&amp;width=1920");
         expect(background).not.toContain("data-canvas-transparent-preview");
         expect(ordinary).not.toContain("data-canvas-transparent-preview");
+    });
+
+    it("分层图片使用干净预览，不渲染文字编辑框", () => {
+        const markup = renderContent(
+            {
+                ...imageNode,
+                metadata: {
+                    ...imageNode.metadata,
+                    layerName: "主标题",
+                    imageLayer: { kind: "headline", bbox: { x: 20, y: 20, width: 180, height: 40 }, zIndex: 2, sourceWidth: 1000, sourceHeight: 800 },
+                },
+            },
+            canvasThemes.light,
+        );
+
+        expect(markup).not.toContain('data-canvas-transparent-preview="true"');
+        expect(markup).not.toContain("编辑主标题");
+    });
+
+    it("把全部分层缩略图放在一个结果节点内", () => {
+        const markup = renderContent(
+            {
+                ...imageNode,
+                metadata: {
+                    ...imageNode.metadata,
+                    imageLayers: [
+                        { id: "one", name: "商品", kind: "product", content: "/api/reference-assets/one.png", width: 100, height: 100, bbox: { x: 0, y: 0, width: 100, height: 100 }, zIndex: 1 },
+                        { id: "two", name: "标题", kind: "headline", content: "/api/reference-assets/two.png", width: 100, height: 50, bbox: { x: 0, y: 0, width: 100, height: 50 }, zIndex: 2 },
+                    ],
+                },
+            },
+            canvasThemes.light,
+        );
+
+        expect(markup).toContain("data-canvas-layer-collection");
+        expect(markup).toContain("2 个透明图层");
+        expect(markup).not.toContain("linear-gradient");
     });
 });
 

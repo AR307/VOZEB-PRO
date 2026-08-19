@@ -54,20 +54,24 @@ async function resetSegmenter() {
 }
 
 self.onmessage = async (event) => {
-    const { id, image, operation = "mask", targetPoint } = event.data || {};
+    const { id, image, operation = "mask", targetPoint, targetPoints, targetRegion, collectParts = false } = event.data || {};
     try {
         if (!Number.isInteger(id) || !image || (operation !== "mask" && operation !== "layers")) throw new Error("主体分割请求无效");
         const segmenter = await getSegmenter();
         const firstPoint = normalizedPoint(targetPoint) || { x: 0.5, y: 0.5 };
-        let selected = null;
-        const points = [firstPoint, ...fallbackPoints.filter((point) => point.x !== firstPoint.x || point.y !== firstPoint.y)];
-        for (const point of points) {
-            const candidate = segmentCandidate(segmenter, image, point);
-            if (!selected || candidate.score > selected.score) selected = candidate;
+        const promptPoints = normalizedPoints(targetPoints);
+        if (!promptPoints.length) promptPoints.push(firstPoint);
+        const region = normalizedRegion(targetRegion);
+        const candidates = promptPoints.map((point) => segmentCandidate(segmenter, image, point, region, collectParts));
+        if (!collectParts && !isStrongCandidate(candidates[0], region)) {
+            for (const point of fallbackCandidatePoints(firstPoint, region, image)) candidates.push(segmentCandidate(segmenter, image, point, region, false));
         }
+        const best = candidates.reduce((selected, candidate) => betterCandidate(selected, candidate), null);
+        const selected = collectParts && region ? mergePromptedParts(candidates, best, region, promptPoints) : best;
         if (!selected || !isReliableCandidate(selected)) throw new Error("没有识别到可靠主体，请尝试局部编辑");
+        clipCandidateToRegion(selected, region);
         if (operation === "layers" && supportsWorkerImageEncoding()) {
-            const layers = await composeSubjectLayers(image, selected);
+            const layers = await composeSubjectLayers(image, selected, region);
             self.postMessage({ id, operation, ...layers });
         } else {
             self.postMessage({ id, operation, width: selected.width, height: selected.height, mask: selected.data.buffer }, [selected.data.buffer]);
@@ -80,7 +84,7 @@ self.onmessage = async (event) => {
     }
 };
 
-function segmentCandidate(segmenter, image, point) {
+function segmentCandidate(segmenter, image, point, targetRegion, keepPromptComponent) {
     const result = segmenter.segment(image, { keypoint: point });
     try {
         const masks = result.confidenceMasks || [];
@@ -89,11 +93,92 @@ function segmentCandidate(segmenter, image, point) {
         const selectedIndex = masks.reduce((best, mask, index) => (pointConfidence(mask, arrays[index], point) > pointConfidence(masks[best], arrays[best], point) ? index : best), 0);
         const selected = masks[selectedIndex];
         const data = new Float32Array(arrays[selectedIndex]);
-        const stats = maskStats(data, selected.width, selected.height);
-        return { width: selected.width, height: selected.height, data, ...stats };
+        const pointScore = pointConfidence(selected, data, point);
+        if (keepPromptComponent) retainPromptComponent(data, selected.width, selected.height, point);
+        const stats = maskStats(data, selected.width, selected.height, targetRegion);
+        return { width: selected.width, height: selected.height, data, point, pointScore, ...stats, score: stats.score * (0.5 + pointScore * 0.5) };
     } finally {
         result.close();
     }
+}
+
+function betterCandidate(best, candidate) {
+    if (!best) return candidate;
+    const candidateReliable = isReliableCandidate(candidate);
+    const bestReliable = isReliableCandidate(best);
+    if (candidateReliable !== bestReliable) return candidateReliable ? candidate : best;
+    return candidate.score > best.score ? candidate : best;
+}
+
+function mergePromptedParts(candidates, fallback, region, promptPoints) {
+    const parts = candidates.filter((candidate) => isReliableCandidate(candidate) && candidate.outsideRatio <= 0.55 && candidate.borderRatio <= 0.2);
+    if (!parts.length) return fallback;
+    const data = new Float32Array(parts[0].data.length);
+    for (const part of parts) {
+        for (let index = 0; index < data.length; index += 1) data[index] = Math.max(data[index], part.data[index]);
+    }
+    retainPromptedComponents(data, parts[0].width, parts[0].height, promptPoints);
+    const stats = maskStats(data, parts[0].width, parts[0].height, region);
+    const pointScore = Math.max(...parts.map((part) => part.pointScore));
+    return { width: parts[0].width, height: parts[0].height, data, pointScore, ...stats, score: stats.score * (0.5 + pointScore * 0.5) };
+}
+
+function retainPromptComponent(data, width, height, point) {
+    retainPromptedComponents(data, width, height, [point]);
+}
+
+function retainPromptedComponents(data, width, height, points) {
+    const foreground = new Uint8Array(data.length);
+    for (let index = 0; index < data.length; index += 1) foreground[index] = data[index] >= 0.68 ? 1 : 0;
+    const keep = new Uint8Array(data.length);
+    for (const point of points) {
+        const anchor = nearestForegroundIndex(foreground, width, height, point);
+        if (anchor < 0 || keep[anchor]) continue;
+        const queue = [anchor];
+        keep[anchor] = 1;
+        for (let cursor = 0; cursor < queue.length; cursor += 1) {
+            const index = queue[cursor];
+            const x = index % width;
+            const y = Math.floor(index / width);
+            for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+                for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+                    if ((!offsetX && !offsetY) || x + offsetX < 0 || x + offsetX >= width || y + offsetY < 0 || y + offsetY >= height) continue;
+                    const next = (y + offsetY) * width + x + offsetX;
+                    if (!foreground[next] || keep[next]) continue;
+                    keep[next] = 1;
+                    queue.push(next);
+                }
+            }
+        }
+    }
+    const softened = new Uint8Array(keep);
+    for (let index = 0; index < keep.length; index += 1) {
+        if (!keep[index]) continue;
+        const x = index % width;
+        const y = Math.floor(index / width);
+        for (let offsetY = -2; offsetY <= 2; offsetY += 1) {
+            for (let offsetX = -2; offsetX <= 2; offsetX += 1) {
+                if (x + offsetX < 0 || x + offsetX >= width || y + offsetY < 0 || y + offsetY >= height) continue;
+                const next = (y + offsetY) * width + x + offsetX;
+                if (data[next] >= 0.08) softened[next] = 1;
+            }
+        }
+    }
+    for (let index = 0; index < data.length; index += 1) if (!softened[index]) data[index] = 0;
+}
+
+function nearestForegroundIndex(foreground, width, height, point) {
+    const centerX = Math.min(width - 1, Math.max(0, Math.round(point.x * (width - 1))));
+    const centerY = Math.min(height - 1, Math.max(0, Math.round(point.y * (height - 1))));
+    for (let radius = 0; radius <= 4; radius += 1) {
+        for (let y = Math.max(0, centerY - radius); y <= Math.min(height - 1, centerY + radius); y += 1) {
+            for (let x = Math.max(0, centerX - radius); x <= Math.min(width - 1, centerX + radius); x += 1) {
+                if ((Math.abs(x - centerX) !== radius && Math.abs(y - centerY) !== radius) || !foreground[y * width + x]) continue;
+                return y * width + x;
+            }
+        }
+    }
+    return -1;
 }
 
 function pointConfidence(mask, data, point) {
@@ -102,14 +187,23 @@ function pointConfidence(mask, data, point) {
     return data[y * mask.width + x];
 }
 
-function maskStats(data, width, height) {
+function maskStats(data, width, height, targetRegion) {
     let foregroundPixels = 0;
     let borderPixels = 0;
     let foregroundBorderPixels = 0;
+    let targetPixels = 0;
+    let targetForegroundPixels = 0;
     for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
             const foreground = data[y * width + x] >= 0.5;
             if (foreground) foregroundPixels += 1;
+            const inTarget =
+                !targetRegion ||
+                (x / Math.max(1, width - 1) >= targetRegion.x && x / Math.max(1, width - 1) <= targetRegion.x + targetRegion.width && y / Math.max(1, height - 1) >= targetRegion.y && y / Math.max(1, height - 1) <= targetRegion.y + targetRegion.height);
+            if (inTarget) {
+                targetPixels += 1;
+                if (foreground) targetForegroundPixels += 1;
+            }
             if (x !== 0 && y !== 0 && x !== width - 1 && y !== height - 1) continue;
             borderPixels += 1;
             if (foreground) foregroundBorderPixels += 1;
@@ -117,7 +211,11 @@ function maskStats(data, width, height) {
     }
     const areaRatio = foregroundPixels / Math.max(1, width * height);
     const borderRatio = foregroundBorderPixels / Math.max(1, borderPixels);
-    return { areaRatio, borderRatio, score: areaRatio * (1 - areaRatio) * (1 - borderRatio) };
+    const targetCoverage = targetPixels ? targetForegroundPixels / targetPixels : 0;
+    const outsideRatio = foregroundPixels ? Math.max(0, (foregroundPixels - targetForegroundPixels) / foregroundPixels) : 1;
+    const insideRatio = foregroundPixels ? targetForegroundPixels / foregroundPixels : 0;
+    const regionScore = targetRegion ? (0.4 + insideRatio * 0.6) * (1 - outsideRatio) : 1;
+    return { areaRatio, borderRatio, targetCoverage, outsideRatio, score: areaRatio * (1 - areaRatio) * (1 - borderRatio) * regionScore };
 }
 
 function normalizedPoint(value) {
@@ -125,15 +223,73 @@ function normalizedPoint(value) {
     return { x: Math.min(1, Math.max(0, value.x)), y: Math.min(1, Math.max(0, value.y)) };
 }
 
+function normalizedPoints(value) {
+    if (!Array.isArray(value)) return [];
+    const unique = new Map();
+    for (const point of value.map(normalizedPoint).filter(Boolean)) unique.set(`${point.x.toFixed(4)}:${point.y.toFixed(4)}`, point);
+    return [...unique.values()];
+}
+
+function normalizedRegion(value) {
+    if (!value || !Number.isFinite(value.x) || !Number.isFinite(value.y) || !Number.isFinite(value.width) || !Number.isFinite(value.height) || value.width <= 0 || value.height <= 0) return null;
+    const x = Math.min(1, Math.max(0, value.x));
+    const y = Math.min(1, Math.max(0, value.y));
+    const right = Math.min(1, Math.max(x, value.x + value.width));
+    const bottom = Math.min(1, Math.max(y, value.y + value.height));
+    return { x, y, width: Math.max(0.001, right - x), height: Math.max(0.001, bottom - y) };
+}
+
+function fallbackCandidatePoints(center, region, image) {
+    if (!region) return fallbackPoints.filter((point) => point.x !== center.x || point.y !== center.y);
+    const aspect = (region.width * image.width) / Math.max(1, region.height * image.height);
+    if (aspect >= 1.6) return regionalGridPoints(center, region, [0.1, 0.23, 0.37, 0.5, 0.63, 0.77, 0.9], [0.35, 0.65]);
+    if (aspect <= 0.625) return regionalGridPoints(center, region, [0.35, 0.65], [0.1, 0.23, 0.37, 0.5, 0.63, 0.77, 0.9]);
+    const points = [
+        { x: region.x + region.width * 0.35, y: region.y + region.height * 0.35 },
+        { x: region.x + region.width * 0.65, y: region.y + region.height * 0.35 },
+        { x: region.x + region.width * 0.35, y: region.y + region.height * 0.65 },
+        { x: region.x + region.width * 0.65, y: region.y + region.height * 0.65 },
+    ];
+    const unique = new Map();
+    for (const point of points.map(normalizedPoint).filter(Boolean)) unique.set(`${point.x.toFixed(4)}:${point.y.toFixed(4)}`, point);
+    unique.delete(`${center.x.toFixed(4)}:${center.y.toFixed(4)}`);
+    return [...unique.values()];
+}
+
+function regionalGridPoints(center, region, columns, rows) {
+    const points = columns.flatMap((column) => rows.map((row) => ({ x: region.x + region.width * column, y: region.y + region.height * row })));
+    const unique = new Map();
+    for (const point of points.map(normalizedPoint).filter(Boolean)) unique.set(`${point.x.toFixed(4)}:${point.y.toFixed(4)}`, point);
+    unique.delete(`${center.x.toFixed(4)}:${center.y.toFixed(4)}`);
+    return [...unique.values()];
+}
+
+function clipCandidateToRegion(candidate, region) {
+    if (!region) return;
+    for (let y = 0; y < candidate.height; y += 1) {
+        for (let x = 0; x < candidate.width; x += 1) {
+            if (!pointInRegion(x / Math.max(1, candidate.width - 1), y / Math.max(1, candidate.height - 1), region)) candidate.data[y * candidate.width + x] = 0;
+        }
+    }
+}
+
+function pointInRegion(x, y, region) {
+    return !region || (x >= region.x && x <= region.x + region.width && y >= region.y && y <= region.y + region.height);
+}
+
 function isReliableCandidate(candidate) {
-    return candidate.areaRatio >= 0.01 && candidate.areaRatio <= 0.95 && candidate.borderRatio <= 0.5;
+    return candidate.pointScore >= 0.5 && candidate.areaRatio >= 0.01 && candidate.areaRatio <= 0.95 && candidate.borderRatio <= 0.5;
+}
+
+function isStrongCandidate(candidate, region) {
+    return isReliableCandidate(candidate) && (!region || candidate.outsideRatio <= 0.2);
 }
 
 function supportsWorkerImageEncoding() {
     return typeof OffscreenCanvas === "function" && typeof OffscreenCanvas.prototype.convertToBlob === "function";
 }
 
-async function composeSubjectLayers(image, subjectMask) {
+async function composeSubjectLayers(image, subjectMask, targetRegion) {
     const width = image.width;
     const height = image.height;
     const foregroundCanvas = new OffscreenCanvas(width, height);
@@ -148,7 +304,9 @@ async function composeSubjectLayers(image, subjectMask) {
     let backgroundPixels = 0;
     for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
-            const confidence = sampleSubjectConfidence(subjectMask, x, y, width, height);
+            const normalizedX = width === 1 ? 0 : x / (width - 1);
+            const normalizedY = height === 1 ? 0 : y / (height - 1);
+            const confidence = pointInRegion(normalizedX, normalizedY, targetRegion) ? sampleSubjectConfidence(subjectMask, x, y, width, height) : 0;
             const offset = (y * width + x) * 4;
             foreground.data[offset + 3] = Math.round(foreground.data[offset + 3] * confidence);
             editMask.data[offset] = 255;

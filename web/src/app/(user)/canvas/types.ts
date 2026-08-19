@@ -136,9 +136,11 @@ export type CanvasNodeMetadata = {
         kind: CanvasImageLayerKind;
         bbox: CanvasImageLayerBox;
         zIndex: number;
+        groupId?: string;
         sourceWidth: number;
         sourceHeight: number;
     };
+    imageLayers?: CanvasImageLayerAsset[];
     imageEditMask?: {
         storageKey: string;
         serverUrl?: string;
@@ -146,7 +148,16 @@ export type CanvasNodeMetadata = {
         width?: number;
         height?: number;
     };
+    imageEditValidationMask?: {
+        storageKey: string;
+        serverUrl?: string;
+        mimeType?: string;
+        width?: number;
+        height?: number;
+    };
     preserveUnmaskedPixels?: boolean;
+    imageOutputBackground?: "opaque" | "transparent";
+    imageOutputMode?: "layers";
     internalOnly?: boolean;
     cameraControl?: CameraControlOptions;
     panoramaProjection?: "equirectangular";
@@ -186,6 +197,21 @@ export type CanvasNodeMetadata = {
         id: string;
         model: string;
     };
+};
+
+export type CanvasImageLayerAsset = {
+    id: string;
+    name: string;
+    kind: CanvasImageLayerKind;
+    content: string;
+    storageKey?: string;
+    serverUrl?: string;
+    mimeType?: string;
+    width: number;
+    height: number;
+    bbox?: CanvasImageLayerBox;
+    zIndex: number;
+    groupId?: string;
 };
 
 export type CanvasNodeData = {

@@ -3,10 +3,124 @@ import { readFile } from "node:fs/promises";
 
 import { expect, test, type Locator } from "@playwright/test";
 import { unzipSync } from "fflate";
+import sharp from "sharp";
 
 import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, expectNoHorizontalOverflow, node, readCanvasProject } from "./canvas-e2e-helpers";
 
 test.describe.configure({ mode: "serial" });
+
+test("canvas smart layering keeps every image from one upstream task in one collection", async ({ page, request }) => {
+    const imageTaskRequests: Array<{ config?: { outputBackground?: string; outputMode?: string } }> = [];
+    let decompositionRequests = 0;
+    let subjectWorkerRequests = 0;
+    page.on("request", (current) => {
+        const path = new URL(current.url()).pathname;
+        if (current.method() === "POST" && path === "/api/image-tasks") imageTaskRequests.push((current.postDataJSON() || {}) as { config?: { outputBackground?: string; outputMode?: string } });
+        if (current.method() === "POST" && path === "/api/canvas/image-decomposition") decompositionRequests += 1;
+        if (path.endsWith("/canvas/subject-segmenter-worker.js")) subjectWorkerRequests += 1;
+    });
+    const sourceBytes = await fiveElementFixture();
+    const upload = await request.post("/api/reference-assets", {
+        data: { type: "image", persistent: false, dataUrl: `data:image/png;base64,${sourceBytes.toString("base64")}`, originalName: "ecommerce-source.png" },
+    });
+    expect(upload.ok(), await upload.text()).toBe(true);
+    const sourceAsset = (await upload.json()) as { key: string; url: string; mimeType: string };
+    const project = await createCanvasProject(request, {
+        title: `Canvas OCR 分层 ${randomUUID().slice(0, 8)}`,
+        viewport: { x: 80, y: 100, k: 0.8 },
+        nodes: [node("source-image", "image", 100, 120, 360, 216, { content: sourceAsset.url, serverUrl: sourceAsset.url, storageKey: sourceAsset.key, mimeType: sourceAsset.mimeType, naturalWidth: 1200, naturalHeight: 720 })],
+        connections: [],
+    });
+    const projectPath = `/api/canvas/projects/${project.id}`;
+
+    try {
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        await page.locator('[data-node-id="source-image"]').click();
+        await page.getByRole("button", { name: "智能分层", exact: true }).click();
+        const generated = page.locator('[data-node-id]:not([data-node-id="source-image"])');
+        await expect(generated.first()).toBeVisible({ timeout: 90_000 });
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).nodes.length, { timeout: 90_000 }).toBe(2);
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).connections.length, { timeout: 90_000 }).toBe(1);
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).nodes.find((item) => item.metadata?.imageLayers)?.metadata?.imageLayers?.length, { timeout: 90_000 }).toBe(2);
+        const saved = await readCanvasProject(request, projectPath);
+        const layerNode = saved.nodes.find((item) => item.metadata?.imageLayers);
+        expect(layerNode?.metadata?.imageLayers).toHaveLength(2);
+        for (const layer of layerNode?.metadata?.imageLayers || []) {
+            expect(layer).toMatchObject({ content: expect.any(String), storageKey: expect.any(String) });
+            const response = await request.get(String(layer.serverUrl || layer.content));
+            expect(response.ok(), await response.text()).toBe(true);
+            const layerBytes = await response.body();
+            const image = sharp(layerBytes);
+            await expect(image.metadata()).resolves.toMatchObject({ format: "png", width: expect.any(Number), height: expect.any(Number), hasAlpha: true });
+        }
+        expect(imageTaskRequests, "智能分层必须只创建一个上游图片任务").toHaveLength(1);
+        expect(decompositionRequests, "智能分层不得再请求 bbox 识别接口").toBe(0);
+        expect(imageTaskRequests[0]?.config?.outputBackground).toBeUndefined();
+        expect(imageTaskRequests[0]?.config?.outputMode).toBe("layers");
+        expect(subjectWorkerRequests, "智能分层不得再加载本地分割 Worker").toBe(0);
+        await page.locator(`[data-node-id="${layerNode!.id}"]`).click();
+        const downloadPromise = page.waitForEvent("download");
+        await page.getByRole("button", { name: "下载全部分层", exact: true }).click();
+        const download = await downloadPromise;
+        const downloadPath = await download.path();
+        expect(downloadPath).not.toBeNull();
+        const entries = Object.keys(unzipSync(await readFile(downloadPath!)));
+        expect(entries).toHaveLength(2);
+        expect(entries.every((name) => /[.]png$/i.test(name))).toBe(true);
+        const derivedNodes = saved.nodes.filter((item) => item.id !== "source-image");
+        expect(derivedNodes).toHaveLength(1);
+        const visibleGeneratedNode = generated.first();
+        await visibleGeneratedNode.click();
+        await expect(visibleGeneratedNode.locator(":scope > div").first()).toHaveCSS("border-color", "rgb(47, 128, 255)");
+    } finally {
+        try {
+            await deleteCanvasProject(request, project.id);
+        } finally {
+            const cleanup = await request.delete("/api/media-assets", { data: { storageKeys: [sourceAsset.key] } });
+            expect(cleanup.ok(), await cleanup.text()).toBe(true);
+        }
+    }
+});
+
+test("canvas person background removal keeps the original local cutout path", async ({ page, request }) => {
+    const imageTaskRequests: Array<{ config?: { outputBackground?: string } }> = [];
+    page.on("request", (current) => {
+        if (current.method() === "POST" && new URL(current.url()).pathname === "/api/image-tasks") imageTaskRequests.push((current.postDataJSON() || {}) as { config?: { outputBackground?: string } });
+    });
+    const sourceBytes = await plainSubjectFixture();
+    const upload = await request.post("/api/reference-assets", {
+        data: { type: "image", persistent: false, dataUrl: `data:image/png;base64,${sourceBytes.toString("base64")}`, originalName: "plain-person.png" },
+    });
+    expect(upload.ok(), await upload.text()).toBe(true);
+    const sourceAsset = (await upload.json()) as { key: string; url: string; mimeType: string };
+    const project = await createCanvasProject(request, {
+        title: `Canvas 人物分层 ${randomUUID().slice(0, 8)}`,
+        viewport: { x: 80, y: 100, k: 0.75 },
+        nodes: [node("source-image", "image", 100, 120, 267, 400, { content: sourceAsset.url, serverUrl: sourceAsset.url, storageKey: sourceAsset.key, mimeType: sourceAsset.mimeType, naturalWidth: 640, naturalHeight: 960 })],
+        connections: [],
+    });
+    const projectPath = `/api/canvas/projects/${project.id}`;
+
+    try {
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        await page.locator('[data-node-id="source-image"]').click();
+        await page.getByRole("button", { name: "消除背景", exact: true }).click();
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).nodes.length, { timeout: 120_000 }).toBe(2);
+        const saved = await readCanvasProject(request, projectPath);
+        const subject = saved.nodes.find((item) => item.metadata?.layerName === "主体（透明背景）");
+
+        expect(subject?.metadata).toMatchObject({ status: "success", storageKey: expect.any(String) });
+        expect(subject?.metadata?.imageTask).toBeUndefined();
+        expect(imageTaskRequests, "人物去背不得创建图片生成任务").toHaveLength(0);
+    } finally {
+        try {
+            await deleteCanvasProject(request, project.id);
+        } finally {
+            const cleanup = await request.delete("/api/media-assets", { data: { storageKeys: [sourceAsset.key] } });
+            expect(cleanup.ok(), await cleanup.text()).toBe(true);
+        }
+    }
+});
 
 test("canvas layer tools, transparent preview, Agent node simplification and auto layout stay usable", async ({ page, request }) => {
     const project = await createCanvasProject(request, {
@@ -67,7 +181,7 @@ test("canvas layer tools, transparent preview, Agent node simplification and aut
         await expectCanvasSaved(page);
 
         const sourceImage = page.locator('[data-node-id="source-image"]');
-        await expect(sourceImage.locator('[data-canvas-transparent-preview="true"]')).toBeVisible();
+        await expect(sourceImage.locator('[data-canvas-transparent-preview="true"]')).toHaveCount(0);
         await expect(page.locator('[data-node-id="agent-output"] [data-canvas-transparent-preview]')).toHaveCount(0);
         await sourceImage.hover();
         await expect(page.locator("[data-canvas-hover-toolbar]")).toHaveCount(0);
@@ -288,6 +402,39 @@ test("canvas face dialog keeps detection, close control and intensity slider usa
         await deleteCanvasProject(request, project.id);
     }
 });
+
+async function fiveElementFixture() {
+    const svg = `<svg width="1200" height="720" xmlns="http://www.w3.org/2000/svg">
+        <rect width="1200" height="720" fill="#eef4f7"/>
+        <g fill="#172033">${Array.from({ length: 8 }, (_, index) => `<rect x="${60 + index * 78}" y="48" width="54" height="58" rx="8"/>`).join("")}</g>
+        <g stroke="#ffffff" stroke-width="6">
+            <rect x="270" y="250" width="250" height="210" rx="28" fill="#61a889"/>
+            <rect x="470" y="210" width="250" height="240" rx="28" fill="#84bd91"/>
+            <rect x="390" y="390" width="270" height="210" rx="28" fill="#a3cc9b"/>
+            <rect x="610" y="330" width="220" height="240" rx="28" fill="#76a48d"/>
+        </g>
+        <rect x="980" y="48" width="140" height="48" rx="16" fill="#e53935"/>
+        <circle cx="984" cy="245" r="62" fill="#f8bd3e" stroke="#ffffff" stroke-width="6"/>
+        <g fill="#d7e5ed" stroke="#ffffff" stroke-width="5"><circle cx="92" cy="550" r="45"/><circle cx="158" cy="525" r="54"/><circle cx="205" cy="580" r="42"/></g>
+    </svg>`;
+    return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+async function plainSubjectFixture() {
+    const head = await sharp({ create: { width: 180, height: 180, channels: 4, background: "#f0b790" } })
+        .png()
+        .toBuffer();
+    const body = await sharp({ create: { width: 290, height: 520, channels: 4, background: "#274c77" } })
+        .png()
+        .toBuffer();
+    return sharp({ create: { width: 640, height: 960, channels: 4, background: "#dce7ef" } })
+        .composite([
+            { input: body, left: 175, top: 350 },
+            { input: head, left: 230, top: 240 },
+        ])
+        .png()
+        .toBuffer();
+}
 
 async function expectCloseControlSeparated(dialog: Locator) {
     const closeButton = dialog.locator(".ant-modal-close");

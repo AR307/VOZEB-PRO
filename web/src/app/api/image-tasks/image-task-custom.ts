@@ -1,12 +1,12 @@
 import type { ImageTask } from "@/lib/server/image-task-store";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
-import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
+import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString, readProviderValue } from "@/lib/server/provider-task-config";
 import { buildYumengImageRequest, resolveYumengImageResolution } from "@/lib/yumeng-model-center";
 
 import { publicImageReferenceRequestUrl } from "./image-task-openai";
 import { IMAGE_TASK_POLL_INTERVAL_MS, type ImageApiResponse, type ImageTaskResult } from "./image-task-types";
 import {
-    findImageResult,
+    findImageResults,
     imagePointsIdempotencyKey,
     imageSubmissionFetch,
     imageSubmissionResponseError,
@@ -24,6 +24,7 @@ import {
     taskHeaders,
     taskUrl,
     withSystemPrompt,
+    withImageOutputInstructions,
     ImageUpstreamTerminalError,
 } from "./image-task-support";
 
@@ -40,9 +41,10 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
             task.references.map((reference, index) => (inlineReferences ? imageReferenceToDataUrl(reference, reference.name || `reference-${index + 1}.png`, origin, cookie) : publicImageReferenceRequestUrl(reference, origin, publicOrigin, context))),
         )
     ).filter(Boolean);
+    const outputCount = config.outputMode === "layers" ? undefined : 1;
     const values = {
         model: config.model,
-        prompt: withSystemPrompt(config, task.prompt),
+        prompt: withSystemPrompt(config, withImageOutputInstructions(config, task.prompt)),
         size,
         ratio: imageRequestAspectRatio(config.size || "auto"),
         aspect_ratio: imageRequestAspectRatio(config.size || "auto"),
@@ -50,10 +52,12 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         width,
         height,
         quality: config.quality || "auto",
-        n: 1,
-        count: 1,
-        num_images: 1,
-        batch_size: 1,
+        background: config.outputBackground || "opaque",
+        output_format: config.outputBackground === "transparent" ? "png" : "",
+        n: outputCount,
+        count: outputCount,
+        num_images: outputCount,
+        batch_size: outputCount,
         image: images[0] || "",
         images,
     };
@@ -111,8 +115,10 @@ export async function pollCustomImageTask(task: ImageTask, taskId: string, reque
 }
 
 function configuredImageResult(data: ImageApiResponse, baseUrl: string, task: ImageTask): ImageTaskResult | null {
-    const value = readProviderString(data, task.config.advancedConfig?.resultField, []);
-    return value ? findImageResult(value, baseUrl, task.config) : null;
+    const configured = findImageResults(readProviderValue(data, task.config.advancedConfig?.resultField), baseUrl, task.config);
+    const discovered = findImageResults(data, baseUrl, task.config);
+    const images = discovered.length > configured.length ? discovered : configured;
+    return images.length ? { ...images[0], results: images } : null;
 }
 
 const STATUS_KEYS = ["status", "state", "task_status", "taskStatus"];
