@@ -29,6 +29,7 @@ type RequestOptions = {
     generationSlotId?: string;
     outputBackground?: "opaque" | "transparent";
     outputMode?: "layers";
+    layerBatch?: { grant: string; slotId: string };
 };
 
 export type ImageGenerationTask = {
@@ -105,6 +106,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
             prompt,
             references: taskReferences,
             mask: taskMask,
+            layerBatch: options?.layerBatch,
             source: options?.logSource || "image-workbench",
             title: options?.logTitle || "",
             context: taskContext(options),
@@ -116,6 +118,25 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
     if (!response.ok) throw new GenerationTaskRequestError(await readFetchError(response, "创建图片任务失败"), response.status, false, readGenerationRetryAfterMs(response.headers));
     const payload = (await response.json()) as ImageTaskPayload;
     if (!payload.task?.id) throw new Error(payload.error || "创建图片任务失败");
+    return payload.task;
+}
+
+export async function recoverImageGenerationTask(taskId: string, options?: Pick<RequestOptions, "signal">) {
+    const response = await fetch(`/api/image-tasks/${encodeURIComponent(taskId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "recover" }),
+        signal: options?.signal,
+    });
+    throwIfClientSessionExpired(response);
+    syncUserPointsFromHeaders(response.headers, "system");
+    if (!response.ok) throw new GenerationTaskRequestError(await readFetchError(response, "重新检查图片任务失败"), response.status, false, readGenerationRetryAfterMs(response.headers));
+    const payload = (await response.json()) as ImageTaskPayload;
+    if (!payload.task) throw new Error(payload.error || "重新检查图片任务失败");
+    if (payload.task.needsReview) throw new GenerationTaskNeedsReviewError(payload.task.reviewReason);
+    if (payload.task.status === "error" || payload.task.status === "cancelled") {
+        throw new ImageGenerationTaskTerminalError(payload.task.error || (payload.task.status === "cancelled" ? "图片任务已取消" : "图片生成失败"), payload.task.canRetry === true);
+    }
     return payload.task;
 }
 

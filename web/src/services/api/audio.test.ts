@@ -6,7 +6,7 @@ vi.mock("@/stores/use-config-store", () => ({
     resolveModelRequestConfig: vi.fn((config: Record<string, unknown>, model: string) => ({ ...config, model, apiSource: "system" })),
 }));
 
-import { createAudioGenerationTask, requestAudioGeneration, waitForAudioGenerationTask } from "./audio";
+import { createAudioGenerationTask, recoverAudioGenerationTask, requestAudioGeneration, waitForAudioGenerationTask } from "./audio";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const config = {
@@ -112,6 +112,14 @@ describe("audio API service", () => {
 
         await expect(waitForAudioGenerationTask(config, { id: "audio-review", status: "running", model: "voice" })).rejects.toThrow("音频提交结果无法确认");
         expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("checks the original audio task without creating another task", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "audio-original", status: "running", model: "voice" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(recoverAudioGenerationTask("audio-original")).resolves.toMatchObject({ id: "audio-original" });
+        expect(fetchMock).toHaveBeenCalledWith("/api/audio-tasks/audio-original", expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "recover" }) }));
     });
 });
 

@@ -135,6 +135,11 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, option
             latestFailedTask = { taskId: payload.data.taskId, title: payload.data.title };
             handlers.onAssistant(`「${payload.data.title || "创作任务"}」执行失败：${payload.data.error || "生成服务暂时不可用"}`, { taskType: undefined, nodeIds: [], ...latestFailedTask, runId });
         });
+        listen("task.needs_review", (event) => {
+            const payload = read<{ data?: { title?: string; ops?: CanvasAgentOp[] } }>(event);
+            if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
+            reportStage({ key: "paused", text: `「${payload.data?.title || "创作任务"}」的上游创建结果待确认` });
+        });
         listen("task.retry.requested", (event) => {
             const payload = read<{ data?: { ops?: CanvasAgentOp[] } }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);

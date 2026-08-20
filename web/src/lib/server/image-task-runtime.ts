@@ -74,7 +74,7 @@ export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string
     const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
     try {
         const result = usesDeclarativeImageProtocol(task.config.advancedConfig?.protocol)
-            ? await pollCustomImageTask(task, upstream.id, upstream.pollBaseUrl, authContext, true)
+            ? await pollCustomImageTask(task, upstream.id, upstream.mediaBaseUrl, upstream.pollBaseUrl, authContext, true)
             : await pollOpenAiImageTask(task.config, upstream.id, upstream.mediaBaseUrl, upstream.pollBaseUrl, authContext, upstream.explicitPollUrl || "", true);
         return await handleImageProviderResult(task, { ...result, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
     } catch (error) {
@@ -91,7 +91,7 @@ export async function queryCancelledImageTaskUpstreamStep(task: ImageTask, origi
     const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
     try {
         const result = usesDeclarativeImageProtocol(task.config.advancedConfig?.protocol)
-            ? await pollCustomImageTask(task, upstream.id, upstream.pollBaseUrl, authContext, true)
+            ? await pollCustomImageTask(task, upstream.id, upstream.mediaBaseUrl, upstream.pollBaseUrl, authContext, true)
             : await pollOpenAiImageTask(task.config, upstream.id, upstream.mediaBaseUrl, upstream.pollBaseUrl, authContext, upstream.explicitPollUrl || "", true);
         return result.pending ? { state: "pending" as const, status: "processing" } : { state: "terminal" as const, status: "completed" };
     } catch (error) {

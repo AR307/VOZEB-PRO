@@ -252,11 +252,56 @@ export async function pollServerVideoTask(task: VideoGenerationTask, options?: R
     const response = await fetch(`/api/video-tasks/${encodeURIComponent(task.serverTaskId || task.id)}`, { cache: "no-store", signal: options?.signal });
     throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, "system");
-    const payload = (await response.json().catch(() => ({}))) as { task?: GenerationTaskExecutionState & { status?: string; result?: VideoGenerationResult; error?: string; canRetry?: boolean }; error?: string };
+    const payload = (await response.json().catch(() => ({}))) as ServerVideoTaskPayload;
     if (!response.ok) throw new Error(payload.error || "后台视频任务查询失败");
-    if (payload.task?.needsReview) return { status: "failed", error: payload.task.reviewReason || GENERATION_TASK_NEEDS_REVIEW_MESSAGE, needsReview: true };
-    if (payload.task?.status === "success") return { status: "completed", result: payload.task.result || {} };
-    if (payload.task?.status === "error" || payload.task?.status === "cancelled") return { status: "failed", error: payload.task.error || "视频生成失败", canRetry: payload.task.canRetry === true };
+    return serverVideoTaskState(payload.task);
+}
+
+export async function recoverVideoGenerationTask(task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTask> {
+    const taskId = task.serverTaskId || task.id;
+    const response = await fetch(`/api/video-tasks/${encodeURIComponent(taskId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "recover" }),
+        signal: options?.signal,
+    });
+    throwIfClientSessionExpired(response);
+    syncUserPointsFromHeaders(response.headers, "system");
+    const payload = (await response.json().catch(() => ({}))) as ServerVideoTaskPayload;
+    if (!response.ok || !payload.task) throw new Error(payload.error || "重新检查视频任务失败");
+    const state = serverVideoTaskState(payload.task);
+    if (state.status === "failed") {
+        if (state.needsReview) throw new GenerationTaskNeedsReviewError(state.error);
+        throw new VideoGenerationUpstreamError(state.error, state.canRetry !== false);
+    }
+    return {
+        ...task,
+        id: payload.task.id || taskId,
+        provider: "generation",
+        model: payload.task.model || task.model,
+        pollPath: "server",
+        serverTaskId: payload.task.id || taskId,
+        durationSeconds: payload.task.durationSeconds || task.durationSeconds,
+    };
+}
+
+type ServerVideoTaskPayload = {
+    task?: GenerationTaskExecutionState & {
+        id?: string;
+        model?: string;
+        status?: string;
+        durationSeconds?: number;
+        result?: VideoGenerationResult;
+        error?: string;
+        canRetry?: boolean;
+    };
+    error?: string;
+};
+
+function serverVideoTaskState(task?: ServerVideoTaskPayload["task"]): VideoGenerationTaskState {
+    if (task?.needsReview) return { status: "failed", error: task.reviewReason || GENERATION_TASK_NEEDS_REVIEW_MESSAGE, needsReview: true };
+    if (task?.status === "success") return { status: "completed", result: task.result || {} };
+    if (task?.status === "error" || task?.status === "cancelled") return { status: "failed", error: task.error || "视频生成失败", canRetry: task.canRetry === true };
     return { status: "pending" };
 }
 

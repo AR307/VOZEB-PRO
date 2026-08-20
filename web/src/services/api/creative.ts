@@ -42,7 +42,7 @@ export type CreativeAgentRun = {
         watermark?: boolean;
         speed?: number;
         count?: number;
-        status: "ready" | "running" | "completed" | "failed" | "cancelled";
+        status: "ready" | "running" | "needs_review" | "completed" | "failed" | "cancelled";
         error?: string;
     }>;
     cancellation?: { pendingCount: number };

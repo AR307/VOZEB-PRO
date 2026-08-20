@@ -29,7 +29,14 @@ export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
 export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
 
 class AgentChildTaskTerminalError extends Error {}
-class AgentChildTaskDeferredError extends Error {}
+class AgentChildTaskDeferredError extends Error {
+    constructor(
+        message: string,
+        readonly needsReview = false,
+    ) {
+        super(message);
+    }
+}
 
 export async function canContinue(id: string, executionId: string) {
     const run = await getAgentRun(id);
@@ -418,7 +425,7 @@ export async function executeTasks(runId: string, origin: string, cookie: string
         const run = await getAgentRun(runId);
         if (!run) return;
         const completed = new Set(run.tasks.filter((task) => task.status === "completed").map((task) => task.id));
-        const ready = run.tasks.filter((task) => (task.status === "ready" || task.status === "running") && task.dependencies.every((id) => completed.has(id))).slice(0, settings.generationConcurrency.agent);
+        const ready = run.tasks.filter((task) => (task.status === "ready" || task.status === "running" || task.status === "needs_review") && task.dependencies.every((id) => completed.has(id))).slice(0, settings.generationConcurrency.agent);
         if (!ready.length) {
             if (run.tasks.every((task) => task.status === "completed")) {
                 if (!run.reviewed && shouldBlockOnReview(run)) {
@@ -478,6 +485,13 @@ export async function executeTasks(runId: string, origin: string, cookie: string
             return;
         }
         const results = await Promise.all(ready.map((task) => runTaskWithRetry(runId, task, origin, cookie, executionId, settings)));
+        if (results.some((result) => result === "needs_review")) {
+            const latest = await getAgentRun(runId);
+            if (latest?.status === "running") {
+                await updateAgentRunById(runId, { status: "paused", executionId: undefined }, { type: "run.paused", data: { message: "上游创建结果待确认，任务已暂停并保留原任务身份" } }, ["running"], executionId);
+            }
+            return;
+        }
         if (results.some((result) => result === "deferred")) return;
     }
 }
@@ -593,7 +607,7 @@ export async function refundTextResponse(userId: string, model: string, headers:
 }
 
 export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin: string, cookie: string, executionId: string, settings?: Awaited<ReturnType<typeof getAuthSettings>>) {
-    const resumeExisting = task.childTasks?.some((child) => child.status === "pending") || (task.status === "running" && task.taskId && !task.childTasks?.length);
+    const resumeExisting = task.childTasks?.some((child) => child.status === "pending" || child.status === "needs_review") || ((task.status === "running" || task.status === "needs_review") && task.taskId && !task.childTasks?.length);
     const attempt = resumeExisting ? Math.max(1, task.attempts) : task.attempts + 1;
     if (!(await canContinue(runId, executionId))) return;
     if (!resumeExisting && !(await patchTask(runId, task.id, { status: "running", attempts: attempt, error: undefined }, "task.running", executionId))) return;
@@ -630,6 +644,11 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         if (error instanceof AgentChildTaskDeferredError) {
             const latest = await getAgentRun(runId);
             const latestTask = latest?.tasks.find((item) => item.id === task.id);
+            if (error.needsReview && latestTask && (await canContinue(runId, executionId))) {
+                const childTasks = latestTask.childTasks?.map((child) => (child.status === "pending" || child.status === "needs_review" ? { ...child, status: "needs_review" as const, error: error.message } : child));
+                await patchTask(runId, task.id, { status: "needs_review", error: error.message, ...(childTasks ? { childTasks } : {}) }, "task.needs_review", executionId);
+                return "needs_review" as const;
+            }
             if (latestTask && latestTask.error !== error.message && (await canContinue(runId, executionId))) {
                 await patchTask(runId, task.id, { error: error.message }, "task.waiting", executionId);
             }
@@ -755,7 +774,7 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                 await patchTask(run.id, task.id, { assetIds }, "task.child.restored", executionId);
                 return { index, result: child.result, taskId, assetIds };
             }
-            const result = await pollTask(origin, task.type === "video" ? "/api/video-tasks" : path, taskId, cookie, run.id, task.type, executionId);
+            const result = await pollTask(origin, task.type === "video" ? "/api/video-tasks" : path, taskId, cookie, run.id, task.type, executionId, child?.status === "needs_review");
             const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result }, result, [taskId]);
             const assetIds = registered.map((asset) => asset.id);
             const completedChild = { id: taskId, status: "completed" as const, attempt: child?.attempt || attempt, result };
@@ -826,12 +845,15 @@ export function directCanvasTextContent(task: AgentRunTask) {
     return plain?.[1]?.trim() || null;
 }
 
-export async function pollTask(origin: string, path: string, taskId: string, cookie: string, runId: string, type: AgentRunTask["type"], executionId: string) {
+export async function pollTask(origin: string, path: string, taskId: string, cookie: string, runId: string, type: AgentRunTask["type"], executionId: string, recoverNeedsReview = false) {
     void type;
     if (!(await canContinue(runId, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
     let response: Response;
     try {
-        response = await fetchInternalApi(`${origin}${path}/${encodeURIComponent(taskId)}`, { headers: runtimeRequestHeaders(cookie), cache: "no-store" });
+        response = await fetchInternalApi(`${origin}${path}/${encodeURIComponent(taskId)}`, {
+            ...(recoverNeedsReview ? { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify({ action: "recover" }) } : { headers: runtimeRequestHeaders(cookie) }),
+            cache: "no-store",
+        });
     } catch (error) {
         throw new AgentChildTaskDeferredError(error instanceof Error ? error.message : "生成任务查询暂时不可用");
     }
@@ -845,7 +867,7 @@ export async function pollTask(origin: string, path: string, taskId: string, coo
     } catch {
         throw new AgentChildTaskDeferredError("生成任务状态暂时无法解析");
     }
-    if (payload.task?.needsReview) throw new AgentChildTaskDeferredError("上游创建状态待人工确认");
+    if (payload.task?.needsReview) throw new AgentChildTaskDeferredError("上游创建状态待确认", true);
     const terminal = agentChildTaskTerminal(payload.task?.status);
     if (terminal === "success") return payload.task?.result;
     if (terminal === "error") throw new AgentChildTaskTerminalError(payload.task?.error || "生成任务失败");

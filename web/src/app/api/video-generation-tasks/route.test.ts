@@ -189,6 +189,45 @@ describe("video generation candidate failover", () => {
         expect(upstreamBody).not.toHaveProperty("quality");
     });
 
+    it("passes exact video dimensions, custom clarity, audio, duration, and watermark upstream", async () => {
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "custom-video", status: "queued" }));
+
+        const response = await POST(
+            request({
+                model: "video",
+                size: "1440x1920",
+                vquality: "2160",
+                videoSeconds: "12",
+                videoGenerateAudio: false,
+                videoWatermark: true,
+            }),
+        );
+        const upstreamBody = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0] as [string, RequestInit])[1].body));
+
+        expect(response.status).toBe(200);
+        expect(upstreamBody).toMatchObject({
+            size: "1440x1920",
+            width: 1440,
+            height: 1920,
+            resolution: "2160p",
+            quality: "2160p",
+            duration: 12,
+            seconds: 12,
+            generate_audio: false,
+            watermark: true,
+        });
+    });
+
+    it("keeps a named custom video clarity instead of rewriting it", async () => {
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "custom-clarity", status: "queued" }));
+
+        const response = await POST(request({ model: "video", vquality: "4K", videoSeconds: "5" }));
+        const upstreamBody = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0] as [string, RequestInit])[1].body));
+
+        expect(response.status).toBe(200);
+        expect(upstreamBody).toMatchObject({ resolution: "4K", quality: "4K" });
+    });
+
     it("does not retry another binding after an ambiguous 2xx response", async () => {
         mocks.fetchInternalApi.mockResolvedValue(new Response("not-json", { status: 200 }));
 

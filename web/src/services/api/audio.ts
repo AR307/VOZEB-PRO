@@ -1,5 +1,5 @@
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
-import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
+import { GenerationTaskNeedsReviewError, GenerationTaskTerminalError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
@@ -66,6 +66,25 @@ export async function createAudioGenerationTask(config: AiConfig, prompt: string
     return payload.task;
 }
 
+export async function recoverAudioGenerationTask(taskId: string, options?: Pick<RequestOptions, "signal">): Promise<AudioGenerationTask> {
+    const response = await fetch(`/api/audio-tasks/${encodeURIComponent(taskId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "recover" }),
+        signal: options?.signal,
+    });
+    throwIfClientSessionExpired(response);
+    syncUserPointsFromHeaders(response.headers, "system");
+    if (!response.ok) throw new Error(await readFetchError(response, "重新检查音频任务失败"));
+    const payload = (await response.json()) as AudioTaskPayload;
+    if (!payload.task) throw new Error(payload.error || "重新检查音频任务失败");
+    if (payload.task.needsReview) throw new GenerationTaskNeedsReviewError(payload.task.reviewReason);
+    if (payload.task.status === "error" || payload.task.status === "cancelled") {
+        throw new GenerationTaskTerminalError(payload.task.error || (payload.task.status === "cancelled" ? "请求已取消" : "音频生成失败"));
+    }
+    return payload.task;
+}
+
 export async function waitForAudioGenerationTask(config: AiConfig, task: AudioGenerationTask, options?: RequestOptions): Promise<GeneratedAudioResult> {
     const requestConfig = resolveModelRequestConfig(config, task.model);
     const format = normalizeAudioFormatValue(config.audioFormat);
@@ -86,7 +105,7 @@ export async function waitForAudioGenerationTask(config: AiConfig, task: AudioGe
                 const audio = blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
                 return { blob: audio, url: current.result.url, mimeType: current.result.mimeType || audio.type };
             }
-            if (current.status === "error" || current.status === "cancelled") throw new Error(current.error || (current.status === "cancelled" ? "请求已取消" : "音频生成失败"));
+            if (current.status === "error" || current.status === "cancelled") throw new GenerationTaskTerminalError(current.error || (current.status === "cancelled" ? "请求已取消" : "音频生成失败"));
             await delay(AUDIO_TASK_POLL_INTERVAL_MS, options?.signal);
         }
     } catch (error) {

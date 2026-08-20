@@ -50,7 +50,7 @@ vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaP
 
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "./generation-submission-error";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
-import { createImageTaskUpstreamStep, persistImageTaskResult } from "./image-task-runtime";
+import { createImageTaskUpstreamStep, persistImageTaskResult, queryImageTaskUpstreamStep } from "./image-task-runtime";
 import type { ImageTask } from "./image-task-store";
 
 describe("image task runtime submission safety", () => {
@@ -100,6 +100,19 @@ describe("image task runtime submission safety", () => {
         expect(mocks.runCustom).toHaveBeenCalledOnce();
         expect(mocks.runOpenAi).not.toHaveBeenCalled();
         expect(mocks.runGemini).not.toHaveBeenCalled();
+    });
+
+    it("keeps declarative media resolution separate from system-proxy polling", async () => {
+        state.config = { ...state.config, baseUrl: "/api/ai/system/channel-one", advancedConfig: { ...emptyAdvancedConfig(), protocol: "custom", queryPath: "/jobs/:task_id" } };
+        state.upstream = {
+            id: "upstream-one",
+            mediaBaseUrl: "https://provider.example/v1/images",
+            pollBaseUrl: "http://internal/api/ai/system/channel-one/images",
+        };
+        mocks.pollCustom.mockResolvedValueOnce({ dataUrl: "", pending: state.upstream });
+
+        await expect(queryImageTaskUpstreamStep(state, "http://internal")).resolves.toMatchObject({ state: "pending" });
+        expect(mocks.pollCustom).toHaveBeenCalledWith(state, "upstream-one", "https://provider.example/v1/images", "http://internal/api/ai/system/channel-one/images", "worker-context", true);
     });
 
     it("does not switch candidates when the submission outcome is unknown", async () => {

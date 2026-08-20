@@ -14,7 +14,7 @@ vi.mock("@/stores/use-config-store", () => ({
 
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
-import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask } from "./video";
+import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask, recoverVideoGenerationTask } from "./video";
 import { createUpstreamVideoGenerationTask } from "./video-core";
 import { buildCompatibleVideoPayloadVariants, compatibleVideoCreatePaths, compatibleVideoPollPaths, isGlobalAiOpcVideoConfig } from "./video-providers";
 import { normalizeCompatibleVideoDuration, normalizeGlobalAiOpcVideoDuration } from "./video-payloads";
@@ -112,6 +112,28 @@ describe("video API service", () => {
             error: "上游生成失败",
             canRetry: true,
         });
+    });
+
+    it("checks the original server task without creating another video task", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-original", status: "running", model: "video-v1", executionPhase: "polling" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(recoverVideoGenerationTask({ id: "video-original", provider: "generation", model: "video-v1", pollPath: "server" })).resolves.toMatchObject({
+            id: "video-original",
+            serverTaskId: "video-original",
+            pollPath: "server",
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock).toHaveBeenCalledWith("/api/video-tasks/video-original", expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "recover" }) }));
+    });
+
+    it("keeps a checked video task reviewable when the original upstream task is still pending", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-original", status: "running", needsReview: true, reviewReason: "上游任务仍在处理中" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(recoverVideoGenerationTask({ id: "video-original", provider: "generation", model: "video-v1", pollPath: "server" })).rejects.toThrow("上游任务仍在处理中");
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it("cancels a server-owned video task without accepting a result URL", async () => {

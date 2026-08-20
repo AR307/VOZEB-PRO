@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: vi.fn(), syncUserPointsFromHeaders: vi.fn() }));
 vi.mock("@/stores/use-config-store", () => ({ resolveModelRequestConfig: vi.fn((config: Record<string, unknown>, model: string) => ({ ...config, model })) }));
 
-import { ImageGenerationTaskTerminalError, createImageGenerationTask, waitForImageGenerationTask } from "./image";
+import { ImageGenerationTaskTerminalError, createImageGenerationTask, recoverImageGenerationTask, waitForImageGenerationTask } from "./image";
 import type { AiConfig } from "@/stores/use-config-store";
 
 describe("图片任务轮询", () => {
@@ -108,6 +108,14 @@ describe("图片任务轮询", () => {
 
         await expect(waitForImageGenerationTask({ apiSource: "system" } as AiConfig, { id: "review-task", kind: "generation", model: "image-model" })).rejects.toThrow("渠道未返回可查询任务 ID");
         expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the original image task checkable when recovery is still inconclusive", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ task: { id: "review-task", kind: "generation", model: "image-model", status: "running", needsReview: true, reviewReason: "上游任务仍在处理中" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(recoverImageGenerationTask("review-task")).rejects.toThrow("上游任务仍在处理中");
+        expect(fetchMock).toHaveBeenCalledWith("/api/image-tasks/review-task", expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "recover" }) }));
     });
 
     it("keeps polling the same task after a temporary query failure", async () => {

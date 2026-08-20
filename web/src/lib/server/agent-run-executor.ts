@@ -100,7 +100,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const planningInput = [
             {
                 role: "system",
-                content: agentPlannerSystemPrompt(claimed.surface, fallbackExample),
+                content: agentPlannerSystemPrompt(claimed.surface, fallbackExample, settings.site.title),
             },
             {
                 role: "user",

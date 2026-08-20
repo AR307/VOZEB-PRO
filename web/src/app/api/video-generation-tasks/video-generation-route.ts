@@ -279,10 +279,13 @@ export async function createUpstream(
         seconds: values.seconds,
         ratio: values.ratio,
         aspect_ratio: values.aspect_ratio,
+        size: values.size,
+        width: values.width,
+        height: values.height,
         resolution: values.resolution,
         quality: values.quality,
         generate_audio: generateAudio,
-        watermark: raw.videoWatermark === "true",
+        watermark: booleanValue(raw.videoWatermark),
         ...(requestImage ? { image: requestImage } : {}),
         ...(requestImages.length ? { images: requestImages, image_urls: requestImages, reference_images: requestImages } : {}),
         ...(videos.length ? { video: videos[0], videos, reference_videos: videos } : {}),
@@ -324,7 +327,7 @@ export async function createUpstream(
                     aspectRatio: values.aspect_ratio as string,
                     resolution: values.resolution as string,
                     generateAudio,
-                    watermark: raw.videoWatermark === "true",
+                    watermark: booleanValue(raw.videoWatermark),
                     images: requestImages,
                     videos,
                     audios,
@@ -506,7 +509,8 @@ function ratio(value: unknown) {
 function resolution(value: unknown) {
     const text = clean(value).replace(/p$/i, "");
     if (text.toLowerCase() === "auto") return undefined;
-    return text === "480" || text === "1080" ? `${text}p` : "720p";
+    if (/^\d+$/.test(text)) return `${text}p`;
+    return text || undefined;
 }
 function videoDimensions(size: unknown, quality: unknown): { width?: number; height?: number } {
     const exact = parseImageDimensions(String(size || ""));
@@ -535,6 +539,9 @@ function videoUnits(raw: Record<string, unknown>, multipliers: Awaited<ReturnTyp
 }
 function clean(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
+}
+function booleanValue(value: unknown) {
+    return value === true || value === "true";
 }
 function positiveAttemptNo(value: unknown) {
     const parsed = Math.floor(Number(value));

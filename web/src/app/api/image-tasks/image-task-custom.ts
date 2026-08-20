@@ -73,13 +73,13 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
     const data = await parseImageSubmissionJson<ImageApiResponse>(response);
     return parseChargedImageResponse(task, response, async () => {
         if (isProviderBusinessError(data)) throw new GenerationSubmissionSafeFailure(readProviderError(data) || "自定义图片接口返回失败");
-        const baseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
-        const direct = configuredImageResult(data, baseUrl, task);
+        const mediaBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+        const direct = configuredImageResult(data, mediaBaseUrl, task);
         if (direct) return direct;
         const taskId = readImageTaskId(data);
         if (!taskId || !advanced.queryPath) throw new GenerationSubmissionUncertainError("自定义图片接口没有返回图片或任务 ID，创建结果待确认");
-        if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl: baseUrl, pollBaseUrl: baseUrl } };
-        return pollCustomImageTask(task, taskId, baseUrl, cookie);
+        if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl, pollBaseUrl: url } };
+        return pollCustomImageTask(task, taskId, mediaBaseUrl, url, cookie);
     });
 }
 
@@ -88,11 +88,11 @@ export function resolveDeclarativeImageSize(config: Pick<ImageTask["config"], "q
     return !size || size.toLowerCase() === "auto" ? "" : size;
 }
 
-export async function pollCustomImageTask(task: ImageTask, taskId: string, requestUrl: string, cookie: string, singleStep = false) {
+export async function pollCustomImageTask(task: ImageTask, taskId: string, mediaBaseUrl: string, pollBaseUrl: string, cookie: string, singleStep = false) {
     const config = task.config;
     let lastError = "";
     for (let attempt = 0; attempt < (singleStep ? 1 : imageTaskPollAttempts(config)); attempt += 1) {
-        for (const url of imageTaskPollUrls(config, requestUrl, taskId)) {
+        for (const url of imageTaskPollUrls(config, pollBaseUrl, taskId)) {
             const response = await taskFetch(config, url, { headers: taskHeaders(config, cookie), cache: "no-store" });
             if (!response.ok) {
                 lastError = await readFetchError(response, "自定义图片任务查询失败");
@@ -100,7 +100,7 @@ export async function pollCustomImageTask(task: ImageTask, taskId: string, reque
             }
             const data = (await response.json().catch(() => null)) as ImageApiResponse | null;
             if (!data || isProviderBusinessError(data)) throw new ImageUpstreamTerminalError(readProviderError(data) || "自定义图片任务查询失败");
-            const result = configuredImageResult(data, response.headers.get("x-vozeb-pro-upstream-url") || url, task);
+            const result = configuredImageResult(data, response.headers.get("x-vozeb-pro-upstream-url") || mediaBaseUrl || url, task);
             if (result) return result;
             const status = readProviderString(data, config.advancedConfig?.statusField, STATUS_KEYS).toLowerCase();
             if (!isPendingImageStatus(status)) throw new ImageUpstreamTerminalError(readProviderError(data) || "自定义图片任务完成但没有返回图片");
@@ -110,7 +110,7 @@ export async function pollCustomImageTask(task: ImageTask, taskId: string, reque
         if (lastError) throw new Error(lastError);
         if (!singleStep) await new Promise((resolve) => setTimeout(resolve, IMAGE_TASK_POLL_INTERVAL_MS));
     }
-    if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl: requestUrl, pollBaseUrl: requestUrl } };
+    if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl, pollBaseUrl } };
     throw new Error("自定义图片任务生成超时");
 }
 

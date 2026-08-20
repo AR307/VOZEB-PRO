@@ -25,7 +25,7 @@ export type AgentRunReference = {
 };
 export type AgentRunChildTask = {
     id: string;
-    status: "pending" | "completed" | "failed" | "cancelled";
+    status: "pending" | "needs_review" | "completed" | "failed" | "cancelled";
     attempt: number;
     result?: unknown;
     error?: string;
@@ -52,7 +52,7 @@ export type AgentRunTask = {
     watermark?: boolean;
     speed?: number;
     dependencies: string[];
-    status: "ready" | "running" | "completed" | "failed" | "cancelled";
+    status: "ready" | "running" | "needs_review" | "completed" | "failed" | "cancelled";
     attempts: number;
     taskId?: string;
     taskIds?: string[];
@@ -201,12 +201,12 @@ export async function setAgentRunStatus(run: AgentRun, status: AgentRunStatus) {
 
 function cancelActiveTasks(tasks: AgentRunTask[]) {
     return tasks.map((task): AgentRunTask =>
-        task.status === "ready" || task.status === "running"
+        task.status === "ready" || task.status === "running" || task.status === "needs_review"
             ? {
                   ...task,
                   status: "cancelled",
                   error: "任务已取消",
-                  childTasks: task.childTasks?.map((child) => (child.status === "pending" ? { ...child, status: "cancelled" as const, error: "任务已取消" } : child)),
+                  childTasks: task.childTasks?.map((child) => (child.status === "pending" || child.status === "needs_review" ? { ...child, status: "cancelled" as const, error: "任务已取消" } : child)),
               }
             : task,
     );
