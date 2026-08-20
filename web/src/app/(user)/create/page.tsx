@@ -55,6 +55,7 @@ export default function CreatePage() {
     const conversationWasLoadingRef = useRef(false);
     const previousScrollTopRef = useRef(0);
     const awayFromLatestRef = useRef(false);
+    const scrollingAwayFromLatestRef = useRef(false);
     const promptValueRef = useRef("");
     const promptRevisionRef = useRef(0);
     const optimizingRef = useRef(false);
@@ -443,15 +444,22 @@ export default function CreatePage() {
     const updateConversationScrollState = (element: HTMLElement) => {
         const scrollTop = element.scrollTop;
         const distanceFromLatest = Math.max(0, element.scrollHeight - element.clientHeight - scrollTop);
-        const scrollingUp = distanceFromLatest > 48 && scrollTop < previousScrollTopRef.current - 3;
-        const away = scrollingUp ? true : distanceFromLatest > 48 ? awayFromLatestRef.current : false;
+        const scrollingUp = scrollTop < previousScrollTopRef.current - 3;
+        const scrollingDown = scrollTop > previousScrollTopRef.current + 3;
+        if (scrollingUp) scrollingAwayFromLatestRef.current = true;
+        else if (scrollingDown) scrollingAwayFromLatestRef.current = false;
         previousScrollTopRef.current = scrollTop;
-        setAwayFromLatestState(away);
-        if (!away) setComposerExpanded(true);
-        else if (scrollingUp) setComposerExpanded(false);
+        if (scrollingUp) {
+            setAwayFromLatestState(true);
+            setComposerExpanded(false);
+        } else if (distanceFromLatest < 4) {
+            setAwayFromLatestState(false);
+            setComposerExpanded(true);
+        }
     };
 
     const scrollToLatest = () => {
+        scrollingAwayFromLatestRef.current = false;
         awayFromLatestRef.current = false;
         setAwayFromLatest(false);
         setComposerExpanded(true);
@@ -655,10 +663,8 @@ export default function CreatePage() {
                         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
                         onScroll={(event) => updateConversationScrollState(event.currentTarget)}
                         onWheelCapture={(event) => {
-                            if (event.deltaY < 0) {
-                                setAwayFromLatestState(true);
-                                setComposerExpanded(false);
-                            }
+                            if (event.deltaY < 0) scrollingAwayFromLatestRef.current = true;
+                            else if (event.deltaY > 0) scrollingAwayFromLatestRef.current = false;
                         }}
                     >
                         {showConversation ? (

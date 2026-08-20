@@ -699,19 +699,41 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
     await expect(composer).toHaveAttribute("data-compact", "false");
     const expandedComposerHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
     await expect.poll(() => scrollArea.evaluate((element) => element.scrollHeight - element.clientHeight > 200)).toBe(true);
+    const composerDock = page.getByTestId("creative-composer-dock");
+    await composerDock.evaluate((element) => {
+        element.dataset.compactTransitions = "";
+        new MutationObserver(() => {
+            const state = element.dataset.compact || "";
+            const composer = element.querySelector<HTMLElement>(".creative-composer");
+            const height = composer?.getBoundingClientRect().height || 0;
+            element.dataset.compactTransitions = [element.dataset.compactTransitions, `${state}:${height}`].filter(Boolean).join(",");
+        }).observe(element, { attributes: true, attributeFilter: ["data-compact"] });
+    });
     await scrollArea.evaluate((element) => element.scrollTo({ top: 0 }));
     await expect(composer).toHaveAttribute("data-compact", "true");
     await expect(page.getByRole("button", { name: "回到底部" })).toBeVisible();
+    await expect.poll(() => composer.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(64);
     const compactAppearance = await composer.evaluate((element) => {
         const style = getComputedStyle(element);
         const shell = element.parentElement;
         const dock = shell?.parentElement;
+        const inputRow = element.querySelector<HTMLElement>("[data-testid='creative-composer-input-row']");
+        const actionButtons = Array.from(element.querySelectorAll<HTMLElement>("button[aria-label='引用当前对话资产'], button[aria-label='优化提示词'], button[aria-label='发送']"));
         return {
             backgroundColor: style.backgroundColor,
             borderWidth: `${style.borderTopWidth} ${style.borderRightWidth} ${style.borderBottomWidth} ${style.borderLeftWidth}`,
             boxShadow: style.boxShadow,
             composerHeight: element.getBoundingClientRect().height,
+            composerWidth: element.getBoundingClientRect().width,
+            inputRowHeight: inputRow?.getBoundingClientRect().height || 0,
+            actionButtonSizes: actionButtons
+                .map((button) => {
+                    const bounds = button.getBoundingClientRect();
+                    return { width: bounds.width, height: bounds.height };
+                })
+                .filter((bounds) => bounds.width > 0 && bounds.height > 0),
             shellHeight: shell?.getBoundingClientRect().height || 0,
+            shellWidth: shell?.getBoundingClientRect().width || 0,
             shellBackgroundColor: shell ? getComputedStyle(shell).backgroundColor : null,
             dockBackgroundColor: dock ? getComputedStyle(dock).backgroundColor : null,
             dockPosition: dock ? getComputedStyle(dock).position : null,
@@ -722,6 +744,23 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
     expect(compactAppearance.borderWidth).not.toBe("0px 0px 0px 0px");
     expect(compactAppearance.boxShadow).not.toBe("none");
     expect(compactAppearance).toMatchObject({ shellBackgroundColor: "rgba(0, 0, 0, 0)", dockBackgroundColor: "rgba(0, 0, 0, 0)", dockPosition: "absolute", dockPointerEvents: "none" });
+    expect(compactAppearance.composerHeight).toBeGreaterThanOrEqual(60);
+    expect(compactAppearance.composerHeight).toBeLessThanOrEqual(64);
+    expect(compactAppearance.inputRowHeight).toBeLessThanOrEqual(46);
+    expect(compactAppearance.shellHeight - compactAppearance.composerHeight).toBeGreaterThanOrEqual(12);
+    expect(compactAppearance.shellHeight - compactAppearance.composerHeight).toBeLessThanOrEqual(18);
+    expect(compactAppearance.composerWidth).toBeGreaterThanOrEqual(compactAppearance.shellWidth - 50);
+    expect(compactAppearance.actionButtonSizes).toEqual([
+        { width: 44, height: 44 },
+        { width: 44, height: 44 },
+        { width: 44, height: 44 },
+    ]);
+    await expect(composerDock).toHaveAttribute("data-compact-transitions", /^true:(?:6[0-4](?:\.\d+)?)$/);
+    const disabledSendAppearance = await composer.getByRole("button", { name: "发送" }).evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { disabled: (element as HTMLButtonElement).disabled, backgroundImage: style.backgroundImage, backgroundColor: style.backgroundColor };
+    });
+    expect(disabledSendAppearance).toEqual({ disabled: true, backgroundImage: "none", backgroundColor: "rgb(226, 229, 232)" });
     expect(compactAppearance.composerHeight).toBeLessThan(expandedComposerHeight);
     expect(compactAppearance.shellHeight).toBeLessThan(expandedComposerHeight);
     await page.getByRole("button", { name: "回到底部" }).click();

@@ -50,6 +50,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     const cdkRequestIdRef = useRef(0);
     const {
         currentUser,
+        setupSummary,
         message,
         promptForm,
         promptRequestIdRef,
@@ -209,6 +210,11 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     };
 
     const loadBillingSummary = async () => {
+        if (setupSummary?.databaseProvider === "file") {
+            setBillingSummary(null);
+            setBillingSummaryLoading(false);
+            return;
+        }
         setBillingSummaryLoading(true);
         try {
             const response = await fetch("/api/admin/billing/summary", { cache: "no-store" });

@@ -170,6 +170,7 @@ export function normalizeTasks(
         referencedAssets.map((asset) => asset.id),
     );
     const configuredImageSize = agentSurfaceImageSize(surface, snapshot);
+    const configuredSizeExplicit = surface === "canvas" && Boolean(configuredImageSize);
     const tasks: AgentRunTask[] = plan.deliverables.map((item, index) => {
         const optimizedPrompt = item.prompt.trim();
         const preferredSize = item.type === "image" ? generationPreferences?.image?.size : item.type === "video" ? generationPreferences?.video?.size : undefined;
@@ -226,6 +227,7 @@ export function normalizeTasks(
                 type: item.type,
                 requestedImageSize,
                 configuredImageSize: preferredSize !== undefined ? preferredSize : configuredImageSize,
+                configuredSizeExplicit: preferredSize !== undefined ? true : configuredSizeExplicit,
                 plannedRatio: item.ratio,
                 defaultSize: textDefault(defaults.size),
                 globalSize: ["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined,

@@ -2,118 +2,83 @@
 
 ## 范围
 
-本契约覆盖 Canvas 的“消除背景”和“智能分层”。两者是两条完全不同的链路：人物/普通主体去背继续使用现有本地语义分割；电商智能分层直接调用一次上游图片编辑/分层接口。
+本契约覆盖 Canvas 的“消除背景”和“智能分层”。人物/普通主体去背继续使用本地语义分割；电商智能分层由文本视觉模型识别元素，再由图片上游完成独立元素精修和背景补全。
 
-## Scenario: Canvas 电商像素级智能分层
+## Scenario: Canvas 电商智能分层
 
 ### 1. Scope / Trigger
 
-- Canvas 用户对一张电商图点击“智能分层”时使用本契约。
+- Canvas 用户对电商图点击“智能分层”时使用本契约。
+- 视觉识别请求只执行一次，用于确定独立元素名称、原图坐标、层级和背景描述。
+- 本地像素切割只用于立即显示透明预览、生成元素范围蒙版和给上游提供定位；它不是最终分层资产，也不能把本地裁片作为图片上游参考图。
 - 人物或普通主体“消除背景”不进入本链路，继续使用下方本地语义分割契约。
-- 只有能在一个任务中返回完整原图像素分层资产的上游专用接口满足能力要求；通用生成或编辑接口不能仅凭提示词包装成分层接口。
 
 ### 2. Signatures
 
 ```ts
-type ImageTaskConfig = {
-  outputMode?: "layers";
+type CanvasLayerCandidate = {
+  name: string;
+  kind: string;
+  bbox: { x: number; y: number; width: number; height: number };
+  zIndex?: number;
+  groupId?: string;
 };
 
-type ImageTaskResult = {
-  dataUrl: string;
-  results?: Array<{ dataUrl: string; width?: number; height?: number }>;
+type CanvasImageDecomposition = {
+  strategy: "ecommerce" | "subject";
+  width: number;
+  height: number;
+  layers: CanvasLayerCandidate[];
+  backgroundDescription?: string;
 };
-
-type CanvasNodeMetadata = {
-  sourceLayerNodeId?: string;
-  imageLayerTaskId?: string;
-  imageLayerResultIndex?: number;
-};
-
-validateImageLayerOutputs(
-  sourceDataUrl: string,
-  outputDataUrls: string[],
-): Promise<ValidatedImageLayerOutput[]>;
 ```
 
-公开请求为一次 `POST /api/image-tasks`，`kind: "edit"`、`config.outputMode: "layers"`，并且 `references` 必须且只能包含一张源图。任务完成后客户端只消费同一任务的完整 `task.result.results[]`。
+流程为一次 `POST /api/canvas/image-decomposition` 视觉识别，然后按识别结果为每个元素分别执行一次 `POST /api/image-tasks` 图片编辑任务。每个元素任务的 `kind` 为 `edit`、`config.outputBackground` 为 `transparent`，并且 `references` 必须包含同一张完整主图，不能包含本地裁片。元素提示词必须携带元素名称和原图坐标。背景使用独立图片编辑任务，引用同一张完整主图并携带合并蒙版。
 
 ### 3. Contracts
 
-- 上游一次返回全部独立元素和一张干净背景。每个结果与源图同宽高并保留原坐标；元素层使用源图原始像素和真实 Alpha，背景只补全元素遮挡区域。
-- Provider 请求模板中的 `n`、`count`、`num_images`、`batch_size` 不由平台补写；管理员模板的显式字段保持原样，上游决定结果数量，平台不添加数量上限。
-- OpenAI、Gemini、声明式自定义协议和轮询响应都解析完整数组；自定义 `resultField` 可以指向数组，并兼容顶层 `data/results/images/layers` 容器。
-- 分层数组不得走普通多结果的“忽略单张失败/自动去重”语义。任一结果不可读、重复或验收失败时整次分层失败并沿用原退款契约，不能把不完整数组保存为成功。
-- 服务端按原数组顺序验收并落盘；分层资产不得携带普通生图的 `targetSize`，禁止再次缩放、裁切或重采样。
-- Canvas 为每张结果创建一个普通图片节点，使用稳定 `taskId + resultIndex` 幂等恢复；源图分别连接每个结果。禁止集合节点、bbox 接口、电商分割 Worker、本地矩形切片、逐元素任务和占位图。
-- 用户通过 Canvas 既有框选/多选批量下载独立节点；不恢复集合节点专用 ZIP 分支。
+- 本地预览节点和最终上游结果使用同一元素节点身份；上游成功后替换该节点媒体，上游失败时保留本地切割结果并记录可见错误。
+- 每个元素结果创建一个普通、可独立移动、保存和下载的图片节点；源图分别连接每个元素节点和背景节点，不创建集合节点。
+- 元素上游任务必须引用完整主图，使用原图宽高和坐标提示词；不得引用本地 bbox 裁片、重新拼图或把多个元素合并后再请求。
+- 背景任务只补全蒙版覆盖区域，不能把已分离元素画回背景；背景节点与元素节点一样独立保存和下载。
+- 不写死元素数量、轮询次数、重试次数或输出上限；识别返回多少元素就处理多少元素。请求顺序可以按识别顺序执行，但每项任务必须有独立稳定身份。
+- 任务状态未知时保留原任务身份并进入既有人工检查/恢复路径，不自动创建第二个同类上游任务。
+- 图片上游返回的透明结果落盘前必须保持源图尺寸和原始坐标，不得二次缩放、裁切或重采样；空透明图或不可读结果按该元素失败处理。
+- 只有人物“消除背景”允许使用 `splitSubjectAndBackgroundDataUrl` 和本地 Worker，不创建图片生成任务。
 
-### 4. Validation & Error Matrix
+### 4. Failure / Recovery
 
-| 条件                                   | 行为                                         |
-| -------------------------------------- | -------------------------------------------- |
-| 不是 `edit` 或源图数量不是 1           | API 在上游调用和计费前返回 400               |
-| 任一结果无法读取或是全透明空图         | 整个任务失败并退款，不保存部分结果           |
-| 元素或背景尺寸与源图不同               | 失败，不能验证原坐标像素                     |
-| 元素非透明 RGB 与源图同坐标不一致      | 失败，判定为重绘或改色                       |
-| 两个元素覆盖同一源像素                 | 失败，判定为重复或未独立分层                 |
-| 背景改动元素覆盖区外的 RGBA            | 失败，判定为背景破坏源图                     |
-| 背景没有在每个元素覆盖区产生任何变化   | 失败，判定为元素未移除                       |
-| 只有合成图、只有透明层或背景数量不为 1 | 失败并保留源图                               |
-| 完整数组通过验收                       | 全部原样落盘并创建独立节点                   |
-| 上游任务状态未知                       | 保留原任务身份进入人工检查，不创建第二个任务 |
+| 条件 | 行为 |
+| --- | --- |
+| 视觉识别失败或没有元素 | 不创建图片任务，保留源图并显示一次可操作错误 |
+| 某个元素上游失败 | 该元素保留本地透明预览，其他元素继续处理，不丢弃已成功结果 |
+| 上游元素结果不可读、空透明或尺寸不符 | 该元素任务标记失败，不能用重绘图覆盖本地结果 |
+| 背景补全失败 | 元素结果保留，背景节点显示失败状态和重试入口 |
+| 请求状态未知 | 沿用原任务 ID 查询/人工检查，不自动重复计费 |
 
-逐像素验收使用无损相等，不添加颜色误差阈值、元素数量上限、固定重试或固定输出数量。语义上是否“干净”仍由专用上游负责；平台只接受能够证明未重绘元素、未破坏未覆盖背景的结果。
+### 5. Good / Bad Cases
 
-### 5. Good/Base/Bad Cases
-
-- Good：一次任务返回 20 个同尺寸透明元素和一张背景；所有元素互不重复、像素来自源图，背景仅在元素覆盖区变化，最终创建 21 个独立节点。
-- Base：一次任务返回一个透明主体和一张干净背景，创建两个节点和两条源图连线。
-- Bad：普通图片模型返回一张重绘合成图；即使提示词声明“分层”，也必须失败退款。
-- Bad：平台逐元素调用 20 次图片接口，或把本地 bbox 矩形裁片当作 20 个图层。
-- Bad：先验收原始层，落盘时再按 `config.size` 重采样，导致像素级结果被二次破坏。
+- Good：一次视觉识别返回 20 个元素；本地立即显示 20 个预览，随后发出 20 个独立透明任务，每个任务都引用同一张完整主图，再发出一个背景补全任务。
+- Good：某个元素上游精修失败时，用户仍能移动和下载该元素的本地透明预览，其他成功元素不受影响。
+- Bad：把本地裁片作为上游图片参考图，或按裁片逐个识别主体。
+- Bad：把 20 个元素合成一个集合节点，或者为了减少节点只保留一张合成图。
+- Bad：把通用图片生成结果仅凭提示词包装成像素级分层成功。
 
 ### 6. Tests Required
 
-- 单元测试覆盖重绘像素、尺寸不符、重复元素、背景越界修改、背景未移除元素、全透明空图及 20 个独立元素。
-- Runtime 测试断言重复/不可读结果不会被去重或忽略，失败沿用原积分退款；成功时完整数组只落盘和登记一次。
-- Provider 协议测试覆盖 OpenAI multipart、JSON、多结果字段和轮询数组，夹具返回的层必须能通过同一 `validateImageLayerOutputs`。
-- Canvas 浏览器测试断言只有一次 `/api/image-tasks`，没有 `/api/canvas/image-decomposition` 或电商 Worker；每张结果创建一个节点和一条源图连线，重连不重复。
+- 单元测试覆盖识别结果归一化、坐标传递、空元素、尺寸不符和失败回退。
+- Runtime/API 测试断言同一完整主图 URL 被传给每个元素任务，背景任务使用独立蒙版；元素失败不会删除本地结果。
+- Canvas 浏览器测试断言一次视觉识别、每个元素一次透明图片任务、一次背景任务；断言没有本地裁片被放入 `references`，每个普通结果节点都与源图连线。
+- 浏览器测试还要覆盖 20 个元素、连续生成中的节点移动和恢复，确认生成数量增加不会改变用户锁定的尺寸。
 - 人物去背浏览器测试断言只执行本地 Worker，不创建图片任务；批量下载继续覆盖图片和视频多选。
 
-### 7. Wrong vs Correct
+## 尺寸与智能比例
 
-#### Wrong
-
-```ts
-const unique = dedupeImageResults(upstreamResults);
-for (const element of plannedElements) {
-  await createImageTask({ prompt: element.prompt });
-}
-return createLayerCollectionNode(unique);
-```
-
-这会丢失重复/失败证据、重复计费，并用集合 UI 掩盖不完整分层。
-
-#### Correct
-
-```ts
-const task = await createImageTask({
-  kind: "edit",
-  references: [source],
-  config: { ...config, outputMode: "layers" },
-});
-const outputs = await validateImageLayerOutputs(
-  sourceDataUrl,
-  task.result.results,
-);
-return outputs.map((output, index) => createImageNode(task.id, index, output));
-```
-
-一次上游任务保留完整数组，严格验收后再按稳定结果序号创建普通节点。
+- 用户选择固定比例或精确自定义尺寸后，Canvas 节点必须记录尺寸锁定状态；生成时固定值优先于参考图比例。
+- `auto`/“智能”表示用户未锁定尺寸，此时才允许按本轮文字、参考图、规划结果和后台默认值解析，不能把智能值统一改写为 `1:1`。
 
 ## 消除背景
 
 - 仅沿用现有 `splitSubjectAndBackgroundDataUrl` 本地语义分割与透明 PNG 上传链路。
 - Worker 结果必须校验尺寸、Alpha 和非空主体；失败保留原图，不创建残缺节点。
-- 此入口不创建图片生成任务，不经过电商分层协议。
+- 此入口不创建图片生成任务，不经过电商智能分层协议。

@@ -10,13 +10,17 @@ import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, expectNoHo
 
 test.describe.configure({ mode: "serial" });
 
-test("canvas smart layering creates one independent node per image from one upstream task", async ({ page, request }) => {
-    const imageTaskRequests: Array<{ config?: { outputBackground?: string; outputMode?: string } }> = [];
+test("canvas smart layering locally cuts elements and refines each one with an independent task", async ({ page, request }) => {
+    const imageTaskRequests: Array<{
+        config?: { outputBackground?: string; outputMode?: string };
+        prompt?: string;
+        references?: Array<{ dataUrl?: string; serverUrl?: string }>;
+    }> = [];
     let decompositionRequests = 0;
     let subjectWorkerRequests = 0;
     page.on("request", (current) => {
         const path = new URL(current.url()).pathname;
-        if (current.method() === "POST" && path === "/api/image-tasks") imageTaskRequests.push((current.postDataJSON() || {}) as { config?: { outputBackground?: string; outputMode?: string } });
+        if (current.method() === "POST" && path === "/api/image-tasks") imageTaskRequests.push((current.postDataJSON() || {}) as (typeof imageTaskRequests)[number]);
         if (current.method() === "POST" && path === "/api/canvas/image-decomposition") decompositionRequests += 1;
         if (path.endsWith("/canvas/subject-segmenter-worker.js")) subjectWorkerRequests += 1;
     });
@@ -40,31 +44,49 @@ test("canvas smart layering creates one independent node per image from one upst
         await page.getByRole("button", { name: "智能分层", exact: true }).click();
         const generated = page.locator('[data-node-id]:not([data-node-id="source-image"])');
         await expect(generated.first()).toBeVisible({ timeout: 90_000 });
-        await expect.poll(async () => (await readCanvasProject(request, projectPath)).nodes.length, { timeout: 90_000 }).toBe(3);
-        await expect.poll(async () => (await readCanvasProject(request, projectPath)).connections.length, { timeout: 90_000 }).toBe(2);
+        await expect.poll(() => imageTaskRequests.length, { timeout: 180_000 }).toBe(6);
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).nodes.length, { timeout: 180_000 }).toBe(7);
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).connections.length, { timeout: 180_000 }).toBe(6);
+        await expect
+            .poll(
+                async () => {
+                    const current = await readCanvasProject(request, projectPath);
+                    return current.nodes.find((item) => item.metadata?.sourceLayerNodeId === "source-image" && item.metadata?.layerName === "背景")?.metadata?.status;
+                },
+                { timeout: 180_000 },
+            )
+            .toBe("success");
         const saved = await readCanvasProject(request, projectPath);
-        const layerNodes = saved.nodes.filter((item) => item.metadata?.imageLayerTaskId);
-        expect(layerNodes).toHaveLength(2);
-        expect(layerNodes.map((item) => item.metadata?.imageLayerResultIndex).sort()).toEqual([0, 1]);
-        expect(saved.connections.map((connection) => connection.fromNodeId)).toEqual(["source-image", "source-image"]);
-        const transparency: boolean[] = [];
+        const layerNodes = saved.nodes.filter((item) => item.metadata?.sourceLayerNodeId === "source-image" && item.metadata?.layerName !== "背景");
+        const background = saved.nodes.find((item) => item.metadata?.sourceLayerNodeId === "source-image" && item.metadata?.layerName === "背景");
+        expect(layerNodes).toHaveLength(5);
+        expect(background?.metadata).toMatchObject({ status: "success", content: expect.any(String), storageKey: expect.any(String) });
+        expect(saved.connections.map((connection) => connection.fromNodeId)).toEqual(Array.from({ length: 6 }, () => "source-image"));
         for (const layer of layerNodes) {
-            expect(layer.metadata).toMatchObject({ content: expect.any(String), storageKey: expect.any(String) });
+            expect(layer.metadata).toMatchObject({ status: "success", content: expect.any(String), storageKey: expect.any(String), imageLayer: expect.any(Object) });
             const response = await request.get(String(layer.metadata?.serverUrl || layer.metadata?.content));
             expect(response.ok(), await response.text()).toBe(true);
             const layerBytes = await response.body();
             const image = sharp(layerBytes);
             await expect(image.metadata()).resolves.toMatchObject({ format: "png", width: expect.any(Number), height: expect.any(Number) });
             const { data, info } = await image.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-            transparency.push(data.some((value, index) => index % info.channels === info.channels - 1 && value < 255));
+            expect(data.some((value, index) => index % info.channels === info.channels - 1 && value < 255)).toBe(true);
         }
-        expect(transparency.sort()).toEqual([false, true]);
-        expect(imageTaskRequests, "智能分层必须只创建一个上游图片任务").toHaveLength(1);
-        expect(decompositionRequests, "智能分层不得再请求 bbox 识别接口").toBe(0);
-        expect(imageTaskRequests[0]?.config?.outputBackground).toBeUndefined();
-        expect(imageTaskRequests[0]?.config?.outputMode).toBe("layers");
-        expect(subjectWorkerRequests, "智能分层不得再加载本地分割 Worker").toBe(0);
-        await expect(generated).toHaveCount(2);
+        expect(decompositionRequests, "智能分层应只请求一次视觉识别").toBe(1);
+        const elementRequests = imageTaskRequests.filter((item) => item.config?.outputBackground === "transparent");
+        expect(elementRequests, "每个元素应单独请求透明分层").toHaveLength(5);
+        expect(elementRequests.map((item) => item.references?.[0]?.dataUrl)).toEqual(Array.from({ length: 5 }, () => sourceAsset.url));
+        expect(
+            elementRequests.every((item) => item.prompt?.includes("从完整主图中精准提取") && item.prompt.includes("坐标 x=")),
+            "元素任务必须引用完整主图并携带原图坐标",
+        ).toBe(true);
+        expect(
+            imageTaskRequests.filter((item) => item.config?.outputBackground !== "transparent"),
+            "背景应使用独立补全任务",
+        ).toHaveLength(1);
+        expect(imageTaskRequests.every((item) => item.config?.outputMode === undefined)).toBe(true);
+        expect(subjectWorkerRequests, "智能分层应恢复本地元素切割").toBeGreaterThan(0);
+        await expect(generated.first()).toBeVisible();
         await generated.first().click();
         await expect(generated.first().locator(":scope > div").first()).toHaveCSS("border-color", "rgb(47, 128, 255)");
     } finally {

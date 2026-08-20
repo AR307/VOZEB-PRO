@@ -115,6 +115,7 @@ export type CanvasNodeMetadata = {
     generationType?: CanvasImageGenerationType;
     model?: string;
     size?: string;
+    sizeLocked?: boolean;
     quality?: string;
     count?: number;
     seconds?: string;

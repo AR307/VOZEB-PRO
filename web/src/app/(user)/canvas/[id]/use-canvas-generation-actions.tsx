@@ -146,6 +146,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         size: resolveImageRequestSize({
                             prompt,
                             configuredSize: generationConfig.size,
+                            configuredSizeExplicit: sourceNode?.metadata?.sizeLocked !== false,
                             referenceWidth: referenceImages[0]?.width,
                             referenceHeight: referenceImages[0]?.height,
                             defaultSize: effectiveConfig.size,

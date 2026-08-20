@@ -44,7 +44,7 @@ async function proxyMedia(request: Request, method: "GET" | "HEAD") {
             permit.release();
             return new NextResponse(null, { status: media.response.status, headers });
         }
-        return withMediaConcurrency(new NextResponse(media.body, { status: media.response.status, headers }), permit);
+        return withMediaConcurrency(new NextResponse(media.body, { status: media.response.status, headers }), permit, request.signal);
     } catch (error) {
         permit.release();
         if (error instanceof UnsupportedMediaContentError || error instanceof MediaProxyResponseError) return NextResponse.json({ error: error.message }, { status: error.status });

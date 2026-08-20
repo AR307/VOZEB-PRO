@@ -110,6 +110,13 @@ describe("Canvas config node layout", () => {
         expect(expanded).toMatchObject({ height: CANVAS_CONFIG_NODE_HEIGHT.expanded, metadata: { configDetailsOpen: true } });
     });
 
+    it("records whether a canvas size is user-locked", () => {
+        const node = configNode(320);
+
+        expect(applyNodeConfigPatch(node, { size: "16:9" }).metadata).toMatchObject({ size: "16:9", sizeLocked: true });
+        expect(applyNodeConfigPatch(node, { size: "auto" }).metadata).toMatchObject({ size: "auto", sizeLocked: false });
+    });
+
     it("keeps administrator and upstream generation counts above the former platform ceiling", () => {
         expect(getGenerationCount("16")).toBe(16);
         expect(getGenerationCount("120")).toBe(120);

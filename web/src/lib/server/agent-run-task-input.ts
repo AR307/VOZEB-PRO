@@ -89,6 +89,7 @@ export function resolveAgentTaskRatio(input: {
     type: AgentRunTask["type"];
     requestedImageSize?: string;
     configuredImageSize?: string;
+    configuredSizeExplicit?: boolean;
     plannedRatio?: string;
     defaultSize?: string;
     globalSize?: string;
@@ -101,10 +102,11 @@ export function resolveAgentTaskRatio(input: {
     const explicit = isCreativeAutoValue(explicitValue) ? "" : explicitValue;
     const configured = isCreativeAutoValue(configuredValue) ? "" : configuredValue;
     const custom = parseImageDimensions(configured) ? configured : "";
+    const configuredFixed = configured && !isCreativeAutoValue(configured) && !custom ? configured : "";
     const reference = input.reference?.type === "image" ? normalizeImageSizeValue(input.reference.size) || closestImageAspectRatio(input.reference.width, input.reference.height) : "";
     const planned = normalizeImageSizeValue(input.plannedRatio);
     const fallback = smart ? "auto" : normalizeImageSizeValue(input.defaultSize) || normalizeImageSizeValue(input.globalSize) || "auto";
-    return explicit || custom || reference || configured || (isCreativeAutoValue(planned) ? "" : planned) || fallback;
+    return explicit || custom || (input.configuredSizeExplicit === true ? configuredFixed : "") || reference || (input.configuredSizeExplicit !== true ? configuredFixed : "") || (isCreativeAutoValue(planned) ? "" : planned) || fallback;
 }
 
 export function agentSurfaceImageSize(surface: AgentRun["surface"], snapshot: unknown) {
@@ -115,10 +117,10 @@ export function agentSurfaceImageSize(surface: AgentRun["surface"], snapshot: un
         const configuredNodes = nodes.flatMap((node) => {
             if (node.type !== "config" || typeof node.id !== "string") return [];
             const metadata = node.metadata && typeof node.metadata === "object" ? (node.metadata as Record<string, unknown>) : {};
-            const size = exactImageSize(metadata.size);
+            const size = fixedImageSize(metadata.size);
             return size ? [{ id: node.id, size }] : [];
         });
-        const imageSize = exactImageSize(canvasSnapshot.imageSize);
+        const imageSize = preciseImageSize(canvasSnapshot.imageSize);
         if (!configuredNodes.length) return imageSize;
 
         const selected = new Set(selectedCanvasNodeIds(snapshot));
@@ -208,7 +210,14 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
     if (run.surface !== "canvas")
         return {
             ...task,
-            ratio: resolveAgentTaskRatio({ type: task.type, requestedImageSize: run.requestedImageSize, configuredImageSize: agentSurfaceImageSize(run.surface, run.snapshot), plannedRatio: task.ratio, globalSize: settings.generationDefaults.imageSize }),
+            ratio: resolveAgentTaskRatio({
+                type: task.type,
+                requestedImageSize: run.requestedImageSize,
+                configuredImageSize: agentSurfaceImageSize(run.surface, run.snapshot),
+                configuredSizeExplicit: false,
+                plannedRatio: task.ratio,
+                globalSize: settings.generationDefaults.imageSize,
+            }),
         };
     const nodes = canvasSnapshotNodes(run.snapshot);
     const selected = new Set(selectedCanvasNodeIds(run.snapshot).filter((id) => nodes.has(id)));
@@ -232,6 +241,7 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
             type: task.type,
             requestedImageSize: run.requestedImageSize,
             configuredImageSize: agentSurfaceImageSize(run.surface, run.snapshot),
+            configuredSizeExplicit: true,
             plannedRatio: task.ratio,
             globalSize: settings.generationDefaults.imageSize,
             reference: target || selectedReferences.find((reference) => reference.type === "image"),
@@ -299,7 +309,12 @@ function positiveNumber(value: unknown) {
     return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
-function exactImageSize(value: unknown) {
+function fixedImageSize(value: unknown) {
+    const normalized = normalizeImageSizeValue(value);
+    return normalized && !isCreativeAutoValue(normalized) ? normalized : undefined;
+}
+
+function preciseImageSize(value: unknown) {
     const normalized = normalizeImageSizeValue(value);
     return parseImageDimensions(normalized) ? normalized : undefined;
 }

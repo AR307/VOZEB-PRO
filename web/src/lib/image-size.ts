@@ -39,10 +39,11 @@ export function closestImageAspectRatio(width: number | undefined, height: numbe
     return candidates.reduce((best, candidate) => (Math.abs(Math.log(ratio / candidate[1])) < Math.abs(Math.log(ratio / best[1])) ? candidate : best))[0];
 }
 
-export function resolveImageRequestSize(input: { prompt: string; configuredSize?: unknown; referenceWidth?: number; referenceHeight?: number; plannedSize?: unknown; defaultSize?: unknown }) {
+export function resolveImageRequestSize(input: { prompt: string; configuredSize?: unknown; configuredSizeExplicit?: boolean; referenceWidth?: number; referenceHeight?: number; plannedSize?: unknown; defaultSize?: unknown }) {
     const requested = extractImageSizeFromPrompt(input.prompt);
     const configured = normalizeImageSizeValue(input.configuredSize);
     const custom = parseImageDimensions(configured) ? configured : "";
+    const lockedRatio = input.configuredSizeExplicit && configured !== "auto" && !custom ? configured : "";
     const reference = closestImageAspectRatio(input.referenceWidth, input.referenceHeight);
-    return requested || custom || reference || normalizeImageSizeValue(input.plannedSize) || configured || normalizeImageSizeValue(input.defaultSize) || "auto";
+    return requested || custom || lockedRatio || reference || normalizeImageSizeValue(input.plannedSize) || configured || normalizeImageSizeValue(input.defaultSize) || "auto";
 }

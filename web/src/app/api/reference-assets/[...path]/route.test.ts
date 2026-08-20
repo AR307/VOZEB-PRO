@@ -75,7 +75,9 @@ describe("reference asset access", () => {
 
     it("allows the owner and administrators to read registered media", async () => {
         mocks.getCurrentUser.mockResolvedValue({ id: "owner", role: "user" });
-        expect((await GET(new Request("http://localhost/api/reference-assets/permanent/2026/07/20/images/file.png"), context)).status).toBe(200);
+        const request = new Request("http://localhost/api/reference-assets/permanent/2026/07/20/images/file.png", { headers: { "x-vozeb-pro-worker-user-id": "owner" } });
+        expect((await GET(request, context)).status).toBe(200);
+        expect(mocks.getCurrentUser).toHaveBeenCalledWith(request);
         expect(mocks.disposition).toHaveBeenCalledWith("inline", "file.png", "image/png", "");
         mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
         expect((await GET(new Request("http://localhost/api/reference-assets/permanent/2026/07/20/images/file.png"), context)).status).toBe(200);

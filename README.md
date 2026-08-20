@@ -21,6 +21,7 @@
   <a href="#目录与文件用途">目录与文件用途</a> ·
   <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
   <a href="https://linux.do">LINUX DO</a> ·
+  <a href="COMMERCIAL_LICENSE.md">商业授权</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a> ·
   <a href="CHANGELOG.md">更新记录</a>
 </p>
@@ -494,7 +495,8 @@ pnpm run dev
 | `.env.example`                              | 数据库、站点、加密、代理、媒体、模型、支付和部署变量模板                   |
 | `Dockerfile` / `docker-compose*.yml`        | standalone 生产镜像，以及标准、源码、宝塔、外部数据库和低内存部署拓扑      |
 | `VERSION` / `CHANGELOG.md`                  | 当前版本号和版本级变更记录                                                 |
-| `LICENSE` / `CLA.md` / `SECURITY.md`        | AGPL-3.0 协议、贡献者授权和漏洞提交规则                                    |
+| `LICENSE` / `COMMERCIAL_LICENSE.md`         | AGPL-3.0 社区协议，以及闭源自营和无限 OEM 商业授权说明                      |
+| `CLA.md` / `SECURITY.md`                    | 贡献者授权和漏洞提交规则                                                    |
 | `AGENTS.md` / `CONTRIBUTING.md`             | 项目工程约束，以及开发者提交 Issue、代码和文档的流程                       |
 
 更完整的目录树、关键源码入口、Service、Route Handler、Repository 和任务 Store 职责见[项目结构与流程](docs/content/docs/overview/project-structure.mdx)。
@@ -550,6 +552,7 @@ pnpm run build
 - [参与贡献](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
 - [AGPL-3.0](LICENSE)
+- [商业授权说明](COMMERCIAL_LICENSE.md)
 - [贡献者协议](CLA.md)
 
 ## 社区交流

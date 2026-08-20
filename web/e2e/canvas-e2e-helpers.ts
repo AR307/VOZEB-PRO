@@ -26,6 +26,8 @@ export async function readCanvasProject(request: APIRequestContext, path: string
                         id: string;
                         type: string;
                         position: { x: number; y: number };
+                        width: number;
+                        height: number;
                         metadata?: {
                             videoReferenceMode?: string;
                             videoFirstFrame?: { nodeId?: string };

@@ -26,7 +26,7 @@ export async function HEAD(request: Request, context: RouteContext) {
 }
 
 async function serveGenerationAsset(request: Request, context: RouteContext) {
-    const currentUser = await getCurrentUser();
+    const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { path } = await context.params;
@@ -69,7 +69,7 @@ async function serveGenerationAsset(request: Request, context: RouteContext) {
             permit.release();
             return NextResponse.json({ error: "资源不存在" }, { status: 404 });
         }
-        return withMediaConcurrency(response, permit);
+        return withMediaConcurrency(response, permit, request.signal);
     } catch (error) {
         permit.release();
         throw error;

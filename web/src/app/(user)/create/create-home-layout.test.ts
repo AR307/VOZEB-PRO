@@ -22,7 +22,8 @@ describe("create Agent home layout", () => {
         expect(page).toContain('data-testid="creative-conversation-scroll"');
         expect(page).toContain("updateConversationScrollState");
         expect(page).toContain("onWheelCapture");
-        expect(page).toContain("distanceFromLatest > 48");
+        expect(page).toContain("scrollingAwayFromLatestRef");
+        expect(page).toContain("distanceFromLatest < 4");
         expect(page).toContain("awayFromLatestRef.current = false");
         expect(page).toContain("setAwayFromLatestState(true)");
         expect(page).toContain("回到底部");
@@ -51,10 +52,11 @@ describe("create Agent home layout", () => {
         expect(composer).toContain('data-compact={compact ? "true" : "false"}');
         expect(composer).toContain("const inputMediaAttachments = compact ? allMediaAttachments");
         expect(composer).toContain("<ComposerMediaThumbnail key={asset.id} asset={asset} compact={compact}");
-        expect(composer).toContain("autoSize={compactMode ? { minRows: 1, maxRows: 5 }");
+        expect(composer).toContain("autoSize={compactMode ? { minRows: 1, maxRows: 1 }");
         expect(composer).toContain("<CreativeGenerationControls");
         expect(composer).toContain("使用 Skill");
         expect(composer).toContain('aria-label={optimizing ? "正在优化提示词" : "优化提示词"}');
+        expect(composer).toContain("disabled:!bg-none");
         expect(page).toContain("optimizePrompt");
         expect(page).toContain("mode: creationMode");
         expect(composer).toContain('aria-label={mediaAttachments.length ? "继续添加参考素材" : "添加素材"}');

@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, readCanvasProject } from "./canvas-e2e-helpers";
 import { E2E_PAYMENT_WEBHOOK_SECRET, pollTask, protocolFixtureState, resetProtocolFixture } from "./support";
 
 test.describe.configure({ mode: "serial" });
@@ -222,6 +223,178 @@ test("unified creative page reaches the local planning and image protocols", asy
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
 });
 
+test("Canvas Agent persists local image and video results while the canvas remains movable", async ({ page, request }) => {
+    const project = await createCanvasProject(request, { title: `Canvas Agent 协议 ${randomUUID().slice(0, 8)}`, viewport: { x: 80, y: 100, k: 1 }, nodes: [], connections: [] });
+    try {
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        const composer = page.getByPlaceholder("描述你想让 Agent 如何操作画布");
+        await expect(composer).toBeVisible({ timeout: 20_000 });
+        await composer.fill("生成一张图片和一段视频，验证画布协议与持久化");
+        const runCreated = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/agent/runs");
+        await page.getByRole("button", { name: "发送" }).click();
+        const runResponse = await runCreated;
+        expect(runResponse.ok(), await runResponse.text()).toBe(true);
+        const runId = ((await runResponse.json()) as { data: { run: { id: string } } }).data.run.id;
+        await waitForAgentRun(request, runId);
+
+        const projectPath = `/api/canvas/projects/${project.id}`;
+        await expect
+            .poll(async () => {
+                const stored = await readCanvasProject(request, projectPath);
+                return stored.nodes
+                    .filter((item) => item.metadata?.agentRunId === runId && item.metadata?.status === "success")
+                    .map((item) => item.type)
+                    .sort();
+            })
+            .toEqual(["image", "video"]);
+        const stored = await readCanvasProject(request, projectPath);
+        const outputNodes = stored.nodes.filter((item) => item.metadata?.agentRunId === runId && ["image", "video"].includes(item.type));
+        expect(outputNodes).toHaveLength(2);
+        for (const item of outputNodes) await expect(page.locator(`[data-node-id="${item.id}"]`)).toBeVisible();
+        await expect(page.locator(`[data-node-id="brief-${runId}"], [data-node-id="brand-${runId}"], [data-node-id^="task-${runId}-"]`)).toHaveCount(0);
+        await expect(page.getByText(/内部协议(?:图片|视频)执行提示/)).toHaveCount(0);
+
+        const surface = page.locator("[data-canvas-surface]");
+        if ((await surface.getAttribute("data-canvas-interaction-mode")) !== "pan") await page.getByRole("button", { name: "切换到小手模式" }).click();
+        const beforeViewport = await canvasViewport(request, project.id);
+        const bounds = await surface.boundingBox();
+        expect(bounds).not.toBeNull();
+        const panStart = { x: bounds!.x + bounds!.width * 0.45, y: bounds!.y + bounds!.height * 0.52 };
+        await page.mouse.move(panStart.x, panStart.y);
+        await page.mouse.down();
+        await page.mouse.move(panStart.x + 80, panStart.y - 40, { steps: 8 });
+        await page.mouse.up();
+        await expect.poll(async () => (await canvasViewport(request, project.id)).x).toBeGreaterThan(beforeViewport.x + 50);
+        await expectCanvasSaved(page, 10_000);
+
+        await page.goto("/canvas", { waitUntil: "domcontentloaded" });
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        await expect(page.locator("[data-canvas-surface]")).toBeVisible();
+        expect(
+            (await readCanvasProject(request, projectPath)).nodes
+                .filter((item) => item.metadata?.agentRunId === runId && item.metadata?.status === "success")
+                .map((item) => item.type)
+                .sort(),
+        ).toEqual(["image", "video"]);
+
+        const state = await protocolFixtureState(request);
+        expect(state.requests.some((item) => item.method === "POST" && item.path.endsWith("/chat/completions"))).toBe(true);
+        expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
+        expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos"))).toHaveLength(1);
+        expect(state.requests.some((item) => item.method === "GET" && /\/videos\/fixture-video-/.test(item.path))).toBe(true);
+    } finally {
+        await deleteCanvasProject(request, project.id);
+    }
+});
+
+test("Drama Agent persists and restores local image and video results", async ({ page, request }) => {
+    const created = await request.post("/api/drama/projects", { data: { title: `短剧 Agent 协议 ${randomUUID().slice(0, 8)}`, summary: "验证项目 Agent 图片与视频完整链路", ratio: "16:9" } });
+    expect(created.ok(), await created.text()).toBe(true);
+    const project = ((await created.json()) as { data: { project: { id: string } } }).data.project;
+    try {
+        await page.goto(`/drama/${project.id}`, { waitUntil: "domcontentloaded" });
+        await expect(page.locator("[data-drama-workspace]")).toBeVisible({ timeout: 20_000 });
+        await page.getByRole("button", { name: "打开项目 Agent" }).click();
+        const panel = page.getByRole("complementary", { name: "项目 Agent 面板" });
+        await expect(panel).toBeVisible();
+        const composer = panel.getByPlaceholder("告诉 Agent 下一步要做什么");
+        const prompt = "生成一张图片和一段视频，验证短剧项目 Agent 持久化";
+        await composer.fill(prompt);
+        const runCreated = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/agent/runs");
+        await panel.getByRole("button", { name: "发送给项目 Agent" }).click();
+        const runResponse = await runCreated;
+        expect(runResponse.ok(), await runResponse.text()).toBe(true);
+        const run = ((await runResponse.json()) as { data: { run: { id: string; conversationId: string } } }).data.run;
+        await waitForAgentRun(request, run.id);
+        await expect(panel.getByRole("img", { name: "协议测试图片" })).toBeVisible({ timeout: 20_000 });
+        await expect(panel.getByRole("button", { name: "打开视频：协议测试视频" })).toBeVisible();
+        await expect(panel.getByText(/内部协议(?:图片|视频)执行提示/)).toHaveCount(0);
+        await expect.poll(async () => (await dramaProject(request, project.id)).creativeConversationId).toBe(run.conversationId);
+
+        await page.goto("/drama", { waitUntil: "domcontentloaded" });
+        await page.goto(`/drama/${project.id}`, { waitUntil: "domcontentloaded" });
+        await page.getByRole("button", { name: "打开项目 Agent" }).click();
+        const restored = page.getByRole("complementary", { name: "项目 Agent 面板" });
+        await expect(restored.getByText(prompt, { exact: true })).toBeVisible();
+        await expect(restored.getByRole("img", { name: "协议测试图片" })).toBeVisible();
+        await expect(restored.getByRole("button", { name: "打开视频：协议测试视频" })).toBeVisible();
+        await expect(restored.getByText(/内部协议(?:图片|视频)执行提示/)).toHaveCount(0);
+
+        const state = await protocolFixtureState(request);
+        expect(state.requests.some((item) => item.method === "POST" && item.path.endsWith("/chat/completions"))).toBe(true);
+        expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
+        expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos"))).toHaveLength(1);
+    } finally {
+        const deleted = await request.delete(`/api/drama/projects/${project.id}`);
+        expect(deleted.ok(), await deleted.text()).toBe(true);
+    }
+});
+
+test("Drama production persists storyboard and shot video results through reload", async ({ page, request }) => {
+    const created = await request.post("/api/drama/projects", {
+        data: {
+            title: `短剧生产协议 ${randomUUID().slice(0, 8)}`,
+            summary: "验证短剧从剧本分析到镜头视频的完整链路",
+            style: "清晰的横版测试画面",
+            ratio: "16:9",
+            initialScript: "主角推门进入明亮的测试房间，说：测试开始。",
+        },
+    });
+    expect(created.ok(), await created.text()).toBe(true);
+    const project = ((await created.json()) as { data: { project: { id: string } } }).data.project;
+    try {
+        await page.goto(`/drama/${project.id}`, { waitUntil: "domcontentloaded" });
+        await expect(page.locator("[data-drama-workspace]")).toBeVisible({ timeout: 20_000 });
+        const analyzeButton = page.locator("[data-drama-script-statusbar]").getByRole("button", { name: "AI 整理" });
+        await expect(analyzeButton).toBeEnabled();
+        await analyzeButton.click();
+        await expect(page.getByRole("heading", { name: "内容审核", exact: true })).toBeVisible({ timeout: 30_000 });
+
+        await page.getByRole("button", { name: "确认内容并生成视觉方案" }).click();
+        await expect(page.getByRole("heading", { name: "分镜编辑", exact: true })).toBeVisible({ timeout: 30_000 });
+        await page.getByRole("button", { name: "进入镜头生成" }).click();
+        await expect(page.getByRole("heading", { name: "镜头生成", exact: true })).toBeVisible();
+        await page.getByRole("button", { name: "生成 1 个就绪镜头" }).click();
+
+        await expect
+            .poll(
+                async () => {
+                    const stored = await dramaProject(request, project.id);
+                    const shot = stored.episodes[0]?.shots[0];
+                    return {
+                        reviewStatus: stored.episodes[0]?.reviewStatus,
+                        storyboardStatus: shot?.storyboardStatus,
+                        storyboardTaskId: Boolean(shot?.storyboardTaskId),
+                        storyboardImageUrl: Boolean(shot?.storyboardImageUrl),
+                        generationStatus: shot?.generationStatus,
+                        generationTaskId: Boolean(shot?.generationTaskId),
+                        videoUrl: Boolean(shot?.videoUrl),
+                    };
+                },
+                { timeout: 90_000 },
+            )
+            .toEqual({ reviewStatus: "visual_ready", storyboardStatus: "success", storyboardTaskId: true, storyboardImageUrl: true, generationStatus: "success", generationTaskId: true, videoUrl: true });
+
+        await expect(page.getByRole("button", { name: /查看图片：.*起始帧/ })).toBeVisible();
+        await expect(page.getByRole("button", { name: /查看视频：.*生成视频/ })).toBeVisible();
+        const state = await protocolFixtureState(request);
+        expect(state.requests.some((item) => item.method === "POST" && item.path.endsWith("/chat/completions"))).toBe(true);
+        expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
+        expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos"))).toHaveLength(1);
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.getByRole("button", { name: "切换到镜头生成" })).toBeVisible({ timeout: 20_000 });
+        await page.getByRole("button", { name: "切换到镜头生成" }).click();
+        await expect(page.getByRole("heading", { name: "镜头生成", exact: true })).toBeVisible();
+        await expect(page.getByRole("button", { name: /查看图片：.*起始帧/ })).toBeVisible();
+        await expect(page.getByRole("button", { name: /查看视频：.*生成视频/ })).toBeVisible();
+        expect((await dramaProject(request, project.id)).episodes[0]?.shots[0]).toMatchObject({ storyboardStatus: "success", generationStatus: "success" });
+    } finally {
+        const deleted = await request.delete(`/api/drama/projects/${project.id}`);
+        expect(deleted.ok(), await deleted.text()).toBe(true);
+    }
+});
+
 test("video request replay and cancellation keep one upstream task", async ({ request }) => {
     const clientRequestId = `e2e-video:${randomUUID()}`;
     const body = { config: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 }, prompt: "slow video", source: "video-workbench", context: { clientRequestId } };
@@ -240,6 +413,50 @@ test("video request replay and cancellation keep one upstream task", async ({ re
     const state = await protocolFixtureState(request);
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos"))).toHaveLength(1);
 });
+
+async function waitForAgentRun(request: APIRequestContext, runId: string) {
+    await expect
+        .poll(
+            async () => {
+                const response = await request.get(`/api/agent/runs/${runId}`);
+                if (!response.ok()) return `http-${response.status()}`;
+                return ((await response.json()) as { data: { run: { status: string } } }).data.run.status;
+            },
+            { timeout: 90_000 },
+        )
+        .toBe("completed");
+}
+
+async function canvasViewport(request: APIRequestContext, projectId: string) {
+    const response = await request.get(`/api/canvas/projects/${projectId}`);
+    expect(response.ok(), await response.text()).toBe(true);
+    return ((await response.json()) as { data: { project: { viewport: { x: number; y: number; k: number } } } }).data.project.viewport;
+}
+
+async function dramaProject(request: APIRequestContext, projectId: string) {
+    const response = await request.get(`/api/drama/projects/${projectId}`);
+    expect(response.ok(), await response.text()).toBe(true);
+    return (
+        (await response.json()) as {
+            data: {
+                project: {
+                    creativeConversationId?: string;
+                    episodes: Array<{
+                        reviewStatus: string;
+                        shots: Array<{
+                            storyboardStatus?: string;
+                            storyboardTaskId?: string;
+                            storyboardImageUrl?: string;
+                            generationStatus?: string;
+                            generationTaskId?: string;
+                            videoUrl?: string;
+                        }>;
+                    }>;
+                };
+            };
+        }
+    ).data.project;
+}
 
 test("legacy image and video routes hand off to the unified creative Agent", async ({ page }) => {
     for (const route of ["/image", "/video"]) {

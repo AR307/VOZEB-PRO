@@ -56,4 +56,22 @@ describe("reference asset upload boundary", () => {
             upstreamUrl: "https://drama.example/api/reference-assets/permanent/asset.mp4?expires=1&signature=test",
         });
     });
+
+    it("accepts binary multipart uploads without base64 request expansion", async () => {
+        mocks.writePersistent.mockResolvedValue({ token: "permanent/asset.png", bytes: 4, mimeType: "image/png", storage: "local" });
+        const form = new FormData();
+        form.append("type", "image");
+        form.append("persistent", "true");
+        form.append("file", new File([new Uint8Array([1, 2, 3, 4])], "图层.png", { type: "image/png" }));
+
+        const response = await POST(new Request("http://localhost/api/reference-assets", { method: "POST", body: form }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.writePersistent).toHaveBeenCalledWith("data:image/png;base64,AQIDBA==", "image", {
+            ownerUserId: "user-one",
+            source: "user-upload",
+            originalName: "图层.png",
+            maxBytes: 20 * 1024 * 1024,
+        });
+    });
 });

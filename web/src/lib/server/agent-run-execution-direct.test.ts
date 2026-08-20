@@ -118,11 +118,12 @@ describe("directAgentPlan", () => {
         expect(task).toMatchObject({ type: "image", model: "image-pro", targetNodeId: "pig-image", referenceUrl: "/api/reference-assets/pig.webp", ratio: "16:9" });
     });
 
-    it("统一按文字尺寸、自定义尺寸、参考图、规划和默认值排序", () => {
+    it("统一按文字尺寸、锁定尺寸、参考图、规划和默认值排序", () => {
         const base = { type: "image" as const, configuredImageSize: "1824x1024", reference: { type: "image" as const, width: 1024, height: 1536 }, plannedRatio: "1:1", globalSize: "4:3" };
 
         expect(resolveAgentTaskRatio({ ...base, requestedImageSize: "1280x720" })).toBe("1280x720");
         expect(resolveAgentTaskRatio(base)).toBe("1824x1024");
+        expect(resolveAgentTaskRatio({ ...base, configuredImageSize: "16:9", configuredSizeExplicit: true })).toBe("16:9");
         expect(resolveAgentTaskRatio({ ...base, configuredImageSize: undefined })).toBe("2:3");
         expect(resolveAgentTaskRatio({ ...base, configuredImageSize: undefined, reference: undefined })).toBe("1:1");
         expect(resolveAgentTaskRatio({ ...base, configuredImageSize: undefined, reference: undefined, plannedRatio: undefined })).toBe("4:3");
@@ -136,11 +137,11 @@ describe("directAgentPlan", () => {
                 imageSize: "1:1",
                 selectedNodeIds: ["reference"],
                 nodes: [
-                    { id: "config", type: "config", metadata: { size: "1824x1024" } },
+                    { id: "config", type: "config", metadata: { size: "16:9" } },
                     { id: "reference", type: "image", metadata: { naturalWidth: 1024, naturalHeight: 1536 } },
                 ],
             }),
-        ).toBe("1824x1024");
+        ).toBe("16:9");
         expect(
             agentSurfaceImageSize("canvas", {
                 imageSize: "1024x1024",

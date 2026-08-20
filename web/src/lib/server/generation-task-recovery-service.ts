@@ -494,6 +494,10 @@ async function persistImageLease(task: ImageTask, lease: GenerationTaskLease, wo
     await scheduleGenerationTask("image", task.id, { executionPhase: "persisting", nextPollAt: lease.nextPollAt });
     try {
         const completed = await persistImageTaskResult(task, origin, resultUrl, cookie, cookie ? "" : task.userId);
+        if (completed?.status === "error") {
+            await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "transparent_output_invalid" });
+            return "failed";
+        }
         if (!completed || completed.status !== "success") throw new Error("图片结果保存后未进入成功状态");
         await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
         return "completed";

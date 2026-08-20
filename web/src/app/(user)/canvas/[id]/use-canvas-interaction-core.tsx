@@ -115,7 +115,10 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
 
     const createConnectedNode = useCallback(
         (type: CanvasCreatableNodeType, pending: PendingConnectionCreate) => {
-            const metadata = type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) } : undefined;
+            const metadata =
+                type === CanvasNodeType.Config
+                    ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, sizeLocked: effectiveConfig.size !== "auto", count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) }
+                    : undefined;
             const newNode = createCanvasNode(type, pending.position, metadata);
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {

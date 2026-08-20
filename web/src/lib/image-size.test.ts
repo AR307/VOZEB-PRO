@@ -25,4 +25,11 @@ describe("image size input", () => {
         expect(resolveImageRequestSize({ ...base, configuredSize: "1:1", referenceWidth: undefined, referenceHeight: undefined })).toBe("1:1");
         expect(resolveImageRequestSize({ ...base, configuredSize: "auto", referenceWidth: undefined, referenceHeight: undefined, plannedSize: undefined })).toBe("auto");
     });
+
+    it("keeps a user-locked ratio ahead of reference image inference", () => {
+        const input = { prompt: "生成图片", configuredSize: "16:9", configuredSizeExplicit: true, referenceWidth: 1024, referenceHeight: 1024, defaultSize: "1:1" };
+
+        expect(resolveImageRequestSize(input)).toBe("16:9");
+        expect(resolveImageRequestSize({ ...input, configuredSize: "auto", configuredSizeExplicit: false })).toBe("1:1");
+    });
 });

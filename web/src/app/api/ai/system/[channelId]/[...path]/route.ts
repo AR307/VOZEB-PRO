@@ -277,7 +277,7 @@ async function proxySystemMediaRequest(request: Request, channel: SystemMediaCha
             permit.release();
             return response;
         }
-        return withMediaConcurrency(response, permit);
+        return withMediaConcurrency(response, permit, request.signal);
     } catch (error) {
         permit.release();
         if (error instanceof UnsupportedMediaContentError || error instanceof MediaProxyResponseError) return NextResponse.json({ error: error.message }, { status: error.status });

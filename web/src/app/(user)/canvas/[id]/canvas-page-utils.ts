@@ -329,7 +329,14 @@ export function getGenerationCount(count: string) {
 
 export function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {
     const safePatch = patch || {};
-    const next = { ...node, metadata: { ...node.metadata, ...safePatch } };
+    const next = {
+        ...node,
+        metadata: {
+            ...node.metadata,
+            ...safePatch,
+            ...(typeof safePatch.size === "string" ? { sizeLocked: safePatch.size !== "auto" } : {}),
+        },
+    };
     if (node.type === CanvasNodeType.Config && typeof safePatch.configDetailsOpen === "boolean") {
         return { ...next, height: safePatch.configDetailsOpen ? CANVAS_CONFIG_NODE_HEIGHT.expanded : CANVAS_CONFIG_NODE_HEIGHT.collapsed };
     }
