@@ -10,6 +10,8 @@ describe("generationPreferenceSummary", () => {
         expect(generationPreferenceSummary("image", {})).toBe("智能参数");
         expect(generationPreferenceSummary("video", { video: { size: "16:9", quality: "2160", seconds: 60, count: 3, generateAudio: false, watermark: true } })).toBe("16:9 · 2160P · 60秒 · 无声 · 带水印 · 3条");
         expect(generationPreferenceSummary("image", { image: { size: "1024x1536", quality: "high", count: 2 } })).toBe("1024×1536 · 高画质 · 2张");
+        expect(generationPreferenceSummary("image", { image: { size: "2048x1152", quality: "high" } })).toBe("2K 16:9 · 高画质");
+        expect(generationPreferenceSummary("image", { image: { size: "3840x2160", quality: "auto" } })).toBe("4K 16:9 · 智能画质");
         expect(generationPreferenceSummary("audio", { audio: { voice: "nova", format: "wav", speed: 1.25 } })).toBe("Nova · WAV · 1.25x");
         expect(generationPreferenceSummary("video", {})).toBe("智能参数 · 5秒 · 有声 · 无水印");
     });
@@ -42,6 +44,19 @@ describe("generationPreferenceSummary", () => {
         expect(source).toContain("<CustomMediaSizeEditor capability={capability}");
         expect(source).toContain('`自定义${capability === "image" ? "图片" : "视频"}宽度`');
         expect(source).toContain('`自定义${capability === "image" ? "图片" : "视频"}高度`');
+    });
+
+    it("offers explicit 2K and 4K image size presets without treating them as custom sizes", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/components/creative-generation-preferences.tsx"), "utf8");
+
+        expect(source).toContain('{ value: "2048x1152", label: "2K 16:9"');
+        expect(source).toContain('{ value: "1152x2048", label: "2K 9:16"');
+        expect(source).toContain('{ value: "3840x2160", label: "4K 16:9"');
+        expect(source).toContain('{ value: "2160x3840", label: "4K 9:16"');
+        expect(source).toContain("高分辨率");
+        expect(source).toContain("grid-cols-4 gap-1");
+        expect(source).toContain("grid-cols-3 gap-1");
+        expect(source).toContain("!isPresetMediaSize(capability, selectedSize)");
     });
 
     it("keeps media type above the canvas and output parameter tabs", async () => {
