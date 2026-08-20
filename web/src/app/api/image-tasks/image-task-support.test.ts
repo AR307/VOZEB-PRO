@@ -6,6 +6,7 @@ import { GenerationSubmissionSafeFailure } from "@/lib/server/generation-submiss
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import {
     allowsImageProtocolFallback,
+    findImageResult,
     ImageQueryContractError,
     imageRequestAspectRatio,
     imageTaskPollAttempts,
@@ -105,6 +106,14 @@ describe("GlobalAiOpc image task paths", () => {
     it("uses the configured create and result endpoints instead of OpenAI defaults", async () => {
         await expect(openAiImageTaskPath(config, "generation")).resolves.toBe("/image2/images");
         expect(imageTaskPollUrls(config, "http://localhost:3000/api/ai/system/global-image/image2/images", "task 1")[0]).toBe("http://localhost:3000/api/ai/system/global-image/result/task%201");
+    });
+
+    it("treats raw JPEG base64 as inline image data before relative URL parsing", () => {
+        const jpegBase64 = `/9j/${"A".repeat(96)}`;
+
+        expect(findImageResult(jpegBase64, "https://provider.example/v1/images/generations", config)).toMatchObject({
+            dataUrl: `data:image/jpeg;base64,${jpegBase64}`,
+        });
     });
 
     it("routes standard OpenAI generations and edits to their matching endpoints", async () => {

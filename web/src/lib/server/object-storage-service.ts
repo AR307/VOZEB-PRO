@@ -71,7 +71,7 @@ export async function createExternalStorageImagePreviewUrl(objectKey: string, wi
     const config = await getObjectStorageRuntimeConfig();
     assertObjectStorageConfigured(config);
     const key = objectKey.trim().replace(/\\/g, "/");
-    if (!key.startsWith(`${config.prefix}/`) || classifyManagedMediaType({ name: key }) !== "image") return null;
+    if (!key.startsWith(`${config.prefix}/`) || isPreviewVariantKey(key) || classifyManagedMediaType({ name: key }) !== "image") return null;
     return createObjectImagePreviewReadUrl(config, key, normalizeImagePreviewWidth(width), key);
 }
 
@@ -96,11 +96,12 @@ export async function listExternalStorageFiles(input: { prefix?: string; cursor?
 
     for (let scan = 0; scan < 100 && items.length < limit; scan += 1) {
         const listed = await listObjects(config, { prefix: fullPrefix, cursor: nextCursor, limit: limit - items.length });
-        const registrations = await listMediaRegistrationsByExternalObjectKeys(listed.items.map((item) => item.key));
+        const originalItems = listed.items.filter((item) => !isPreviewVariantKey(item.key));
+        const registrations = await listMediaRegistrationsByExternalObjectKeys(originalItems.map((item) => item.key));
         const registrationByKey = new Map(registrations.flatMap((item) => (item.externalObjectKey ? [[item.externalObjectKey, item] as const] : [])));
         const references = await countLocalMediaReferences(registrations.map((item) => item.storageKey));
         const pageItems = await Promise.all(
-            listed.items.map(async (item) => {
+            originalItems.map(async (item) => {
                 const registration = registrationByKey.get(item.key);
                 const itemType = classifyManagedMediaType({ type: registration?.type, mimeType: registration?.mimeType, name: item.key });
                 const fileName = registration?.originalName || basename(item.key);
@@ -122,7 +123,7 @@ export async function listExternalStorageFiles(input: { prefix?: string; cursor?
                     referenceCount: registration ? references.get(registration.storageKey) || 0 : 0,
                     previewUrl: itemType === "image" ? adminObjectImagePreviewUrl(item.key) : signedPreviewUrl,
                     downloadUrl,
-                    variant: item.key.includes(`${PREVIEW_MARKER}/`),
+                    variant: false,
                 };
             }),
         );
@@ -159,7 +160,7 @@ export async function deleteExternalStorageFiles(keys: string[]): Promise<Object
     const config = await getObjectStorageRuntimeConfig();
     assertObjectStorageConfigured(config);
     const basePrefix = `${config.prefix}/`;
-    const normalizedKeys = Array.from(new Set(keys.map((key) => key.trim()).filter((key) => key.startsWith(basePrefix))));
+    const normalizedKeys = Array.from(new Set(keys.map((key) => key.trim()).filter((key) => key.startsWith(basePrefix) && !isPreviewVariantKey(key))));
     const registrations = await listMediaRegistrationsByExternalObjectKeys(normalizedKeys);
     const registrationByKey = new Map(registrations.flatMap((item) => (item.externalObjectKey ? [[item.externalObjectKey, item] as const] : [])));
     const references = await countLocalMediaReferences(registrations.map((item) => item.storageKey));
@@ -175,14 +176,16 @@ export async function deleteExternalStorageFiles(keys: string[]): Promise<Object
             continue;
         }
         deletable.push(key);
-        if (registration) {
-            registrationKeys.push(registration.storageKey);
-            deletable.push(...(await listAllKeys(config, `${key}${PREVIEW_MARKER}/`)));
-        }
+        if (registration) registrationKeys.push(registration.storageKey);
+        deletable.push(...(await listAllKeys(config, `${key}${PREVIEW_MARKER}/`)));
     }
     await deleteObjects(config, deletable);
     await deleteLocalMediaRegistrations(registrationKeys);
     return { deleted: normalizedKeys.length - blocked.length, blocked };
+}
+
+function isPreviewVariantKey(key: string) {
+    return key.replace(/\\/g, "/").includes(`${PREVIEW_MARKER}/`);
 }
 
 export async function deleteExternalMediaObject(registration: LocalMediaRegistration) {

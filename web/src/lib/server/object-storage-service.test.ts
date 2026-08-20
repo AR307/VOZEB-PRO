@@ -150,6 +150,16 @@ describe("object storage media service", () => {
         await expect(createExternalStorageImagePreviewUrl("vozeb-pro/files/archive.zip", 256)).resolves.toBeNull();
     });
 
+    it("does not create nested previews when a preview variant key is requested", async () => {
+        const previewKey = "vozeb-pro/media/reference/file.png.vozeb-preview/webp-640.webp";
+
+        await expect(createExternalStorageImagePreviewUrl(previewKey, 256)).resolves.toBeNull();
+
+        expect(mocks.objectExists).not.toHaveBeenCalled();
+        expect(mocks.getBytes).not.toHaveBeenCalled();
+        expect(mocks.putBytes).not.toHaveBeenCalled();
+    });
+
     it("keeps streaming media urls valid long enough for playback and seeking", async () => {
         const videoRegistration = { ...registration, type: "video" as const, mimeType: "video/mp4", storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "vozeb-pro/media/reference/video.mp4" };
 
@@ -169,6 +179,38 @@ describe("object storage media service", () => {
         expect(result).toEqual({ deleted: 1, blocked: [{ key: protectedKey, storageKey: registration.storageKey, referenceCount: 2 }] });
         expect(mocks.deleteObjects).toHaveBeenCalledWith(config, [freeKey]);
         expect(mocks.deleteRegistrations).toHaveBeenCalledWith([]);
+    });
+
+    it("hides preview variants from the external storage file list", async () => {
+        const imageKey = "vozeb-pro/media/reference/file.png";
+        const previewKey = `${imageKey}.vozeb-preview/webp-256.webp`;
+        mocks.listObjects.mockResolvedValue({
+            items: [
+                { key: imageKey, bytes: 4 },
+                { key: previewKey, bytes: 2 },
+            ],
+            nextCursor: undefined,
+        });
+        mocks.listByObjectKeys.mockImplementation(async (keys: string[]) => (keys.includes(imageKey) ? [{ ...registration, storageProvider: "object", externalObjectKey: imageKey }] : []));
+
+        const result = await listExternalStorageFiles({ limit: 2 });
+
+        expect(result.items).toEqual([expect.objectContaining({ key: imageKey, variant: false })]);
+        expect(mocks.listByObjectKeys).toHaveBeenCalledWith([imageKey]);
+    });
+
+    it("deletes preview variants together with an unregistered original object", async () => {
+        const imageKey = "vozeb-pro/media/reference/unregistered.png";
+        const variants = [
+            { key: `${imageKey}.vozeb-preview/webp-256.webp`, bytes: 2 },
+            { key: `${imageKey}.vozeb-preview/webp-640.webp`, bytes: 3 },
+        ];
+        mocks.listObjects.mockResolvedValue({ items: variants, nextCursor: undefined });
+
+        const result = await deleteExternalStorageFiles([imageKey]);
+
+        expect(result).toEqual({ deleted: 1, blocked: [] });
+        expect(mocks.deleteObjects).toHaveBeenCalledWith(config, [imageKey, ...variants.map((item) => item.key)]);
     });
 
     it("classifies attachments and fills a filtered page across object cursors", async () => {
