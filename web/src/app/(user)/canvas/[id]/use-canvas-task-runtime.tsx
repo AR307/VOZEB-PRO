@@ -15,7 +15,7 @@ import { compositeCanvasImageEditResult, validateAndTrimCanvasTransparentLayer }
 
 import { CanvasHistoryEntry, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH } from "./canvas-page-elements";
 import { audioMetadata, imageMetadata, resolveMetadataImageEditMask, resolveMetadataImageEditValidationMask, resolveMetadataReferences, uploadCanvasImage, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
-import { applyCanvasImageLayerTaskResults, applyCanvasImageTaskResults } from "./canvas-image-task-results";
+import { applyCanvasImageLayerTaskResults, applyCanvasImageTaskResults, canvasImageLayerResultNodeId } from "./canvas-image-task-results";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 
@@ -263,8 +263,9 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
             );
         }
         if (options?.commitResult !== false) {
+            const layerMode = (options?.outputMode || target?.metadata?.imageOutputMode) === "layers";
             setNodes((prev) =>
-                (options?.outputMode || target?.metadata?.imageOutputMode) === "layers"
+                layerMode
                     ? applyCanvasImageLayerTaskResults(prev, {
                           nodeId,
                           taskId: task.id,
@@ -282,6 +283,15 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
                           size: generationConfig.size,
                       }),
             );
+            const sourceNodeId = layerMode ? target?.metadata?.sourceLayerNodeId : undefined;
+            if (sourceNodeId) {
+                const resultNodeIds = uploaded.map((_, index) => canvasImageLayerResultNodeId(nodeId, task.id, index));
+                setConnections((current) => {
+                    const connectedTargets = new Set(current.filter((connection) => connection.fromNodeId === sourceNodeId).map((connection) => connection.toNodeId));
+                    const missing = resultNodeIds.filter((resultNodeId) => !connectedTargets.has(resultNodeId));
+                    return missing.length ? [...current, ...missing.map((resultNodeId) => ({ id: `connection-layer-${task.id}-${resultNodeIds.indexOf(resultNodeId) + 1}`, fromNodeId: sourceNodeId, toNodeId: resultNodeId }))] : current;
+                });
+            }
         }
         return uploaded;
     }, []);

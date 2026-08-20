@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
+import sharp from "sharp";
+
 const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGPQq/3/H4QZYAwAWewKpRUlAtEAAAAASUVORK5CYII=";
 const TRANSPARENT_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAE0lEQVQImWPQq/3PoFf7H0KAOABK+winx6MN+QAAAABJRU5ErkJggg==";
 const FALLBACK_MP4 = Buffer.from("AAAAIGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQ==", "base64");
@@ -147,7 +149,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         const model = requestedModel(body, request.headers["content-type"] || "");
         if (options.failImage || shouldFailRequest(request, model)) return sendJson(response, options.failImage || model.includes("-fail") ? 400 : 503, { error: { message: "fixture image failure" } });
         const image = requestsTransparentBackground(body, request.headers["content-type"] || "") ? Buffer.from(TRANSPARENT_PNG_BASE64, "base64") : await fixtureImage(options);
-        const images = requestsLayeredOutput(body) ? [Buffer.from(TRANSPARENT_PNG_BASE64, "base64"), await fixtureImage(options)] : [image];
+        const images = requestsLayeredOutput(body) ? await layeredFixtureImages(body, request.headers["content-type"] || "", options) : [image];
         return sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: images.map((item) => ({ b64_json: item.toString("base64"), revised_prompt: "protocol fixture" })) });
     }
     if (request.method === "POST" && ["/sdapi/v1/txt2img", "/sdapi/v1/img2img"].includes(path)) {
@@ -510,6 +512,36 @@ function createWave() {
 
 function fixtureImage(options) {
     return options.imagePath ? readFile(options.imagePath) : Promise.resolve(Buffer.from(PNG_BASE64, "base64"));
+}
+
+async function layeredFixtureImages(body, contentType, options) {
+    const sourceBytes = (await multipartImage(body, contentType)) || (await fixtureImage(options));
+    const { data, info } = await sharp(sourceBytes, { failOn: "error" }).rotate().toColourspace("srgb").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const element = Buffer.alloc(data.length);
+    const background = Buffer.from(data);
+    const backgroundPixel = data.subarray(0, 4);
+    let hasElement = false;
+    let hasBackground = false;
+    for (let offset = 0; offset < data.length; offset += 4) {
+        const isBackground = data[offset] === backgroundPixel[0] && data[offset + 1] === backgroundPixel[1] && data[offset + 2] === backgroundPixel[2] && data[offset + 3] === backgroundPixel[3];
+        if (isBackground) {
+            hasBackground = true;
+            continue;
+        }
+        hasElement = true;
+        data.copy(element, offset, offset, offset + 4);
+        backgroundPixel.copy(background, offset);
+    }
+    if (!hasElement || !hasBackground) throw new Error("layer fixture source must contain a visible element and background");
+    const raw = { width: info.width, height: info.height, channels: 4 };
+    return Promise.all([sharp(element, { raw }).png().toBuffer(), sharp(background, { raw }).png().toBuffer()]);
+}
+
+async function multipartImage(body, contentType) {
+    if (!String(contentType).toLowerCase().startsWith("multipart/form-data")) return null;
+    const form = await new Response(body, { headers: { "content-type": contentType } }).formData();
+    const file = form.getAll("image").find((value) => value instanceof Blob);
+    return file ? Buffer.from(await file.arrayBuffer()) : null;
 }
 
 async function readRequestBody(request) {

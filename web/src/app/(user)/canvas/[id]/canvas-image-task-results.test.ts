@@ -35,7 +35,7 @@ describe("canvas image task results", () => {
         expect(replay).toHaveLength(2);
     });
 
-    it("keeps all layer-task results in one node across recovery replays", () => {
+    it("creates one independent node per upstream layer and replays idempotently", () => {
         const target: CanvasNodeData = {
             id: "layers",
             type: CanvasNodeType.Image,
@@ -58,10 +58,10 @@ describe("canvas image task results", () => {
         const first = applyCanvasImageLayerTaskResults([target], input);
         const replay = applyCanvasImageLayerTaskResults(first, input);
 
-        expect(first).toHaveLength(1);
-        expect(first[0]).toMatchObject({ title: "商品图 · 分层结果（2层）", metadata: { imageOutputMode: "layers", imageTask: undefined } });
-        expect(first[0]?.metadata?.imageLayers?.map((item) => item.storageKey)).toEqual(["layer-a.png", "layer-b.png"]);
-        expect(replay).toHaveLength(1);
-        expect(replay[0]?.metadata?.imageLayers).toHaveLength(2);
+        expect(first).toHaveLength(2);
+        expect(first[0]).toMatchObject({ id: "layers", title: "图层 1", metadata: { storageKey: "layer-a.png", imageOutputMode: "layers", imageLayerTaskId: "task-layers", imageLayerResultIndex: 0, imageTask: undefined } });
+        expect(first[1]).toMatchObject({ id: "image-layer-task-layers-2", title: "图层 2", metadata: { storageKey: "layer-b.png", imageLayerTaskId: "task-layers", imageLayerResultIndex: 1 } });
+        expect(first[1]?.position.x).toBeGreaterThanOrEqual((first[0]?.position.x || 0) + (first[0]?.width || 0));
+        expect(replay).toEqual(first);
     });
 });

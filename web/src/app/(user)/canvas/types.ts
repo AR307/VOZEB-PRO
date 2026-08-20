@@ -132,6 +132,8 @@ export type CanvasNodeMetadata = {
     layerName?: string;
     layerVisible?: boolean;
     sourceLayerNodeId?: string;
+    imageLayerTaskId?: string;
+    imageLayerResultIndex?: number;
     imageLayer?: {
         kind: CanvasImageLayerKind;
         bbox: CanvasImageLayerBox;
@@ -140,7 +142,6 @@ export type CanvasNodeMetadata = {
         sourceWidth: number;
         sourceHeight: number;
     };
-    imageLayers?: CanvasImageLayerAsset[];
     imageEditMask?: {
         storageKey: string;
         serverUrl?: string;
@@ -197,21 +198,6 @@ export type CanvasNodeMetadata = {
         id: string;
         model: string;
     };
-};
-
-export type CanvasImageLayerAsset = {
-    id: string;
-    name: string;
-    kind: CanvasImageLayerKind;
-    content: string;
-    storageKey?: string;
-    serverUrl?: string;
-    mimeType?: string;
-    width: number;
-    height: number;
-    bbox?: CanvasImageLayerBox;
-    zIndex: number;
-    groupId?: string;
 };
 
 export type CanvasNodeData = {

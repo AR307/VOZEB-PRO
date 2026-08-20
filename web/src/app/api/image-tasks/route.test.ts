@@ -160,4 +160,35 @@ describe("image task route", () => {
         expect(response.status).toBe(200);
         expect(mocks.createImageTask).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ size: "auto", quality: "auto" }) }));
     });
+
+    it("rejects a layer task before upstream submission when it has no unique edit source", async () => {
+        mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
+        mocks.getAuthSettings.mockResolvedValue({
+            generationConcurrency: { image: 1 },
+            generationDefaults: { imageSize: "auto", imageQuality: "auto" },
+            systemChannels: [{ id: "image-channel", name: "图片", enabled: true, baseUrl: "https://image.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["upstream-image"] }],
+            logicalModels: [
+                {
+                    id: "image",
+                    name: "图片",
+                    capability: "image",
+                    enabled: true,
+                    bindings: [{ id: "binding", channelId: "image-channel", upstreamModel: "upstream-image", enabled: true, priority: 1 }],
+                },
+            ],
+            defaultModels: { imageModel: "image" },
+        });
+
+        const response = await POST(
+            new Request("http://localhost/api/image-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ kind: "generation", config: { model: "image", outputMode: "layers" }, prompt: "电商分层" }),
+            }),
+        );
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: "电商分层需要且只能使用一张源图" });
+        expect(mocks.createImageTask).not.toHaveBeenCalled();
+    });
 });

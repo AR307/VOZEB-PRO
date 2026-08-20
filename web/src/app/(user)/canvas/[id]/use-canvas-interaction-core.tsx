@@ -7,7 +7,7 @@ import { buildNodeGenerationInputs, type NodeGenerationInput } from "../componen
 import { CanvasNodeType, type ConnectionHandle } from "../types";
 import { useCanvasLocalAgentBridge } from "../use-canvas-local-agent-bridge";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
-import { buildCanvasResourceReferences, buildNodeMentionReferences } from "../utils/canvas-resource-references";
+import { createCanvasResourceReferenceIndex } from "../utils/canvas-resource-references";
 
 import { PendingConnectionCreate, type CanvasCreatableNodeType, createCanvasNode } from "./canvas-page-elements";
 import { getGenerationCount, normalizeConnection } from "./canvas-page-utils";
@@ -194,13 +194,14 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         return map;
     }, [connections, nodes]);
     const resourceContextNodeId = dialogNodeId || activeNodeId;
-    const canvasResourceReferences = useMemo(() => buildCanvasResourceReferences(nodes, connections, resourceContextNodeId), [connections, nodes, resourceContextNodeId]);
+    const resourceReferenceIndex = useMemo(() => createCanvasResourceReferenceIndex(nodes, connections), [connections, nodes]);
+    const canvasResourceReferences = useMemo(() => resourceReferenceIndex.all(resourceContextNodeId), [resourceContextNodeId, resourceReferenceIndex]);
     const resourceReferenceByNodeId = useMemo(() => new Map(canvasResourceReferences.map((reference) => [reference.nodeId, reference])), [canvasResourceReferences]);
     const mentionReferencesByNodeId = useMemo(() => {
-        const map = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
-        nodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, nodes, connections)));
+        const map = new Map<string, ReturnType<typeof resourceReferenceIndex.forNode>>();
+        nodes.forEach((node) => map.set(node.id, resourceReferenceIndex.forNode(node.id)));
         return map;
-    }, [connections, nodes]);
+    }, [nodes, resourceReferenceIndex]);
     const agentSnapshot = useMemo<CanvasAgentSnapshot>(
         () => ({ projectId, title: currentProject?.title || "未命名画布", imageSize: effectiveConfig.size, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
         [connections, currentProject?.title, effectiveConfig.size, nodes, projectId, selectedNodeIds, viewport],

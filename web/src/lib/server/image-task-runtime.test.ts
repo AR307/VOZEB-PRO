@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     inlineResult: vi.fn(),
     directResult: vi.fn(),
     resolveMedia: vi.fn(() => ({})),
+    referenceDataUrl: vi.fn(),
     mediaHeaders: vi.fn(() => ({ "x-media-auth": "signed" })),
     getSettings: vi.fn(),
     register: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("@/app/api/image-tasks/image-task-gemini", () => ({ runGeminiImageTask: 
 vi.mock("@/app/api/image-tasks/image-task-openai", () => ({ runOpenAiImageTask: mocks.runOpenAi }));
 vi.mock("@/app/api/image-tasks/image-task-support", () => ({
     directRemoteImageResult: mocks.directResult,
+    imageReferenceToDataUrl: mocks.referenceDataUrl,
     imageUnits: vi.fn(() => 1),
     ImageQueryContractError: mocks.QueryContractError,
     ImageUpstreamTerminalError: class extends Error {},
@@ -69,6 +71,7 @@ describe("image task runtime submission safety", () => {
         });
         mocks.getSettings.mockResolvedValue({ generationPointMultipliers: { imageQuality: {} } });
         mocks.inlineResult.mockImplementation(async (dataUrl: string) => ({ dataUrl }));
+        mocks.referenceDataUrl.mockImplementation(async (reference: { dataUrl: string }) => reference.dataUrl);
         mocks.register.mockResolvedValue(undefined);
     });
 
@@ -226,7 +229,108 @@ describe("image task runtime submission safety", () => {
         expect(mocks.refund).toHaveBeenCalledWith("user-one", "image-one", 3, "image", 1, expect.stringContaining("image-task:image-one"), "transparent-charge");
         expect(mocks.register).not.toHaveBeenCalled();
     });
+
+    it("rejects a layer task when upstream returns only a composed image", async () => {
+        const opaque = await sharp({ create: { width: 4, height: 4, channels: 3, background: "#ef4444" } })
+            .png()
+            .toBuffer();
+        state = {
+            ...imageTask(),
+            status: "running",
+            kind: "edit",
+            config: { ...imageTask().config, outputMode: "layers" },
+            billing: { pointsCost: 3, pointsRecordId: "layer-charge", refunded: false },
+            references: [{ dataUrl: dataUrl(opaque) }],
+            result: { dataUrl: dataUrl(opaque) },
+        };
+
+        await expect(persistImageTaskResult(state, "http://internal", "inline://image-task-result")).resolves.toMatchObject({
+            status: "error",
+            error: expect.stringContaining("上游未返回完整分层"),
+            billing: { refunded: true },
+        });
+        expect(mocks.writeLog).toHaveBeenCalledWith(expect.any(Object), "failed", "", expect.any(Number), expect.stringContaining("上游未返回完整分层"));
+        expect(mocks.register).not.toHaveBeenCalled();
+    });
+
+    it("accepts one upstream layer task containing transparent elements and a clean background", async () => {
+        const { source, foreground, background } = await exactLayerFixture();
+        state = {
+            ...imageTask(),
+            status: "running",
+            kind: "edit",
+            config: { ...imageTask().config, outputMode: "layers" },
+            references: [{ dataUrl: source }],
+            result: { dataUrl: foreground, results: [{ dataUrl: foreground }, { dataUrl: background }] },
+        };
+        mocks.writeLog.mockResolvedValueOnce({
+            assets: [
+                { type: "image", url: "/api/generation-log-assets/foreground.png", serverUrl: "/api/generation-log-assets/foreground.png" },
+                { type: "image", url: "/api/generation-log-assets/background.png", serverUrl: "/api/generation-log-assets/background.png" },
+            ],
+        });
+
+        await expect(persistImageTaskResult(state, "http://internal", "inline://image-task-result")).resolves.toMatchObject({ status: "success", result: { results: expect.any(Array) } });
+        expect(state.result?.results).toHaveLength(2);
+        expect(mocks.writeLog).toHaveBeenCalledOnce();
+        expect(mocks.register).toHaveBeenCalledOnce();
+    });
+
+    it("rejects duplicate images in a layer task instead of dropping them", async () => {
+        const { source, foreground, background } = await exactLayerFixture();
+        state = {
+            ...imageTask(),
+            status: "running",
+            kind: "edit",
+            config: { ...imageTask().config, outputMode: "layers" },
+            billing: { pointsCost: 3, pointsRecordId: "duplicate-layer-charge", refunded: false },
+            references: [{ dataUrl: source }],
+            result: { dataUrl: foreground, results: [{ dataUrl: foreground }, { dataUrl: foreground }, { dataUrl: background }] },
+        };
+
+        await expect(persistImageTaskResult(state, "http://internal", "inline://image-task-result")).resolves.toMatchObject({
+            status: "error",
+            error: expect.stringContaining("重复像素"),
+            billing: { refunded: true },
+        });
+        expect(mocks.register).not.toHaveBeenCalled();
+    });
 });
+
+function dataUrl(bytes: Buffer) {
+    return `data:image/png;base64,${bytes.toString("base64")}`;
+}
+
+async function exactLayerFixture() {
+    const foregroundBytes = await sharp({ create: { width: 4, height: 4, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+        .composite([
+            {
+                input: await sharp({ create: { width: 2, height: 2, channels: 4, background: "#ef4444" } })
+                    .png()
+                    .toBuffer(),
+                left: 1,
+                top: 1,
+            },
+        ])
+        .png()
+        .toBuffer();
+    const backgroundBytes = await sharp({ create: { width: 4, height: 4, channels: 3, background: "#dbeafe" } })
+        .png()
+        .toBuffer();
+    const sourceBytes = await sharp(backgroundBytes)
+        .composite([
+            {
+                input: await sharp({ create: { width: 2, height: 2, channels: 4, background: "#ef4444" } })
+                    .png()
+                    .toBuffer(),
+                left: 1,
+                top: 1,
+            },
+        ])
+        .png()
+        .toBuffer();
+    return { source: dataUrl(sourceBytes), foreground: dataUrl(foregroundBytes), background: dataUrl(backgroundBytes) };
+}
 
 function imageTask(): ImageTask {
     const second = { baseUrl: "https://two.example", apiKey: "two", apiFormat: "gemini" as const, model: "image-two", channelId: "channel-two" };

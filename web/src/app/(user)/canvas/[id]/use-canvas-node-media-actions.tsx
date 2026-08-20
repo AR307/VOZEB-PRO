@@ -19,7 +19,7 @@ import { type CanvasImageUpscaleParams } from "../components/canvas-node-upscale
 import { NODE_DEFAULT_SIZE } from "../constants";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasNodeData } from "../types";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
-import { downloadCanvasImageLayers, downloadCanvasMediaBundle, selectedCanvasMediaNodes } from "../utils/canvas-media-download";
+import { downloadCanvasMediaBundle, selectedCanvasMediaNodes } from "../utils/canvas-media-download";
 import { fitNodeSize } from "../utils/canvas-node-size";
 
 import { IMAGE_PROMPT_REVERSE_PRESET, NODE_STATUS_ERROR, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, createCanvasNode } from "./canvas-page-elements";
@@ -153,25 +153,12 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
     }, []);
 
-    const downloadNodeImage = useCallback(
-        async (node: CanvasNodeData) => {
-            if (node.metadata?.imageLayers?.length) {
-                try {
-                    const result = await downloadCanvasImageLayers(node, currentProject?.title || "画布");
-                    if (result.failed) message.warning(`已下载 ${result.downloaded} 层，${result.failed} 层读取失败`);
-                    else message.success(`已打包下载 ${result.downloaded} 个分层`);
-                } catch (error) {
-                    message.error(error instanceof Error ? error.message : "分层下载失败");
-                }
-                return;
-            }
-            if ((!isCanvasImageNodeType(node.type) && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-            const image = isCanvasImageNodeType(node.type);
-            const url = image ? originalImageDownloadUrl(node.metadata.content) : originalMediaDownloadUrl(node.metadata.content);
-            saveAs(url, mediaDownloadFileName(node.id, node.metadata.mimeType, node.metadata.storageKey || node.metadata.serverUrl || node.metadata.content));
-        },
-        [currentProject?.title, message],
-    );
+    const downloadNodeImage = useCallback(async (node: CanvasNodeData) => {
+        if ((!isCanvasImageNodeType(node.type) && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
+        const image = isCanvasImageNodeType(node.type);
+        const url = image ? originalImageDownloadUrl(node.metadata.content) : originalMediaDownloadUrl(node.metadata.content);
+        saveAs(url, mediaDownloadFileName(node.id, node.metadata.mimeType, node.metadata.storageKey || node.metadata.serverUrl || node.metadata.content));
+    }, []);
 
     const downloadSelectedMedia = useCallback(async () => {
         if (selectedMediaDownloadPending || selectedMediaNodes.length < 2) return;

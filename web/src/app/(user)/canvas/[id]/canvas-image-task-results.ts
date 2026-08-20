@@ -72,40 +72,48 @@ export function applyCanvasImageTaskResults(
 
 export function applyCanvasImageLayerTaskResults(nodes: CanvasNodeData[], input: { nodeId: string; taskId: string; images: CompletedCanvasImage[]; prompt?: string; model: string; size?: string }) {
     const target = nodes.find((node) => node.id === input.nodeId);
-    const primary = input.images[0];
-    if (!target || !primary) return nodes;
-    const imageLayers = input.images.map((image, index) => ({
-        id: image.metadata.storageKey || `image-layer-${input.taskId}-${index + 1}`,
-        name: `图层 ${index + 1}`,
-        kind: "foreground" as const,
-        content: image.metadata.content || "",
-        storageKey: image.metadata.storageKey,
-        serverUrl: image.metadata.serverUrl,
-        mimeType: image.metadata.mimeType,
-        width: image.width,
-        height: image.height,
-        zIndex: index,
-    }));
-    return nodes.map((node) =>
-        node.id === input.nodeId
-            ? {
-                  ...node,
-                  title: `${node.title.replace(/ · 分层(?:中|结果(?:（\d+层）)?)$/, "")} · 分层结果（${imageLayers.length}层）`,
-                  metadata: {
-                      ...node.metadata,
-                      ...primary.metadata,
-                      prompt: input.prompt || node.metadata?.prompt,
-                      model: input.model,
-                      size: input.size || node.metadata?.size,
-                      count: imageLayers.length,
-                      imageLayers,
-                      imageOutputMode: "layers" as const,
-                      imageTask: undefined,
-                      errorDetails: undefined,
-                  },
-              }
-            : node,
-    );
+    if (!target || !input.images.length) return nodes;
+    let next = nodes;
+    input.images.forEach((image, index) => {
+        const id = canvasImageLayerResultNodeId(input.nodeId, input.taskId, index);
+        const existing = next.find((node) => node.id === id);
+        if (existing?.metadata?.imageLayerTaskId === input.taskId && existing.metadata.imageLayerResultIndex === index) return;
+        const base = existing || target;
+        const imageSize = fitNodeSize(image.width, image.height, base.width || NODE_DEFAULT_SIZE[CanvasNodeType.Image].width, base.height || NODE_DEFAULT_SIZE[CanvasNodeType.Image].height);
+        const position = existing
+            ? { x: existing.position.x + existing.width / 2 - imageSize.width / 2, y: existing.position.y + existing.height / 2 - imageSize.height / 2 }
+            : findFreeNodePosition(next, { x: target.position.x + target.width + 36, y: target.position.y }, imageSize.width, imageSize.height);
+        const layerNode: CanvasNodeData = {
+            ...(existing || target),
+            id,
+            type: CanvasNodeType.Image,
+            title: `图层 ${index + 1}`,
+            position,
+            width: imageSize.width,
+            height: imageSize.height,
+            metadata: {
+                ...generatedSiblingMetadata(base.metadata),
+                ...image.metadata,
+                prompt: input.prompt || target.metadata?.prompt,
+                model: input.model,
+                size: input.size || target.metadata?.size,
+                generationType: "edit",
+                imageOutputMode: "layers",
+                imageLayerTaskId: input.taskId,
+                imageLayerResultIndex: index,
+                layerName: `图层 ${index + 1}`,
+                sourceLayerNodeId: target.metadata?.sourceLayerNodeId,
+                imageTask: undefined,
+                errorDetails: undefined,
+            },
+        };
+        next = existing ? next.map((node) => (node.id === id ? layerNode : node)) : [...next, layerNode];
+    });
+    return next;
+}
+
+export function canvasImageLayerResultNodeId(targetNodeId: string, taskId: string, resultIndex: number) {
+    return resultIndex === 0 ? targetNodeId : `image-layer-${taskId}-${resultIndex + 1}`;
 }
 
 function completedImageNode(node: CanvasNodeData, image: CompletedCanvasImage, input: { nodeId: string; prompt?: string; model: string; size?: string }, updateBatchRoot: boolean) {

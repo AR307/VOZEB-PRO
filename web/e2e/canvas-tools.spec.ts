@@ -5,11 +5,12 @@ import { expect, test, type Locator } from "@playwright/test";
 import { unzipSync } from "fflate";
 import sharp from "sharp";
 
+import { normalizeImagePreviewWidth } from "../src/lib/media-image-variant";
 import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, expectNoHorizontalOverflow, node, readCanvasProject } from "./canvas-e2e-helpers";
 
 test.describe.configure({ mode: "serial" });
 
-test("canvas smart layering keeps every image from one upstream task in one collection", async ({ page, request }) => {
+test("canvas smart layering creates one independent node per image from one upstream task", async ({ page, request }) => {
     const imageTaskRequests: Array<{ config?: { outputBackground?: string; outputMode?: string } }> = [];
     let decompositionRequests = 0;
     let subjectWorkerRequests = 0;
@@ -39,39 +40,33 @@ test("canvas smart layering keeps every image from one upstream task in one coll
         await page.getByRole("button", { name: "智能分层", exact: true }).click();
         const generated = page.locator('[data-node-id]:not([data-node-id="source-image"])');
         await expect(generated.first()).toBeVisible({ timeout: 90_000 });
-        await expect.poll(async () => (await readCanvasProject(request, projectPath)).nodes.length, { timeout: 90_000 }).toBe(2);
-        await expect.poll(async () => (await readCanvasProject(request, projectPath)).connections.length, { timeout: 90_000 }).toBe(1);
-        await expect.poll(async () => (await readCanvasProject(request, projectPath)).nodes.find((item) => item.metadata?.imageLayers)?.metadata?.imageLayers?.length, { timeout: 90_000 }).toBe(2);
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).nodes.length, { timeout: 90_000 }).toBe(3);
+        await expect.poll(async () => (await readCanvasProject(request, projectPath)).connections.length, { timeout: 90_000 }).toBe(2);
         const saved = await readCanvasProject(request, projectPath);
-        const layerNode = saved.nodes.find((item) => item.metadata?.imageLayers);
-        expect(layerNode?.metadata?.imageLayers).toHaveLength(2);
-        for (const layer of layerNode?.metadata?.imageLayers || []) {
-            expect(layer).toMatchObject({ content: expect.any(String), storageKey: expect.any(String) });
-            const response = await request.get(String(layer.serverUrl || layer.content));
+        const layerNodes = saved.nodes.filter((item) => item.metadata?.imageLayerTaskId);
+        expect(layerNodes).toHaveLength(2);
+        expect(layerNodes.map((item) => item.metadata?.imageLayerResultIndex).sort()).toEqual([0, 1]);
+        expect(saved.connections.map((connection) => connection.fromNodeId)).toEqual(["source-image", "source-image"]);
+        const transparency: boolean[] = [];
+        for (const layer of layerNodes) {
+            expect(layer.metadata).toMatchObject({ content: expect.any(String), storageKey: expect.any(String) });
+            const response = await request.get(String(layer.metadata?.serverUrl || layer.metadata?.content));
             expect(response.ok(), await response.text()).toBe(true);
             const layerBytes = await response.body();
             const image = sharp(layerBytes);
-            await expect(image.metadata()).resolves.toMatchObject({ format: "png", width: expect.any(Number), height: expect.any(Number), hasAlpha: true });
+            await expect(image.metadata()).resolves.toMatchObject({ format: "png", width: expect.any(Number), height: expect.any(Number) });
+            const { data, info } = await image.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+            transparency.push(data.some((value, index) => index % info.channels === info.channels - 1 && value < 255));
         }
+        expect(transparency.sort()).toEqual([false, true]);
         expect(imageTaskRequests, "智能分层必须只创建一个上游图片任务").toHaveLength(1);
         expect(decompositionRequests, "智能分层不得再请求 bbox 识别接口").toBe(0);
         expect(imageTaskRequests[0]?.config?.outputBackground).toBeUndefined();
         expect(imageTaskRequests[0]?.config?.outputMode).toBe("layers");
         expect(subjectWorkerRequests, "智能分层不得再加载本地分割 Worker").toBe(0);
-        await page.locator(`[data-node-id="${layerNode!.id}"]`).click();
-        const downloadPromise = page.waitForEvent("download");
-        await page.getByRole("button", { name: "下载全部分层", exact: true }).click();
-        const download = await downloadPromise;
-        const downloadPath = await download.path();
-        expect(downloadPath).not.toBeNull();
-        const entries = Object.keys(unzipSync(await readFile(downloadPath!)));
-        expect(entries).toHaveLength(2);
-        expect(entries.every((name) => /[.]png$/i.test(name))).toBe(true);
-        const derivedNodes = saved.nodes.filter((item) => item.id !== "source-image");
-        expect(derivedNodes).toHaveLength(1);
-        const visibleGeneratedNode = generated.first();
-        await visibleGeneratedNode.click();
-        await expect(visibleGeneratedNode.locator(":scope > div").first()).toHaveCSS("border-color", "rgb(47, 128, 255)");
+        await expect(generated).toHaveCount(2);
+        await generated.first().click();
+        await expect(generated.first().locator(":scope > div").first()).toHaveCSS("border-color", "rgb(47, 128, 255)");
     } finally {
         try {
             await deleteCanvasProject(request, project.id);
@@ -112,6 +107,59 @@ test("canvas person background removal keeps the original local cutout path", as
         expect(subject?.metadata).toMatchObject({ status: "success", storageKey: expect.any(String) });
         expect(subject?.metadata?.imageTask).toBeUndefined();
         expect(imageTaskRequests, "人物去背不得创建图片生成任务").toHaveLength(0);
+    } finally {
+        try {
+            await deleteCanvasProject(request, project.id);
+        } finally {
+            const cleanup = await request.delete("/api/media-assets", { data: { storageKeys: [sourceAsset.key] } });
+            expect(cleanup.ok(), await cleanup.text()).toBe(true);
+        }
+    }
+});
+
+test("canvas Agent can reference images beyond the first fifty without stalling", async ({ page, request }) => {
+    const sourceBytes = await plainSubjectFixture();
+    const upload = await request.post("/api/reference-assets", {
+        data: { type: "image", persistent: false, dataUrl: `data:image/png;base64,${sourceBytes.toString("base64")}`, originalName: "large-canvas-reference.png" },
+    });
+    expect(upload.ok(), await upload.text()).toBe(true);
+    const sourceAsset = (await upload.json()) as { key: string; url: string; mimeType: string };
+    const imageNodes = Array.from({ length: 64 }, (_, index) =>
+        node(`image-${index + 1}`, "image", (index % 8) * 150, Math.floor(index / 8) * 110, 128, 88, {
+            content: sourceAsset.url,
+            serverUrl: sourceAsset.url,
+            storageKey: sourceAsset.key,
+            mimeType: sourceAsset.mimeType,
+            naturalWidth: 640,
+            naturalHeight: 960,
+        }),
+    );
+    const project = await createCanvasProject(request, {
+        title: `Canvas 大图引用 ${randomUUID().slice(0, 8)}`,
+        viewport: { x: 80, y: 80, k: 0.5 },
+        nodes: imageNodes,
+        connections: [],
+    });
+
+    try {
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        const panel = page.getByLabel("Canvas Agent 对话面板");
+        const composer = panel.getByRole("textbox", { name: "描述你想让 Agent 如何操作画布" });
+        await expect(composer).toBeVisible({ timeout: 20_000 });
+
+        for (const nodeId of ["image-52", "image-59", "image-64"]) {
+            await composer.fill(`${await composer.inputValue()}@${nodeId}`);
+            const option = page.getByRole("button", { name: `引用${nodeId}`, exact: true });
+            await expect(option).toBeVisible();
+            await option.click();
+        }
+
+        await expect(composer).toHaveValue("@图片1 @图片2 @图片3 ");
+        await expect(panel.locator('[data-canvas-agent-input-row] img[alt="image-64"]')).toBeVisible();
+        await expect(page.locator('.node-element[data-node-id="image-64"]')).toHaveCSS("z-index", "50");
+        const previewWidths = await page.locator('.node-element[data-node-id^="image-"] img').evaluateAll((images) => images.map((image) => new URL((image as HTMLImageElement).src).searchParams.get("width")).filter(Boolean));
+        const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
+        expect(new Set(previewWidths)).toEqual(new Set([String(normalizeImagePreviewWidth(128 * 0.5 * devicePixelRatio))]));
     } finally {
         try {
             await deleteCanvasProject(request, project.id);
@@ -450,6 +498,7 @@ async function expectCloseControlSeparated(dialog: Locator) {
 }
 
 async function expectFaceDialogDesktopLayout(dialog: Locator) {
+    await expect(dialog).toHaveCSS("transform", "none");
     const title = dialog.locator("[data-face-dialog-title]");
     const status = dialog.locator("[data-face-dialog-status]");
     const modeControls = dialog.locator("[data-face-mode-controls]");

@@ -1,7 +1,7 @@
 import { runCustomImageTask, pollCustomImageTask } from "@/app/api/image-tasks/image-task-custom";
 import { runGeminiImageTask } from "@/app/api/image-tasks/image-task-gemini";
 import { runOpenAiImageTask } from "@/app/api/image-tasks/image-task-openai";
-import { directRemoteImageResult, imageUnits, ImageQueryContractError, ImageUpstreamTerminalError, inlineRemoteImageResult, pollOpenAiImageTask, resolveProxiedMediaSource } from "@/app/api/image-tasks/image-task-support";
+import { directRemoteImageResult, imageReferenceToDataUrl, imageUnits, ImageQueryContractError, ImageUpstreamTerminalError, inlineRemoteImageResult, pollOpenAiImageTask, resolveProxiedMediaSource } from "@/app/api/image-tasks/image-task-support";
 import type { ImageTaskMediaResult, ImageTaskResult, ImageTaskRunResult } from "@/app/api/image-tasks/image-task-types";
 import { stableMediaUrl, writeImageGenerationLog } from "@/app/api/image-tasks/image-task-runner";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
@@ -10,6 +10,7 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
 import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
+import { validateImageLayerOutputs } from "@/lib/server/image-layer-output";
 import { refundImageTask } from "@/lib/server/image-task-refund";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
@@ -171,7 +172,7 @@ async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunRe
         });
         return { state: "pending", upstream: result.pending, status: "submitted" };
     }
-    const results = imageTaskMediaResults(result);
+    const results = imageTaskMediaResults(result, task.config.outputMode === "layers");
     const first = results[0];
     if (!first) return { state: "failed", error: "上游返回的图片文件无效或保存失败", status: "failed" };
     await updateImageTask(task.id, { result: { ...first, results } });
@@ -224,8 +225,17 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
         return beforePersistence;
     }
     task = beforePersistence;
-    const settledResults = await Promise.allSettled(imageTaskMediaResults(result).map((item) => normalizeSafeImageResult(task, item, origin, authContext)));
-    let safeResults = dedupeImageResults(settledResults.flatMap((item) => (item.status === "fulfilled" && item.value?.dataUrl ? [item.value] : [])));
+    const preserveLayerResults = task.config.outputMode === "layers";
+    const settledResults = await Promise.allSettled(imageTaskMediaResults(result, preserveLayerResults).map((item) => normalizeSafeImageResult(task, item, origin, authContext)));
+    const normalizedResults = settledResults.flatMap((item) => (item.status === "fulfilled" && item.value?.dataUrl ? [item.value] : []));
+    let safeResults = preserveLayerResults ? normalizedResults : dedupeImageResults(normalizedResults);
+    if (preserveLayerResults) {
+        const rejected = settledResults.find((item): item is PromiseRejectedResult => item.status === "rejected");
+        if (rejected) {
+            const details = rejected.reason instanceof Error ? rejected.reason.message : "上游分层图片无法读取";
+            return markImageTaskFailed(task, `上游分层验收失败：${details}，请为该模型配置真实分层接口`);
+        }
+    }
     if (!safeResults.length) {
         const rejected = settledResults.find((item): item is PromiseRejectedResult => item.status === "rejected");
         throw rejected?.reason instanceof Error ? rejected.reason : new GenerationSubmissionSafeFailure("上游返回的图片文件无效或保存失败");
@@ -236,6 +246,28 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
         if (!safeResults.length) {
             const rejected = validated.find((item): item is PromiseRejectedResult => item.status === "rejected");
             return markImageTaskFailed(task, rejected?.reason instanceof Error ? rejected.reason.message : "上游没有生成有效透明图层");
+        }
+    }
+    if (task.config.outputMode === "layers") {
+        try {
+            if (task.kind !== "edit" || task.references.length !== 1) throw new Error("电商分层需要且只能使用一张源图");
+            const source = await imageReferenceToDataUrl(task.references[0], task.references[0].name || "source.png", origin, authContext);
+            const validated = await validateImageLayerOutputs(
+                source,
+                safeResults.map((item) => item.dataUrl),
+            );
+            safeResults = validated.map((output, index) => ({
+                ...safeResults[index],
+                dataUrl: output.dataUrl,
+                remoteUrl: undefined,
+                width: output.width,
+                height: output.height,
+                bytes: output.bytes,
+                mimeType: output.mimeType,
+            }));
+        } catch (error) {
+            const details = error instanceof Error ? error.message : "上游分层结果无法验证";
+            return markImageTaskFailed(task, `上游分层验收失败：${details}，请为该模型配置真实分层接口`);
         }
     }
     const current = await getImageTask(task.id);
@@ -280,9 +312,9 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
     return finalized;
 }
 
-function imageTaskMediaResults(result: ImageTaskResult): ImageTaskMediaResult[] {
+function imageTaskMediaResults(result: ImageTaskResult, preserveDuplicates = false): ImageTaskMediaResult[] {
     const values = result.results?.length ? result.results : result.dataUrl || result.remoteUrl ? [{ dataUrl: result.dataUrl, remoteUrl: result.remoteUrl }] : [];
-    return dedupeImageResults(values);
+    return preserveDuplicates ? values : dedupeImageResults(values);
 }
 
 function usesDeclarativeImageProtocol(protocol: NonNullable<ImageTask["config"]["advancedConfig"]>["protocol"] | undefined) {
@@ -297,5 +329,10 @@ async function normalizeSafeImageResult(task: ImageTask, result: ImageTaskMediaR
     const mediaHeaders = proxiedRemoteUrl && channelId ? generationMediaProxyHeaders({ userId: task.userId, taskType: "image", taskId: task.id, channelId, upstreamModel: task.config.model, url: proxiedRemoteUrl }) : undefined;
     const inlineResult = proxiedMedia.proxyUrl ? await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl, mediaHeaders) : null;
     if (proxiedMedia.proxyUrl && !inlineResult?.dataUrl?.startsWith("data:image/")) throw new GenerationSubmissionSafeFailure("上游图片无法通过授权媒体路径读取");
+    if (task.config.outputMode === "layers") {
+        const readable = inlineResult || (await inlineRemoteImageResult(result.dataUrl || remoteUrl || "", origin, authContext, remoteUrl, mediaHeaders));
+        if (!readable?.dataUrl?.startsWith("data:image/")) throw new GenerationSubmissionSafeFailure("上游分层图片无法读取并验收");
+        return readable;
+    }
     return inlineResult || directRemoteImageResult(remoteUrl) || (await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl, mediaHeaders));
 }

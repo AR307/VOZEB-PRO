@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Clock3, Globe2, Image as ImageIcon, Layers, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
+import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Clock3, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -10,13 +10,14 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasPanoramaViewer } from "./canvas-panorama-viewer";
-import { CanvasNodeType, type CanvasImageLayerAsset, type CanvasNodeData } from "../types";
+import { CanvasNodeType, type CanvasNodeData } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 
 export type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type NodeContentRendererProps = {
     node: CanvasNodeData;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    scale?: number;
     isEditingContent: boolean;
     textareaRef: React.RefObject<HTMLTextAreaElement | null>;
     isBatchRoot: boolean;
@@ -320,11 +321,10 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
         );
     }
     if (!props.node.metadata?.content) return <EmptyImageContent {...props} />;
-    if (props.node.metadata.imageLayers?.length) return <ImageLayerCollectionContent node={props.node} theme={props.theme} />;
-
     return (
         <ImageContent
             node={props.node}
+            scale={props.scale}
             isBatchRoot={props.isBatchRoot}
             batchCount={props.batchCount}
             batchExpanded={props.batchExpanded}
@@ -334,36 +334,6 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
             onSetBatchPrimary={props.onSetBatchPrimary}
             onImageDimensions={props.onImageDimensions}
         />
-    );
-}
-
-function ImageLayerCollectionContent({ node, theme }: { node: CanvasNodeData; theme: NodeContentRendererProps["theme"] }) {
-    const layers = node.metadata?.imageLayers || [];
-    return (
-        <div className="relative h-full w-full overflow-hidden rounded-3xl" style={{ background: theme.node.subtleSurface, color: theme.node.text }} data-canvas-layer-collection data-canvas-no-zoom data-canvas-no-drag>
-            <div className="flex h-8 shrink-0 items-center gap-1.5 border-b px-3 text-[11px] font-semibold" style={{ borderColor: theme.node.subtleBorder, color: theme.node.muted }}>
-                <Layers className="size-3.5" />
-                <span>{layers.length} 个透明图层</span>
-            </div>
-            <div className="hide-scrollbar grid h-[calc(100%-2rem)] grid-cols-3 gap-2 overflow-y-auto p-2.5">
-                {layers.map((layer) => (
-                    <LayerThumbnail key={layer.id} layer={layer} theme={theme} />
-                ))}
-            </div>
-        </div>
-    );
-}
-
-function LayerThumbnail({ layer, theme }: { layer: CanvasImageLayerAsset; theme: NodeContentRendererProps["theme"] }) {
-    return (
-        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border" style={{ background: theme.node.fill, borderColor: theme.node.subtleBorder }} title={layer.name}>
-            <div className="flex min-h-0 flex-1 items-center justify-center p-1.5" style={{ background: theme.node.fill }}>
-                <img src={imagePreviewUrl(layer.content, 512)} alt={layer.name} draggable={false} className="block h-full w-full select-none object-contain" />
-            </div>
-            <div className="truncate border-t px-1.5 py-1 text-[10px]" style={{ borderColor: theme.node.subtleBorder, color: theme.node.muted }}>
-                {layer.name}
-            </div>
-        </div>
     );
 }
 
@@ -429,6 +399,7 @@ export function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
 
 export function ImageContent({
     node,
+    scale = 1,
     isBatchRoot,
     batchCount,
     batchExpanded,
@@ -439,6 +410,7 @@ export function ImageContent({
     onImageDimensions,
 }: {
     node: CanvasNodeData;
+    scale?: number;
     isBatchRoot: boolean;
     batchCount: number;
     batchExpanded: boolean;
@@ -452,11 +424,13 @@ export function ImageContent({
     const theme = canvasThemes[colorTheme];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
     const imageRef = useRef<HTMLImageElement>(null);
+    const previewWidth = canvasImagePreviewWidth(node.width, scale, node.metadata?.naturalWidth);
     const reportDimensions = useCallback(
         (image: HTMLImageElement) => {
+            if (node.metadata?.naturalWidth && node.metadata?.naturalHeight) return;
             if (image.naturalWidth > 0 && image.naturalHeight > 0) onImageDimensions?.(node.id, image.naturalWidth, image.naturalHeight);
         },
-        [node.id, onImageDimensions],
+        [node.id, node.metadata?.naturalHeight, node.metadata?.naturalWidth, onImageDimensions],
     );
 
     useEffect(() => {
@@ -469,9 +443,11 @@ export function ImageContent({
             <div className="h-full w-full overflow-hidden rounded-3xl" style={{ background: theme.node.fill }}>
                 <img
                     ref={imageRef}
-                    src={imagePreviewUrl(node.metadata!.content!, 1920)}
+                    src={imagePreviewUrl(node.metadata!.content!, previewWidth)}
                     alt={node.title}
                     draggable={false}
+                    loading="lazy"
+                    decoding="async"
                     onLoad={(event) => reportDimensions(event.currentTarget)}
                     onDragStart={(event) => event.preventDefault()}
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
@@ -512,6 +488,11 @@ export function ImageContent({
             ) : null}
         </BatchFrame>
     );
+}
+
+export function canvasImagePreviewWidth(nodeWidth: number, scale: number, naturalWidth?: number) {
+    const screenWidth = Math.max(1, Math.ceil(nodeWidth * Math.max(scale, 0.01) * (globalThis.devicePixelRatio || 1)));
+    return naturalWidth && naturalWidth > 0 ? Math.min(screenWidth, naturalWidth) : screenWidth;
 }
 
 export function ImageInfoBar({ node }: { node: CanvasNodeData }) {

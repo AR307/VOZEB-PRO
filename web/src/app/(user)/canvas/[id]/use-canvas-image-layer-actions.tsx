@@ -16,7 +16,7 @@ import type { CanvasPageState } from "./use-canvas-page-state";
 import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
 
 const IMAGE_LAYER_PROMPT =
-    "对参考图执行像素级分层。一次任务返回全部独立视觉元素，每个元素分别输出为带真实透明 Alpha 的 PNG。必须直接保留原图像素、清晰边缘、原始颜色和比例，不得重绘、改写、合并元素或输出矩形裁片；背景也作为独立图层返回，且不得把已分离的前景元素补回背景。";
+    "对参考图执行像素级分层。一次任务返回全部独立视觉元素，每个元素分别输出为与源图同宽高、保留原始坐标并带真实透明 Alpha 的 PNG。必须直接保留原图像素、清晰边缘、原始颜色和比例，不得裁片、缩放、重绘、改写或合并元素；背景也作为同宽高独立图层返回，只补全元素遮挡区域，不得改动其他区域或把已分离元素补回背景。";
 
 export function useCanvasImageLayerActions({ state, tasks }: { state: CanvasPageState; tasks: CanvasTaskRuntime }) {
     const { message, effectiveConfig, isAiConfigReady, openConfigDialog, setNodes, setConnections, setSelectedNodeIds, setSelectedConnectionId, setToolbarNodeId, setDialogNodeId, setRunningNodeId } = state;
@@ -146,8 +146,8 @@ function pendingLayerNode(node: CanvasNodeData, id: string, model: string, size:
         type: CanvasNodeType.Image,
         title: `${node.title || "图片"} · 分层中`,
         position: { x: node.position.x + node.width + 96, y: node.position.y },
-        width: Math.max(node.width, 420),
-        height: Math.max(320, Math.min(520, node.height + 120)),
+        width: node.width,
+        height: node.height,
         metadata: {
             prompt: IMAGE_LAYER_PROMPT,
             status: NODE_STATUS_LOADING,

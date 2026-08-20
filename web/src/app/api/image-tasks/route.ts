@@ -187,6 +187,9 @@ export async function POST(request: Request) {
             });
             if (!compatibleConfigs.length) return NextResponse.json({ error: "当前模型能力不满足参考素材、比例或分辨率参数" }, { status: 400 });
             const config = compatibleConfigs[0];
+            if (config.outputMode === "layers" && (kind !== "edit" || references.length !== 1)) {
+                return NextResponse.json({ error: "电商分层需要且只能使用一张源图" }, { status: 400 });
+            }
             const task = await createImageTask({
                 ...(resolvedBody.context || {}),
                 userId: currentUser.id,

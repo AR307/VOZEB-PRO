@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import sharp from "sharp";
 
+import { validateImageLayerOutputs } from "../src/lib/server/image-layer-output";
 import { createProtocolFixtureServer } from "./protocol-fixture-server.mjs";
 
 let fixture;
@@ -76,6 +77,33 @@ describe("protocol fixture server", () => {
         expect(openAi.data[0].b64_json).toMatch(/^iVBOR/);
         expect(stableDiffusion.images[0]).toBe(openAi.data[0].b64_json);
         await expect(sharp(Buffer.from(openAi.data[0].b64_json, "base64")).metadata()).resolves.toMatchObject({ format: "png", width: 2, height: 2 });
+    });
+
+    it("returns source-pixel layers and a clean background from one multipart edit", async () => {
+        const background = await sharp({ create: { width: 4, height: 4, channels: 3, background: "#dbeafe" } })
+            .png()
+            .toBuffer();
+        const source = await sharp(background)
+            .composite([
+                {
+                    input: await sharp({ create: { width: 2, height: 2, channels: 4, background: "#ef4444" } })
+                        .png()
+                        .toBuffer(),
+                    left: 1,
+                    top: 1,
+                },
+            ])
+            .png()
+            .toBuffer();
+        const form = new FormData();
+        form.set("model", "mock-image");
+        form.set("prompt", "分层任务要求：返回完整多图结果");
+        form.set("image", new Blob([source], { type: "image/png" }), "source.png");
+
+        const payload = await fetch(`${origin}/v1/images/edits`, { method: "POST", body: form }).then((response) => response.json());
+        const outputs = payload.data.map((item) => `data:image/png;base64,${item.b64_json}`);
+
+        await expect(validateImageLayerOutputs(`data:image/png;base64,${source.toString("base64")}`, outputs)).resolves.toMatchObject([{ kind: "element" }, { kind: "background" }]);
     });
 
     it("serves a configured fixture image without changing the default contract", async () => {

@@ -42,28 +42,3 @@ export async function downloadCanvasMediaBundle(nodes: CanvasNodeData[], project
     saveAs(zip, `${safeExportFileName(projectTitle || "画布")}-选中媒体.zip`);
     return { downloaded, failed };
 }
-
-export async function downloadCanvasImageLayers(node: CanvasNodeData, projectTitle: string) {
-    const layers = node.metadata?.imageLayers || [];
-    if (!layers.length) throw new Error("当前节点没有可下载的图层");
-    let failed = 0;
-    let downloaded = 0;
-    const indexWidth = String(layers.length).length;
-    async function* files(): AsyncGenerator<ZipFile> {
-        for (const [index, layer] of layers.entries()) {
-            const blob = await getImageBlob(layer.storageKey || "", originalImageDownloadUrl(layer.content));
-            if (!blob?.size) {
-                failed += 1;
-                continue;
-            }
-            const mimeType = blob.type || layer.mimeType || "image/png";
-            const fileName = mediaDownloadFileName(layer.id, mimeType, layer.storageKey || layer.serverUrl || layer.content);
-            downloaded += 1;
-            yield { name: `${String(index + 1).padStart(indexWidth, "0")}-${fileName}`, data: blob };
-        }
-    }
-    const zip = await createZip(files());
-    if (!downloaded) throw new Error("分层图片暂时无法读取");
-    saveAs(zip, `${safeExportFileName(projectTitle || node.title || "画布")}-分层结果.zip`);
-    return { downloaded, failed };
-}

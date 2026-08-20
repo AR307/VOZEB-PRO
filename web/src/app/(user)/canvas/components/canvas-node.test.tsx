@@ -71,7 +71,9 @@ describe("CanvasNode image border", () => {
         expect(markup).toContain(`border-color:${canvasThemes.light.node.stroke}`);
         expect(markup).toContain("rounded-3xl border-2");
         expect(markup).toContain("overflow-hidden rounded-3xl");
-        expect(markup).toContain("/api/reference-assets/permanent/generated-image.png?format=webp&amp;width=1920");
+        expect(markup).toContain("/api/reference-assets/permanent/generated-image.png?format=webp&amp;width=320");
+        expect(markup).toContain('loading="lazy"');
+        expect(markup).toContain('decoding="async"');
     });
 
     it("keeps the blue active border when the image is selected", () => {
@@ -99,7 +101,7 @@ describe("CanvasNode image border", () => {
         expect(subject).not.toContain('data-canvas-transparent-preview="true"');
         expect(removedBackground).not.toContain('data-canvas-transparent-preview="true"');
         expect(subject).not.toContain("background-image:linear-gradient");
-        expect(subject).toContain("/api/reference-assets/permanent/generated-image.png?format=webp&amp;width=1920");
+        expect(subject).toContain("/api/reference-assets/permanent/generated-image.png?format=webp&amp;width=320");
         expect(background).not.toContain("data-canvas-transparent-preview");
         expect(ordinary).not.toContain("data-canvas-transparent-preview");
     });
@@ -119,26 +121,6 @@ describe("CanvasNode image border", () => {
 
         expect(markup).not.toContain('data-canvas-transparent-preview="true"');
         expect(markup).not.toContain("编辑主标题");
-    });
-
-    it("把全部分层缩略图放在一个结果节点内", () => {
-        const markup = renderContent(
-            {
-                ...imageNode,
-                metadata: {
-                    ...imageNode.metadata,
-                    imageLayers: [
-                        { id: "one", name: "商品", kind: "product", content: "/api/reference-assets/one.png", width: 100, height: 100, bbox: { x: 0, y: 0, width: 100, height: 100 }, zIndex: 1 },
-                        { id: "two", name: "标题", kind: "headline", content: "/api/reference-assets/two.png", width: 100, height: 50, bbox: { x: 0, y: 0, width: 100, height: 50 }, zIndex: 2 },
-                    ],
-                },
-            },
-            canvasThemes.light,
-        );
-
-        expect(markup).toContain("data-canvas-layer-collection");
-        expect(markup).toContain("2 个透明图层");
-        expect(markup).not.toContain("linear-gradient");
     });
 });
 

@@ -315,7 +315,7 @@ export function withSystemPrompt(config: ImageTaskConfig, prompt: string) {
 
 export function withImageOutputInstructions(config: ImageTaskConfig, prompt: string) {
     if (config.outputMode === "layers") {
-        return `${prompt}\n\n分层任务要求：一次请求返回全部独立图层图片；每张结果只包含一个原图元素或干净背景，并保持原图像素与真实透明 Alpha。不要把多个图层拼在一张图中，不要重绘元素。`;
+        return `${prompt}\n\n分层任务要求：一次请求返回完整的多图片结果数组。每个前景结果只包含一个独立元素，必须与源图同宽高、保留原始坐标、使用源图原始像素和真实透明 Alpha；另返回一张同宽高、已移除所有前景元素并只补全遮挡区域的干净背景。禁止拼图、裁片、缩放、重绘、改字、合并元素、改动元素外区域或把已分离元素补回背景。`;
     }
     if (config.outputBackground !== "transparent") return prompt;
     return `${prompt}\n\n输出要求：只保留参考图中的目标元素，去除裁切范围外的背景，输出带真实透明 Alpha 的 PNG。不要补画背景、文字、装饰或其他元素，不要改变目标元素的颜色、结构、比例和边缘。`;
