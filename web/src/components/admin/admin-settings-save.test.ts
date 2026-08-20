@@ -1,13 +1,50 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/lib/auth/store";
-import { applyAdminSettingsSaveSnapshot, beginAdminSettingsSave, createAdminSettingsSaveSnapshot, finishAdminSettingsSave, mergeAdminSettingsSaveResponse, restoreAdminSettingsSaveFailure } from "./admin-settings-save";
+import { applyAdminSettingsSaveSnapshot, beginAdminSettingsSave, createAdminSettingsSaveQueue, createAdminSettingsSaveSnapshot, finishAdminSettingsSave, mergeAdminSettingsSaveResponse, restoreAdminSettingsSaveFailure } from "./admin-settings-save";
 
 function settings() {
     return structuredClone(DEFAULT_SETTINGS);
 }
 
 describe("admin settings save response merge", () => {
+    it("persists settings changes in the order the user submitted them", async () => {
+        const queue = createAdminSettingsSaveQueue();
+        const order: string[] = [];
+        let releaseFirst!: () => void;
+        const first = queue.run(
+            () =>
+                new Promise<void>((resolve) => {
+                    order.push("delete-start");
+                    releaseFirst = () => {
+                        order.push("delete-end");
+                        resolve();
+                    };
+                }),
+        );
+        const second = queue.run(async () => {
+            order.push("save-latest");
+        });
+
+        await Promise.resolve();
+        expect(order).toEqual(["delete-start"]);
+        releaseFirst();
+        await Promise.all([first, second]);
+
+        expect(order).toEqual(["delete-start", "delete-end", "save-latest"]);
+    });
+
+    it("continues with the next settings save after an earlier request fails", async () => {
+        const queue = createAdminSettingsSaveQueue();
+        const first = queue.run(async () => {
+            throw new Error("failed");
+        });
+        const second = queue.run(async () => "saved");
+
+        await expect(first).rejects.toThrow("failed");
+        await expect(second).resolves.toBe("saved");
+    });
+
     it("keeps loading active until every concurrent save has settled", () => {
         const active = beginAdminSettingsSave(beginAdminSettingsSave(0));
 

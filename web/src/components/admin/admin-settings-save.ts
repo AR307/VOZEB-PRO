@@ -5,6 +5,24 @@ export type AdminSettingsSaveSnapshot = {
     values: Partial<AuthSettings>;
 };
 
+export type AdminSettingsSaveQueue = {
+    run<T>(operation: () => Promise<T>): Promise<T>;
+};
+
+export function createAdminSettingsSaveQueue(): AdminSettingsSaveQueue {
+    let pending: Promise<unknown> = Promise.resolve();
+    return {
+        run<T>(operation: () => Promise<T>) {
+            const result = pending.then(operation, operation);
+            pending = result.then(
+                () => undefined,
+                () => undefined,
+            );
+            return result;
+        },
+    };
+}
+
 export function beginAdminSettingsSave(activeSaves: number) {
     return activeSaves + 1;
 }
