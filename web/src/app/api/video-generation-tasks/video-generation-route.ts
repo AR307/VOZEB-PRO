@@ -13,7 +13,8 @@ import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationCapacityRetryAfterSeconds, getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { normalizeVideoAspectRatio, resolveUpstreamVideoDuration, resolveVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "@/lib/server/video-task-config";
 import { parseImageDimensions } from "@/lib/image-size";
-import { signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
+import { canAccessGenerationAsset } from "@/lib/server/generation-log-store";
+import { signGenerationAssetInputUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
@@ -31,6 +32,7 @@ import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
 import { normalizeVideoGenerationReferences, regularVideoReferences, videoFrameReferences, type VideoGenerationReference } from "@/lib/video-reference-contract";
 import { assertYumengVideoReferences, buildYumengVideoRequest } from "@/lib/yumeng-model-center";
+import { normalizeVideoProviderImageReferences } from "@/lib/server/video-reference-image";
 
 const CREATE_PATHS = ["/video/generations", "/videos/generations", "/videos/videos", "/videos"];
 type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: VideoGenerationReference[]; source?: string; context?: GenerationTaskContext };
@@ -74,13 +76,18 @@ export async function POST(request: Request) {
             const publicOrigin = requestPublicOrigin(request);
             let references: VideoGenerationReference[];
             try {
-                references = normalizeVideoGenerationReferences(body.references).map((reference) => ({ ...reference, url: signReferenceAssetInputUrl(reference.url, publicOrigin) }));
+                references = await Promise.all(normalizeVideoGenerationReferences(body.references).map((reference) => signProviderReference(reference, user, publicOrigin)));
             } catch (error) {
                 return NextResponse.json({ error: error instanceof Error ? error.message : "视频参考素材不正确" }, { status: 400 });
             }
-            const providerPrompt = withVideoReferenceFidelity(prompt, references);
             const origin = resolveInternalOrigin(new URL(request.url).origin);
             const cookie = requestRuntimeCredential(request, user.id);
+            try {
+                references = await normalizeVideoProviderImageReferences({ references, userId: user.id, internalOrigin: origin, publicOrigin });
+            } catch (error) {
+                return NextResponse.json({ error: error instanceof Error ? error.message : "视频参考素材转换失败" }, { status: 400 });
+            }
+            const providerPrompt = withVideoReferenceFidelity(prompt, references);
             const requestedParameters = resolveVideoGenerationParameters(body.config || {}, settings.generationDefaults);
             const billingRequestId = concurrencyRequestId;
             let lastError: unknown;
@@ -220,6 +227,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429, ...(retryAfter ? { headers: { "Retry-After": String(retryAfter) } } : {}) });
 }
 
+async function signProviderReference(reference: VideoGenerationReference, user: { id: string; role: "user" | "admin" }, publicOrigin: string) {
+    let url: URL;
+    try {
+        url = new URL(reference.url, publicOrigin);
+    } catch {
+        return reference;
+    }
+    if (url.origin !== new URL(publicOrigin).origin) return reference;
+    if (url.pathname.startsWith("/api/reference-assets/")) return { ...reference, url: signReferenceAssetInputUrl(reference.url, publicOrigin) };
+    if (!url.pathname.startsWith("/api/generation-log-assets/")) return reference;
+    if (!(await canAccessGenerationAsset(user.id, user.role, url.pathname))) throw new Error("视频参考素材不存在或无权访问");
+    return { ...reference, url: signGenerationAssetInputUrl(reference.url, publicOrigin) };
+}
+
 export async function createUpstream(
     userId: string,
     origin: string,
@@ -259,6 +280,7 @@ export async function createUpstream(
         width: dimensions.width,
         height: dimensions.height,
         generate_audio: generateAudio,
+        watermark: booleanValue(raw.videoWatermark),
         images: requestImages,
         videos,
         audios,

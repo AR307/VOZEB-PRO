@@ -5,7 +5,7 @@ import sharp from "sharp";
 
 import { classifyManagedMediaType, isManagedMediaType, isMediaSourceGroup, mediaSourceGroup } from "@/lib/media-management-contract";
 import { normalizeImagePreviewWidth } from "@/lib/media-image-variant";
-import type { ExternalStorageFilesPayload, ObjectStorageDeleteResult, ObjectStorageMigrationResult } from "@/lib/object-storage-contract";
+import type { ExternalStorageFilesPayload, ObjectStorageDeleteResult, ObjectStorageMigrationResult, ObjectStoragePreviewCleanupResult } from "@/lib/object-storage-contract";
 import { resolveServerDataPath } from "@/lib/server/data-dir";
 import { countLocalMediaReferences } from "@/lib/server/local-media-references";
 import { runImageVariantTaskOnce } from "@/lib/server/media-image-variant-cache";
@@ -184,8 +184,40 @@ export async function deleteExternalStorageFiles(keys: string[]): Promise<Object
     return { deleted: normalizedKeys.length - blocked.length, blocked };
 }
 
+export async function cleanupNestedExternalStoragePreviews(): Promise<ObjectStoragePreviewCleanupResult> {
+    const config = await getObjectStorageRuntimeConfig();
+    assertObjectStorageConfigured(config);
+    const result: ObjectStoragePreviewCleanupResult = { scanned: 0, deleted: 0, reclaimedBytes: 0 };
+    let cursor: string | undefined;
+
+    do {
+        const page = await listObjects(config, { prefix: `${config.prefix}/`, cursor, limit: 100 });
+        result.scanned += page.items.length;
+        const invalid = page.items.filter((item) => isNestedPreviewVariantKey(item.key));
+        if (invalid.length) {
+            await deleteObjects(
+                config,
+                invalid.map((item) => item.key),
+            );
+            result.deleted += invalid.length;
+            result.reclaimedBytes += invalid.reduce((total, item) => total + item.bytes, 0);
+        }
+        if (page.nextCursor && page.nextCursor === cursor) throw new Error("外部存储分页游标未推进，请重试清理");
+        cursor = page.nextCursor;
+    } while (cursor);
+
+    return result;
+}
+
 function isPreviewVariantKey(key: string) {
     return key.replace(/\\/g, "/").includes(`${PREVIEW_MARKER}/`);
+}
+
+function isNestedPreviewVariantKey(key: string) {
+    const normalized = key.replace(/\\/g, "/");
+    const marker = `${PREVIEW_MARKER}/`;
+    const first = normalized.indexOf(marker);
+    return first >= 0 && normalized.indexOf(marker, first + marker.length) >= 0;
 }
 
 export async function deleteExternalMediaObject(registration: LocalMediaRegistration) {

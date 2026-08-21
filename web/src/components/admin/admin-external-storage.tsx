@@ -2,7 +2,7 @@
 
 import { App, Button, Checkbox, Form, Image, Input, Modal, Popconfirm, Select, Switch, Table, Tag, Tooltip } from "antd";
 import type { TableColumnsType } from "antd";
-import { Cloud, DatabaseBackup, Download, Eye, File, FileAudio, Film, RefreshCw, Save, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { Cloud, DatabaseBackup, Download, Eraser, Eye, File, FileAudio, Film, RefreshCw, Save, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminMediaTypeTabs } from "@/components/admin/admin-media-type-tabs";
@@ -11,7 +11,7 @@ import { AdminAccountId, AdminUserSearchSelect } from "@/components/admin/admin-
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { managedMediaTypeLabel, mediaSourceGroupOptions, mediaSourceLabel } from "@/lib/media-management-contract";
 import type { ExternalStorageFile, ExternalStorageFilesPayload, ObjectStorageMigrationResult, ObjectStorageSettings, ObjectStorageSettingsUpdate } from "@/lib/object-storage-contract";
-import { deleteExternalStorageFiles, getExternalStorageFiles, getObjectStorageSettings, migrateLocalMedia, saveObjectStorageSettings, testObjectStorageSettings } from "@/services/api/object-storage";
+import { cleanupExternalStoragePreviews, deleteExternalStorageFiles, getExternalStorageFiles, getObjectStorageSettings, migrateLocalMedia, saveObjectStorageSettings, testObjectStorageSettings } from "@/services/api/object-storage";
 
 const PAGE_SIZE = 30;
 
@@ -27,6 +27,7 @@ export function AdminExternalStorage() {
     const [testing, setTesting] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [syncResult, setSyncResult] = useState<ObjectStorageMigrationResult>();
+    const [cleaningPreviews, setCleaningPreviews] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
     const [preview, setPreview] = useState<ExternalStorageFile>();
@@ -155,6 +156,20 @@ export function AdminExternalStorage() {
         },
         [cursor, loadFiles, message, ownerUserId, prefix, source, type],
     );
+
+    const cleanupPreviews = async () => {
+        setCleaningPreviews(true);
+        try {
+            const result = await cleanupExternalStoragePreviews();
+            if (result.deleted) message.success(`已清理 ${result.deleted} 个异常预览，释放 ${formatBytes(result.reclaimedBytes)}`);
+            else message.success("未发现异常预览文件");
+            await loadFiles(cursor, prefix, type, source, ownerUserId);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "异常预览文件清理失败");
+        } finally {
+            setCleaningPreviews(false);
+        }
+    };
 
     const columns = useMemo<TableColumnsType<ExternalStorageFile>>(
         () => [
@@ -298,6 +313,13 @@ export function AdminExternalStorage() {
                                 <Tooltip title="迁移本地媒体">
                                     <Button aria-label="迁移本地媒体" className="!w-8 !px-0 sm:!w-auto sm:!px-3" icon={<DatabaseBackup className="size-4" />} loading={syncing} disabled={!settings?.enabled}>
                                         <span className="hidden sm:inline">迁移本地媒体</span>
+                                    </Button>
+                                </Tooltip>
+                            </Popconfirm>
+                            <Popconfirm title="清理历史异常预览？" description="只删除递归生成的嵌套 WebP；原文件和正常首层预览都会保留。" okText="开始清理" cancelText="取消" onConfirm={() => void cleanupPreviews()}>
+                                <Tooltip title="清理异常预览">
+                                    <Button aria-label="清理异常预览" className="!w-8 !px-0 sm:!w-auto sm:!px-3" icon={<Eraser className="size-4" />} loading={cleaningPreviews} disabled={!settings?.bucket || deleting || syncing}>
+                                        <span className="hidden sm:inline">清理异常预览</span>
                                     </Button>
                                 </Tooltip>
                             </Popconfirm>

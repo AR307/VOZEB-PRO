@@ -63,6 +63,110 @@ describe("video API service", () => {
         expect(mocks.imageToDataUrl).not.toHaveBeenCalled();
     });
 
+    it("submits a managed source image without uploading its WebP preview again", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-source", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+        const reference = {
+            id: "reference-source",
+            name: "画布图片",
+            type: "image/png",
+            dataUrl: "/api/reference-assets/permanent/2026/08/20/images/source.png?format=webp&width=320",
+            serverUrl: "/api/reference-assets/permanent/2026/08/20/images/source.png",
+            storageKey: "permanent/2026/08/20/images/source.png",
+        } as ReferenceImage;
+
+        await createServerVideoGenerationTask(config, "让画面自然运动", [reference]);
+
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)) as { references: Array<{ url: string }> };
+        expect(body.references).toEqual([{ type: "image", role: "reference", url: "/api/reference-assets/permanent/2026/08/20/images/source.png" }]);
+        expect(JSON.stringify(body)).not.toContain("format=webp");
+        expect(mocks.imageToDataUrl).not.toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
+    it("reuses the same registered drama image across shots without creating reference copies", async () => {
+        const fetchMock = vi.fn().mockImplementation(async () => json({ task: { id: "video-task-drama", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+        const reference = {
+            id: "storyboard-start",
+            name: "分镜起始帧",
+            type: "image/png",
+            dataUrl: "/api/generation-log-assets/permanent/2026/08/20/images/storyboard.png?format=webp&width=640",
+            serverUrl: "/api/generation-log-assets/permanent/2026/08/20/images/storyboard.png",
+            storageKey: "permanent/2026/08/20/images/storyboard.png",
+            videoRole: "first_frame",
+        } as ReferenceImage;
+
+        await Promise.all([createServerVideoGenerationTask(config, "镜头一", [reference]), createServerVideoGenerationTask(config, "镜头二", [reference])]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls.every(([url]) => url === "/api/video-generation-tasks")).toBe(true);
+        expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)).references)).toEqual([
+            [{ type: "image", role: "first_frame", url: "/api/generation-log-assets/permanent/2026/08/20/images/storyboard.png" }],
+            [{ type: "image", role: "first_frame", url: "/api/generation-log-assets/permanent/2026/08/20/images/storyboard.png" }],
+        ]);
+    });
+
+    it("reuses registered video and audio references without base64 republishing", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-media", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createServerVideoGenerationTask(
+            config,
+            "参考已有片段和音乐",
+            [],
+            [{ id: "video", name: "片段", type: "video/mp4", url: "/api/generation-log-assets/permanent/2026/08/20/videos/clip.mp4", storageKey: "permanent/2026/08/20/videos/clip.mp4" }],
+            [{ id: "audio", name: "音乐", type: "audio/mpeg", url: "/api/reference-assets/permanent/2026/08/20/audio/music.mp3", storageKey: "permanent/2026/08/20/audio/music.mp3" }],
+        );
+
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body.references).toEqual([
+            { type: "video", role: "reference", url: "/api/generation-log-assets/permanent/2026/08/20/videos/clip.mp4" },
+            { type: "audio", role: "reference", url: "/api/reference-assets/permanent/2026/08/20/audio/music.mp3" },
+        ]);
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
+    it("reuses media references when only the storage key is retained", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-storage-key", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createServerVideoGenerationTask(
+            config,
+            "使用已保存的视频和音频",
+            [],
+            [{ id: "video", name: "片段", type: "video/mp4", url: "", storageKey: "permanent/2026/08/20/videos/clip.mp4" }],
+            [{ id: "audio", name: "音乐", type: "audio/mpeg", url: "", storageKey: "permanent/2026/08/20/audio/music.mp3" }],
+        );
+
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body.references).toEqual([
+            { type: "video", role: "reference", url: "/api/reference-assets/permanent/2026/08/20/videos/clip.mp4" },
+            { type: "audio", role: "reference", url: "/api/reference-assets/permanent/2026/08/20/audio/music.mp3" },
+        ]);
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
+    it("passes through the original source behind a media proxy without republishing", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-proxy", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createServerVideoGenerationTask(
+            config,
+            "使用代理后的原始视频和音频",
+            [],
+            [{ id: "video", name: "片段", type: "video/mp4", url: "/api/media-proxy?url=https%3A%2F%2Fcdn.example.com%2Fclip.mp4" }],
+            [{ id: "audio", name: "音乐", type: "audio/mpeg", url: "/api/ai/system/channel-one/_media?url=https%3A%2F%2Fcdn.example.com%2Fmusic.mp3" }],
+        );
+
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body.references).toEqual([
+            { type: "video", role: "reference", url: "https://cdn.example.com/clip.mp4" },
+            { type: "audio", role: "reference", url: "https://cdn.example.com/music.mp3" },
+        ]);
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
     it("preserves explicit first and last frame roles in the server payload", async () => {
         const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-frames", model: "video-v1" } }));
         vi.stubGlobal("fetch", fetchMock);

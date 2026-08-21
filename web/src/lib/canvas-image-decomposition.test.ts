@@ -120,15 +120,11 @@ describe("canvas image decomposition", () => {
         expect(result?.layers).toEqual([expect.objectContaining({ kind: "logo", bbox: { x: 800, y: 40, width: 120, height: 80 } })]);
     });
 
-    it("routes a plain subject to local segmentation without requiring element boxes", () => {
-        expect(normalizeCanvasImageDecomposition({ strategy: "subject", backgroundDescription: "室内背景", backgroundPreservedVisuals: [], layers: [] }, 800, 1200)).toEqual({
-            strategy: "subject",
-            width: 800,
-            height: 1200,
-            backgroundDescription: "室内背景",
-            backgroundPreservedVisuals: [],
-            layers: [],
-        });
+    it("requires a subject layer so every split uses the upstream image workflow", () => {
+        expect(normalizeCanvasImageDecomposition({ strategy: "subject", backgroundDescription: "室内背景", backgroundPreservedVisuals: [], layers: [] }, 800, 1200)).toBeNull();
+        expect(normalizeCanvasImageDecomposition({ strategy: "subject", backgroundDescription: "室内背景", backgroundPreservedVisuals: [], layers: [layer("person", "人物", 80, 120, 520, 900, 1)] }, 800, 1200)?.layers).toEqual([
+            expect.objectContaining({ kind: "person", name: "人物" }),
+        ]);
     });
 
     it("requires an explicit image-level strategy", () => {

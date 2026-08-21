@@ -8,7 +8,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasResourceMentionText, CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasPanoramaViewer } from "./canvas-panorama-viewer";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
@@ -202,9 +202,9 @@ export function ReviewContent({ node, theme, onRetry }: Pick<NodeContentRenderer
             <Clock3 className="size-6 shrink-0" style={{ color: theme.node.warningText }} />
             <div className="max-h-[55%] max-w-[280px] overflow-y-auto text-xs leading-5" style={{ color: theme.node.text }}>
                 <div className="font-medium" style={{ color: theme.node.warningText }}>
-                    等待管理员确认
+                    等待状态确认
                 </div>
-                <div className="mt-1">{node.metadata?.errorDetails || "任务创建结果尚未确认，系统不会重复提交。"}</div>
+                <div className="mt-1">{node.metadata?.errorDetails || "任务结果尚未确认，系统不会重复提交。"}</div>
             </div>
             <button
                 type="button"
@@ -217,7 +217,7 @@ export function ReviewContent({ node, theme, onRetry }: Pick<NodeContentRenderer
                 onMouseDown={(event) => event.stopPropagation()}
             >
                 <RefreshCw className="size-3.5" />
-                重新检查处理结果
+                检查状态
             </button>
         </div>
     );
@@ -275,7 +275,7 @@ export function TextContent({ node, theme, isEditingContent, textareaRef, mentio
                     style={textStyle}
                     value={node.metadata?.content || ""}
                     references={mentionReferences}
-                    highlightLabels={false}
+                    highlightLabels
                     onChange={(value) => onContentChange(node.id, value)}
                     onBlur={onStopEditing}
                     onKeyDown={(event) => {
@@ -287,7 +287,7 @@ export function TextContent({ node, theme, isEditingContent, textareaRef, mentio
                 />
             ) : (
                 <div className={textClassName} style={textStyle} onWheel={(event) => event.stopPropagation()}>
-                    {node.metadata?.content || <span style={{ color: theme.node.placeholder }}>点击编辑文字</span>}
+                    {node.metadata?.content ? <CanvasResourceMentionText value={node.metadata.content} references={mentionReferences} /> : <span style={{ color: theme.node.placeholder }}>点击编辑文字</span>}
                 </div>
             )}
         </div>

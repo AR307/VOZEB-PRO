@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { BriefcaseBusiness, ChevronRight, CircleCheck, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
 
@@ -126,6 +126,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [hovered, setHovered] = useState(false);
     const [isEditingContent, setIsEditingContent] = useState(false);
+    const [panelPlacement, setPanelPlacement] = useState<"top" | "bottom">("bottom");
+    const nodeRef = useRef<HTMLDivElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
     const hasImageContent = isCanvasImageNodeType(data.type) && Boolean(data.metadata?.content);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
@@ -316,6 +319,31 @@ export const CanvasNode = React.memo(function CanvasNode({
         if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 6 && !event.shiftKey && !event.ctrlKey && !event.metaKey) setIsEditingContent(true);
     };
 
+    const updatePanelPlacement = useCallback(() => {
+        const nodeElement = nodeRef.current;
+        const panelElement = panelRef.current;
+        const surfaceElement = nodeElement?.closest<HTMLElement>("[data-canvas-surface]");
+        if (!showPanel || !nodeElement || !panelElement || !surfaceElement) return;
+        const nodeRect = nodeElement.getBoundingClientRect();
+        const panelRect = panelElement.getBoundingClientRect();
+        const surfaceRect = surfaceElement.getBoundingClientRect();
+        const canPlaceAbove = nodeRect.top - panelRect.height - 16 >= surfaceRect.top;
+        const nextPlacement = panelRect.bottom > surfaceRect.bottom && canPlaceAbove ? "top" : "bottom";
+        setPanelPlacement((current) => (current === nextPlacement ? current : nextPlacement));
+    }, [showPanel]);
+
+    useLayoutEffect(() => {
+        if (!showPanel || !panelRef.current) return;
+        updatePanelPlacement();
+        const observer = new ResizeObserver(updatePanelPlacement);
+        observer.observe(panelRef.current);
+        window.addEventListener("resize", updatePanelPlacement);
+        return () => {
+            observer.disconnect();
+            window.removeEventListener("resize", updatePanelPlacement);
+        };
+    }, [showPanel, data.id, data.position.x, data.position.y, scale, updatePanelPlacement]);
+
     useEffect(() => {
         return () => {
             window.removeEventListener("mousemove", handleResizeMove);
@@ -325,6 +353,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 
     return (
         <div
+            ref={nodeRef}
             data-node-id={data.id}
             className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isSelected ? "z-50" : "z-10"}`}
             style={{
@@ -419,7 +448,14 @@ export const CanvasNode = React.memo(function CanvasNode({
             <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onConnectStart={(event) => onConnectStart(event, data.id, "source")} />
 
             {showPanel && renderPanel ? (
-                <div data-canvas-no-drag className="absolute left-1/2 top-full z-[70] w-[500px] max-w-[calc(100vw-2rem)] -translate-x-1/2 pt-4">
+                <div
+                    ref={panelRef}
+                    data-canvas-no-drag
+                    data-canvas-node-panel
+                    data-canvas-node-panel-placement={panelPlacement}
+                    className={`absolute left-1/2 z-[70] w-[500px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-y-auto ${panelPlacement === "top" ? "bottom-full pb-4" : "top-full pt-4"}`}
+                    style={{ maxHeight: "calc(100dvh - 1rem)" }}
+                >
                     {renderPanel(data)}
                 </div>
             ) : null}

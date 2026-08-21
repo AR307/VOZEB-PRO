@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import sharp from "sharp";
 
 import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, expectNoHorizontalOverflow, node, readCanvasProject } from "./canvas-e2e-helpers";
+import { E2E_PROTOCOL_ORIGIN } from "./support";
 
 test.describe.configure({ mode: "serial" });
 
@@ -10,7 +12,11 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
     const project = await createCanvasProject(request, {
         title: `Canvas 交互回归 ${randomUUID().slice(0, 8)}`,
         viewport: { x: 100, y: 110, k: 1 },
-        nodes: [node("text-source", "text", 60, 100, 240, 170, { content: "创作方向" }), node("config-target", "config", 380, 100, 280, 210, { size: "1280x720", composerContent: "" }), node("image-target", "image", 200, 360, 260, 200, {})],
+        nodes: [
+            node("text-source", "text", 60, 100, 240, 170, { content: "创作方向" }),
+            node("config-target", "config", 380, 100, 280, 210, { size: "1280x720", composerContent: "" }),
+            node("image-target", "image", 200, 360, 260, 200, { content: "/logo.svg", serverUrl: "/logo.svg" }),
+        ],
         connections: [],
     });
 
@@ -25,6 +31,8 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         const surface = page.locator("[data-canvas-surface]");
         await expect(surface).toBeVisible({ timeout: 20_000 });
         await expect(surface).toHaveCSS("background-color", "rgb(255, 255, 255)");
+        await expect(surface.locator("[data-canvas-grid]")).toBeVisible();
+        await expect(surface.locator("[data-canvas-grid]")).not.toHaveCSS("background-image", "none");
 
         const configNode = page.locator('[data-node-id="config-target"]');
         await expect.poll(async () => (await configNode.boundingBox())!.height).toBeLessThanOrEqual(182);
@@ -69,6 +77,11 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         const nodePrompt = page.getByRole("textbox", { name: "节点提示词" });
         await expect(nodePrompt).toBeVisible();
         await expect.poll(() => nodePrompt.evaluate((element) => document.activeElement === element)).toBe(true);
+        await nodePrompt.fill("222@");
+        const mentionMenu = page.locator('[data-canvas-resource-mention-menu="true"]');
+        await expect(mentionMenu).toBeVisible();
+        await expect(mentionMenu.getByText("图片1", { exact: true })).toBeVisible();
+        await expect(mentionMenu.locator("img")).toBeVisible();
         await nodePrompt.fill("放大编辑后仍然同步");
         await page.getByRole("button", { name: "放大提示词输入" }).click();
         const promptDialog = page.getByRole("dialog", { name: "编辑提示词" });
@@ -109,6 +122,7 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         expect(temporaryPanNodeAfter!.x - temporaryPanNodeBox!.x).toBeLessThan(80);
 
         const sourceNode = page.locator('[data-node-id="text-source"]');
+        await expect.poll(() => page.locator("[data-canvas-world-viewport]").evaluate((element) => element.scrollTop)).toBe(0);
         await sourceNode.click();
         await page.keyboard.down("Control");
         await page.locator('[data-node-id="config-target"]').click({ position: { x: 36, y: 36 } });
@@ -126,6 +140,13 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
         await dragConnectionToPoint(page, sourceNode, surfaceBounds!.x + surfaceBounds!.width - 70, surfaceBounds!.y + surfaceBounds!.height - 70);
         const createMenu = page.locator("[data-connection-create-menu]");
         await expect(createMenu).toBeVisible();
+        await expect
+            .poll(async () => {
+                const menu = await createMenu.boundingBox();
+                const canvas = await surface.boundingBox();
+                return Boolean(menu && canvas && menu.x >= canvas.x && menu.y >= canvas.y && menu.x + menu.width <= canvas.x + canvas.width && menu.y + menu.height <= canvas.y + canvas.height);
+            })
+            .toBe(true);
         await createMenu.getByRole("button", { name: /图片生成/ }).click();
         await expect(page.locator("[data-connection-id]")).toHaveCount(2);
         await expect(page.locator("[data-node-id]")).toHaveCount(4);
@@ -301,7 +322,10 @@ test("canvas video first and last frame roles persist and retry from the output 
 test("canvas opens the Agent rail at the intended width and keeps a fresh chat after deletion", async ({ page, request }) => {
     const project = await createCanvasProject(request, {
         title: `Canvas Agent 面板 ${randomUUID().slice(0, 8)}`,
-        nodes: [],
+        nodes: [
+            { ...node("mention-image", "image", 80, 120, 220, 160, { content: `${E2E_PROTOCOL_ORIGIN}/media/fixture.png`, serverUrl: `${E2E_PROTOCOL_ORIGIN}/media/fixture.png` }), title: "协议引用图片" },
+            { ...node("mention-video", "video", 340, 120, 220, 160, { content: `${E2E_PROTOCOL_ORIGIN}/media/fixture.mp4`, serverUrl: `${E2E_PROTOCOL_ORIGIN}/media/fixture.mp4` }), title: "协议引用视频" },
+        ],
         connections: [],
         chatSessions: [
             {
@@ -379,10 +403,27 @@ test("canvas opens the Agent rail at the intended width and keeps a fresh chat a
         await deleteDialog.getByRole("button", { name: /删\s*除/ }).click();
 
         await expect(page.getByRole("tab", { name: "对话", exact: true })).toHaveAttribute("aria-selected", "true");
-        await expect(page.getByPlaceholder("描述你想让 Agent 如何操作画布")).toBeVisible();
+        const agentComposer = page.getByPlaceholder("描述你想让 Agent 如何操作画布");
+        await expect(agentComposer).toBeVisible();
         await expect(page.getByText("你好，我是你的画布助手", { exact: true })).toBeVisible();
         await expect.poll(() => page.locator("[data-canvas-agent-scroll]").evaluate((element) => element.scrollTop)).toBe(0);
         await expect.poll(() => readCanvasChatState(request, projectPath)).toEqual({ sessions: 1, messages: 0 });
+
+        await agentComposer.fill("222@");
+        const mentionPicker = page.getByTestId("canvas-agent-mention-picker");
+        await expect(mentionPicker).toBeVisible();
+        await expect(mentionPicker.getByRole("button", { name: "引用协议引用图片" })).toBeVisible();
+        await expect(mentionPicker.locator("img")).toBeVisible();
+        await mentionPicker.getByRole("button", { name: "引用协议引用图片" }).click();
+        await expect(agentComposer).toHaveValue("222@图片1 ");
+        await agentComposer.fill(`${await agentComposer.inputValue()}再参考@`);
+        await expect(mentionPicker).toBeVisible();
+        await mentionPicker.getByRole("tab", { name: /视频/ }).click();
+        await expect(mentionPicker.getByRole("button", { name: "引用协议引用视频" })).toBeVisible();
+        await expect(mentionPicker.locator("video")).toBeVisible();
+        await mentionPicker.getByRole("button", { name: "引用协议引用视频" }).click();
+        await expect(agentComposer).toHaveValue("222@图片1 再参考@视频1 ");
+        await agentComposer.fill("");
 
         const generationPreferencesTrigger = panel.getByRole("button", { name: /生成参数：/ });
         await expect
@@ -688,18 +729,19 @@ test("canvas Agent keeps simultaneous runs bound to separate chats", async ({ pa
     }
 });
 
-test("canvas remains operable with 2000 nodes and 5000 connections", async ({ page, request }, testInfo) => {
+test("canvas remains operable with 10001 nodes and 10000 connections", async ({ page, request }, testInfo) => {
     test.setTimeout(120_000);
-    const nodes = Array.from({ length: 2_000 }, (_, index) => node(`perf-node-${index}`, index % 9 === 0 ? "config" : "text", (index % 50) * 320, Math.floor(index / 50) * 240, 240, 160, { content: `节点 ${index}` }));
-    const connections = Array.from({ length: 5_000 }, (_, index) => {
-        const sourceIndex = (index * 17) % 2_000;
-        let targetIndex = (index * 37 + 1) % 2_000;
-        if (targetIndex === sourceIndex) targetIndex = (targetIndex + 1) % 2_000;
+    const nodes = Array.from({ length: 10_001 }, (_, index) => node(`perf-node-${index}`, index % 9 === 0 ? "config" : "text", (index % 100) * 320, Math.floor(index / 100) * 240, 240, 160, { content: `节点 ${index}` }));
+    const connections = Array.from({ length: 10_000 }, (_, index) => {
+        const sourceIndex = (index * 17) % 10_001;
+        let targetIndex = (index * 37 + 1) % 10_001;
+        if (targetIndex === sourceIndex) targetIndex = (targetIndex + 1) % 10_001;
         return { id: `perf-edge-${index}`, fromNodeId: `perf-node-${sourceIndex}`, toNodeId: `perf-node-${targetIndex}` };
     });
     const project = await createCanvasProject(request, { title: `Canvas 性能回归 ${randomUUID().slice(0, 8)}`, viewport: { x: 80, y: 100, k: 1 }, nodes, connections });
 
     try {
+        await page.addInitScript(() => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: "dark" }, version: 0 })));
         const startedAt = Date.now();
         await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
         await expect(page.locator("[data-canvas-surface]")).toBeVisible({ timeout: 20_000 });
@@ -707,7 +749,11 @@ test("canvas remains operable with 2000 nodes and 5000 connections", async ({ pa
         const interactiveMs = Date.now() - startedAt;
         const renderedNodeCount = await page.locator("[data-node-id]").count();
         expect(renderedNodeCount).toBeGreaterThan(0);
-        expect(renderedNodeCount).toBeLessThan(2_000);
+        expect(renderedNodeCount).toBeLessThan(nodes.length);
+
+        await page.getByRole("button", { name: "打开小地图" }).click();
+        await expect(page.locator("[data-canvas-minimap] canvas")).toBeVisible();
+        expect(await page.locator("[data-canvas-minimap] [data-node-id]").count()).toBe(0);
 
         const surface = page.locator("[data-canvas-surface]");
         const bounds = await surface.boundingBox();
@@ -721,6 +767,22 @@ test("canvas remains operable with 2000 nodes and 5000 connections", async ({ pa
         const navigationMs = Date.now() - navigationStartedAt;
         await page.waitForTimeout(500);
         await expectCanvasSaved(page);
+
+        const surfaceImage = await surface.screenshot();
+        const { data: surfacePixels, info: surfaceInfo } = await sharp(surfaceImage).raw().toBuffer({ resolveWithObject: true });
+        const cornerPixels = [
+            [4, 4],
+            [surfaceInfo.width - 5, 4],
+            [4, surfaceInfo.height - 5],
+            [surfaceInfo.width - 5, surfaceInfo.height - 5],
+        ].map(([x, y]) => {
+            const offset = (y * surfaceInfo.width + x) * surfaceInfo.channels;
+            return [surfacePixels[offset], surfacePixels[offset + 1], surfacePixels[offset + 2]];
+        });
+        expect(
+            cornerPixels.some(([red, green, blue]) => red > 240 && green > 240 && blue > 240),
+            "Canvas background must not become a white composite layer in dark mode",
+        ).toBe(false);
 
         const firstNode = page.locator('[data-node-id="perf-node-0"]');
         const firstBounds = await firstNode.boundingBox();

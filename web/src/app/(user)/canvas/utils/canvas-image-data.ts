@@ -350,6 +350,15 @@ function drawCropCanvas(image: HTMLImageElement, box: CanvasImageLayerBox) {
 }
 
 export async function validateAndTrimCanvasTransparentLayer(source: string, layerName: string) {
+    const canvas = await loadValidatedTransparentCanvas(source, layerName);
+    return trimTransparentCanvas(canvas, layerName);
+}
+
+export async function validateCanvasTransparentLayer(source: string, layerName: string) {
+    await loadValidatedTransparentCanvas(source, layerName);
+}
+
+async function loadValidatedTransparentCanvas(source: string, layerName: string) {
     const image = await loadImage(source);
     const canvas = document.createElement("canvas");
     canvas.width = image.width;
@@ -360,7 +369,8 @@ export async function validateAndTrimCanvasTransparentLayer(source: string, laye
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
     const hasTransparency = pixels.data.some((value, index) => index % 4 === 3 && value < 255);
     if (!hasTransparency) throw new Error(`${layerName}没有生成透明背景`);
-    return trimTransparentCanvas(canvas, layerName);
+    if (!findCanvasAlphaBounds(pixels)) throw new Error(`没有识别到${layerName}的透明轮廓`);
+    return canvas;
 }
 
 async function trimTransparentCanvas(canvas: HTMLCanvasElement, layerName: string) {

@@ -160,6 +160,7 @@ export type CanvasNodeMetadata = {
     preserveUnmaskedPixels?: boolean;
     imageOutputBackground?: "opaque" | "transparent";
     imageOutputMode?: "layers";
+    imageLayerBatch?: { grant: string; slotId: string };
     internalOnly?: boolean;
     cameraControl?: CameraControlOptions;
     panoramaProjection?: "equirectangular";

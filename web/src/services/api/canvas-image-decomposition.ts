@@ -1,6 +1,6 @@
 "use client";
 
-import type { CanvasImageDecomposition } from "@/lib/canvas-image-decomposition";
+import type { CanvasImageDecompositionResponse } from "@/lib/canvas-image-decomposition";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 
@@ -12,7 +12,7 @@ export async function requestCanvasImageDecomposition(input: { requestId: string
             body: JSON.stringify(input),
         });
         throwIfClientSessionExpired(response);
-        const payload = (await response.json().catch(() => null)) as { data?: CanvasImageDecomposition; msg?: string } | null;
+        const payload = (await response.json().catch(() => null)) as { data?: CanvasImageDecompositionResponse; msg?: string } | null;
         if (!response.ok || !payload?.data) throw new Error(payload?.msg || "图片分层识别失败");
         return payload.data;
     } finally {

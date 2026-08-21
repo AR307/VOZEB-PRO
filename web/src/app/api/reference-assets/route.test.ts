@@ -74,4 +74,31 @@ describe("reference asset upload boundary", () => {
             maxBytes: 20 * 1024 * 1024,
         });
     });
+
+    it("recognizes WebP bytes when object storage omits the image MIME type", async () => {
+        mocks.writePersistent.mockResolvedValue({ token: "permanent/asset.webp", bytes: 16, mimeType: "image/webp", storage: "object" });
+        const bytes = new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 32]);
+        const form = new FormData();
+        form.append("type", "image");
+        form.append("persistent", "true");
+        form.append("file", new File([bytes], "reference.webp", { type: "application/octet-stream" }));
+
+        const response = await POST(new Request("http://localhost/api/reference-assets", { method: "POST", body: form }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.writePersistent).toHaveBeenCalledWith(`data:image/webp;base64,${Buffer.from(bytes).toString("base64")}`, "image", expect.objectContaining({ originalName: "reference.webp" }));
+    });
+
+    it("rejects detected media bytes from a different requested category", async () => {
+        const bytes = new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 32]);
+        const form = new FormData();
+        form.append("type", "video");
+        form.append("file", new File([bytes], "not-video.bin", { type: "application/octet-stream" }));
+
+        const response = await POST(new Request("http://localhost/api/reference-assets", { method: "POST", body: form }));
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ error: "参考素材格式不正确" });
+        expect(mocks.writeTemporary).not.toHaveBeenCalled();
+    });
 });

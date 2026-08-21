@@ -36,6 +36,14 @@ export type CanvasImageDecomposition = {
     layers: CanvasImageLayerCandidate[];
 };
 
+export type CanvasImageDecompositionResponse = CanvasImageDecomposition & {
+    batchGrant: string;
+};
+
+export function canvasImageLayerSlotId(layerId: string) {
+    return `layer:${layerId}`;
+}
+
 const layerKinds = new Set<string>(CANVAS_IMAGE_LAYER_KINDS);
 
 export function normalizeCanvasImageDecomposition(value: unknown, width: number, height: number): CanvasImageDecomposition | null {
@@ -73,7 +81,7 @@ export function normalizeCanvasImageDecomposition(value: unknown, width: number,
             },
         ];
     });
-    if (strategy === "ecommerce" && !layers.length) return null;
+    if (!layers.length) return null;
     const mergedLayers = mergeConnectedLayers(layers);
     return {
         strategy,
@@ -273,15 +281,14 @@ export function canvasImageDecompositionInstruction(width: number, height: numbe
     return [
         "你是 VOZEB PRO 图片分层分析器。分析用户提供的完整图片，并调用 decompose_ecommerce_image。",
         `所有 bbox 必须使用原图 ${width}x${height} 的整数像素坐标，禁止使用百分比或归一化坐标。`,
-        "先判断整张图片的 strategy：电商海报、营销视觉、商品设计图或包含多个可独立排版元素的图片必须是 ecommerce，即使画面里包含人物；只有普通单人物、单主体照片且不存在外置标题、价格、Logo、角标、商品排版等营销元素时才是 subject。",
-        "strategy 为 subject 时 layers 必须返回空数组，后续使用本地语义抠图；strategy 为 ecommerce 时必须完整返回下面定义的独立视觉元素。",
+        "先判断整张图片的 strategy：电商海报、营销视觉、商品设计图或包含多个可独立排版元素的图片必须是 ecommerce；普通单人物或单主体照片可以是 subject。strategy 只描述画面类型，不改变后续任务链路。",
         "完整识别所有需要独立保留的前景视觉元素：主商品和商品组合、人物、标题或艺术字、普通说明文字、品牌 Logo、促销角标或标签、棉花/光效/贴纸等装饰，以及其他独立前景物体。",
         "画面外置的标题、副标题、正文、价格、单位、按钮文案和促销底牌上的文字都必须返回 headline 或 text 层；文字按原图像素作为视觉元素处理，不需要输出 OCR 文案或可编辑字体信息。一个完整词语、短句、价格块或同一文字排版区域必须是一个 text/headline 层，禁止按单字、单笔画或每个字母拆成多个层；只有商品包装印刷文字和不可拆分的品牌字标保留在商品或 Logo 图片层中。",
         "文字、Logo、角标和装饰不能因为不是主商品而省略；不要把整张海报或整片前景合并成一个主体框。每个独立商品、人物或前景物体分别返回紧贴可见轮廓的 bbox。一个连续、相连、相互遮挡或必须一起移动的商品组合（例如同一包装的盒体、盖子、抽纸、配件和连接装饰）必须只返回一个 product/foreground 层，不能按局部包装、图案或零件重复拆开；只有彼此分离且可以独立移动的元素才分别返回。商品包装自身印刷的文字和 Logo 属于商品画面，不能再重复拆成文字层或 Logo 层。",
         "groupId 表示最终独立移动的视觉资产。属于同一个完整主体的局部即使被分别观察到，也必须使用相同 groupId；不同主体必须使用不同 groupId。一个完整词语、价格块或同一排版区域也使用同一个 groupId，禁止每个字单独成组。",
         "每个层必须提供 focusPoints，坐标同样使用原图整数像素。主体每个彼此断开的可见部分至少给一个落在实体内部、不能落在背景或透明间隙上的点：商品组合给每个独立包装或相连部件一个点，文字块给每行、每个断开的词组或独立字形一个点，Logo、角标和装饰给每个断开图形一个点。focusPoints 只用于本地语义抠图，不会形成额外节点。",
         "连续的摄影或插画场景、纹理、地面、桌面、光影、反射，以及已经融入场景的装饰属于背景，不放入 layers；把这些必须保留的背景内容简要列入 backgroundPreservedVisuals。只有可独立移动和复用的元素才返回图层。",
-        "bbox 只用于定位透明资产编辑的参考范围，必须完整包住元素且不要裁掉边缘。每个最终 groupId 对应一个可独立移动的透明 PNG 元素，包括文字。相连实体的 bbox 可以覆盖整个连接组合，但不能包含大片无关背景；不要为同一实体返回相互重叠的 product/person/foreground 框。背景本身不放入 layers，backgroundDescription 只简要描述移除独立图层后应保留的背景。",
+        "bbox 只用于定位透明资产编辑的参考范围，必须完整包住元素且不要裁掉边缘。每个最终 groupId 对应一个可独立移动的透明 PNG 元素，包括文字。相连实体的 bbox 可以覆盖整个连接组合，但不能包含大片无关背景；不要为同一实体返回相互重叠的 product/person/foreground 框。普通单主体图片也必须返回至少一个主体层，背景本身不放入 layers，backgroundDescription 只简要描述移除独立图层后应保留的背景。",
         "只返回工具参数，不输出解释、Markdown 或内部分析过程。",
     ].join("\n");
 }

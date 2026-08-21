@@ -3,7 +3,7 @@ import axios from "axios";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { hasProviderReadSignatureShape, isReferenceAssetUrl } from "@/lib/reference-asset-url";
+import { hasProviderReadSignatureShape, isProviderMediaAssetUrl } from "@/lib/reference-asset-url";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
@@ -351,7 +351,7 @@ export async function publishReferenceImage(dataUrl: string) {
 }
 
 function isUnsignedReferenceAssetUrl(value: string) {
-    return isReferenceAssetUrl(value) && !hasProviderReadSignatureShape(value);
+    return isProviderMediaAssetUrl(value) && !hasProviderReadSignatureShape(value);
 }
 
 export function uniqueStrings(items: string[]) {

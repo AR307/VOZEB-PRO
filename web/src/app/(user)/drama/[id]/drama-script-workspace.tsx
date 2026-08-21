@@ -6,6 +6,7 @@ import { ListTree, X } from "lucide-react";
 
 import type { DramaEpisode, DramaProject, DramaShot } from "../types";
 import { useDramaStore } from "../stores/use-drama-store";
+import { DramaEpisodeSettings } from "./drama-episode-settings";
 import { DramaRichScriptEditor } from "./drama-rich-script-editor";
 import { DramaSceneStructure } from "./drama-scene-structure";
 
@@ -42,7 +43,7 @@ export function DramaScriptWorkspace({
     };
 
     return (
-        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-2 overflow-hidden min-[1120px]:grid-cols-[200px_minmax(700px,1fr)]" data-drama-script-workspace>
+        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-2 overflow-hidden min-[1120px]:grid-cols-[200px_minmax(0,1fr)] min-[1366px]:grid-cols-[200px_minmax(0,1fr)_282px]" data-drama-script-workspace>
             <div className="hidden min-h-0 min-w-0 overflow-hidden rounded-lg border border-border min-[1180px]:block">
                 <DramaSceneStructure project={project} episode={episode} selectedShotId={selectedShotId} onSelect={selectShot} analyzing={analyzing} onAnalyze={onAnalyze} />
             </div>
@@ -51,6 +52,9 @@ export function DramaScriptWorkspace({
                     场景结构
                 </Button>
                 <DramaRichScriptEditor episode={episode} fullscreen={fullscreen} onFullscreenChange={setFullscreen} onReady={registerEditor} onChange={(script, scriptRichContent) => updateEpisode(project.id, episode.id, { script, scriptRichContent })} />
+            </div>
+            <div className="hidden min-h-0 min-w-0 overflow-hidden rounded-lg border border-border min-[1366px]:block">
+                <DramaEpisodeSettings project={project} episode={episode} />
             </div>
             <Drawer title="场景结构" placement="left" size={300} open={mobilePanel === "scenes"} closable={false} onClose={() => setMobilePanel(undefined)} styles={{ wrapper: { maxWidth: "100vw" }, body: { padding: 0 } }}>
                 <div className="flex h-full min-h-0 flex-col">

@@ -133,5 +133,7 @@ describe("provider task config", () => {
         expect(() => assertReferenceUrls(config, [{ url: "https://drama.example/api/reference-assets/temporary/2026/07/25/images/file.png" }])).toThrow("站内参考素材");
         expect(() => assertReferenceUrls(config, [{ url: "https://drama.example/api/reference-assets/temporary/2026/07/25/images/file.png?expires=1&signature=test" }])).toThrow("站内参考素材");
         expect(() => assertReferenceUrls(config, [{ url: "https://drama.example/api/reference-assets/temporary/2026/07/25/images/file.png?purpose=provider-read&expires=1&signature=test" }])).not.toThrow();
+        expect(() => assertReferenceUrls(config, [{ url: "https://drama.example/api/generation-log-assets/permanent/2026/07/25/images/file.png?purpose=provider-read&expires=1&signature=test" }])).not.toThrow();
+        expect(() => assertReferenceUrls(config, [{ url: "https://drama.example/api/generation-log-assets/permanent/2026/07/25/images/file.png" }])).toThrow("站内参考素材");
     });
 });

@@ -17,6 +17,7 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
         message,
         router,
         projectId,
+        containerRef,
         historyRef,
         lastHistoryRef,
         historyCommitTimerRef,
@@ -113,8 +114,11 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
     }, [applyHistory]);
 
     const autoLayout = useCallback(() => {
-        const availableWidth = Math.max(1, size.width - 128);
-        const availableHeight = Math.max(1, size.height - 152);
+        const measuredSize = containerRef.current?.getBoundingClientRect();
+        const canvasWidth = measuredSize?.width || size.width;
+        const canvasHeight = measuredSize?.height || size.height;
+        const availableWidth = Math.max(1, canvasWidth - 128);
+        const availableHeight = Math.max(1, canvasHeight - 152);
         const next = autoLayoutCanvas(nodesRef.current, connections, { width: availableWidth, height: availableHeight });
         if (!next.length) return message.info("画布上还没有节点");
         const visible = next.filter((node) => !isAgentInternalNode(node));
@@ -130,9 +134,9 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
         const contentWidth = Math.max(1, right - left);
         const contentHeight = Math.max(1, bottom - top);
         const scale = Math.min(1, Math.max(0.08, Math.min(availableWidth / contentWidth, availableHeight / contentHeight)));
-        setViewport({ x: size.width / 2 - (left + contentWidth / 2) * scale, y: size.height / 2 - (top + contentHeight / 2) * scale, k: scale });
+        setViewport({ x: canvasWidth / 2 - (left + contentWidth / 2) * scale, y: canvasHeight / 2 - (top + contentHeight / 2) * scale, k: scale });
         message.success("画布已整理，操作可撤销");
-    }, [connections, message, size.height, size.width]);
+    }, [connections, containerRef, message, size.height, size.width]);
 
     const createAndOpenProject = useCallback(async () => {
         try {

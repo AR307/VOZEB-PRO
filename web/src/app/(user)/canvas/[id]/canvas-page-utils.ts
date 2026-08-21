@@ -4,7 +4,7 @@ import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { readImageMeta } from "@/lib/image-utils";
 import { resolveStoredImageDataUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
-import { serverMediaUrl } from "@/services/server-media-storage";
+import { parseServerMediaUrl, serverMediaUrl } from "@/services/server-media-storage";
 import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CANVAS_CONFIG_NODE_HEIGHT, NODE_DEFAULT_SIZE } from "../constants";
@@ -35,9 +35,22 @@ export async function uploadCanvasImage(input: string | Blob): Promise<UploadedI
     return { ...image, url: await resolveStoredImageDataUrl(image.storageKey, image.url) };
 }
 
-export async function uploadGeneratedCanvasImage(url: string, remoteFallback = "", serverFallback = ""): Promise<UploadedImage> {
-    const remoteUrl = isRemoteGeneratedUrl(remoteFallback) ? remoteFallback : isRemoteGeneratedUrl(url) ? url : "";
-    const serverUrl = isServerGeneratedUrl(serverFallback) ? serverFallback : isServerGeneratedUrl(url) ? url : "";
+type GeneratedCanvasImage = {
+    dataUrl?: string;
+    remoteUrl?: string;
+    serverUrl?: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
+    mimeType?: string;
+};
+
+export async function uploadGeneratedCanvasImage(generated: GeneratedCanvasImage): Promise<UploadedImage> {
+    const url = generated.dataUrl || "";
+    const remoteUrl = isRemoteGeneratedUrl(generated.remoteUrl || "") ? generated.remoteUrl || "" : isRemoteGeneratedUrl(url) ? url : "";
+    const serverUrl = isServerGeneratedUrl(generated.serverUrl || "") ? generated.serverUrl || "" : isServerGeneratedUrl(url) ? url : "";
+    const existing = existingGeneratedCanvasImage(generated, serverUrl, remoteUrl);
+    if (existing) return existing;
     const localUrl = isLocalGeneratedUrl(url) ? url : "";
     const candidates = Array.from(new Set([serverUrl, localUrl, url, remoteUrl].filter(Boolean)));
     for (const candidate of candidates) {
@@ -49,6 +62,25 @@ export async function uploadGeneratedCanvasImage(url: string, remoteFallback = "
         }
     }
     throw new Error("图片保存到服务器失败");
+}
+
+function existingGeneratedCanvasImage(generated: GeneratedCanvasImage, serverUrl: string, remoteUrl: string): UploadedImage | null {
+    const reference = parseServerMediaUrl(serverUrl);
+    const width = Number(generated.width);
+    const height = Number(generated.height);
+    const bytes = Number(generated.bytes);
+    const mimeType = generated.mimeType?.trim().toLowerCase() || "";
+    if (!reference?.storageKey.startsWith("permanent/") || !Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0 || !Number.isFinite(bytes) || bytes <= 0 || !mimeType.startsWith("image/")) return null;
+    return {
+        url: reference.url,
+        storageKey: reference.storageKey,
+        remoteUrl: remoteUrl || undefined,
+        serverUrl: reference.url,
+        width,
+        height,
+        bytes,
+        mimeType,
+    };
 }
 
 export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {

@@ -92,6 +92,46 @@ describe("text planning runtime protocol matrix", () => {
         expect(onInvalidResponse).toHaveBeenCalledOnce();
     });
 
+    it("工具和普通 JSON 都失败时只执行一次结构修复请求", async () => {
+        const onInvalidResponse = vi.fn();
+        mockedFetch
+            .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "我会分析后返回结果" } }] }))
+            .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: '{"script":"输入回显"}' } }] }))
+            .mockResolvedValueOnce(chatJsonResponse());
+
+        const result = await requestStructuredText({
+            ...requestInput(candidate("newapi")),
+            headers: { "idempotency-key": "planning-repair", "x-vozeb-pro-logical-model": "planner", "x-vozeb-pro-points-idempotency-key": "billing-tool" },
+            fallbackHeaders: { "idempotency-key": "planning-repair", "x-vozeb-pro-logical-model": "planner", "x-vozeb-pro-points-idempotency-key": "billing-json" },
+            preferNativeTools: true,
+            validateArguments: (argumentsText) => !("script" in JSON.parse(argumentsText)),
+            onInvalidResponse,
+        });
+
+        expect(result.arguments).toBe("{}");
+        expect(mockedFetch).toHaveBeenCalledTimes(3);
+        const repairBody = JSON.parse(String(mockedFetch.mock.calls[2]?.[1]?.body)) as Record<string, unknown>;
+        expect(repairBody).not.toHaveProperty("tools");
+        expect(repairBody).toMatchObject({ response_format: { type: "json_object" } });
+        expect(JSON.stringify(repairBody.messages)).toContain("上一轮响应没有通过结构校验");
+        expect(new Headers(mockedFetch.mock.calls[2]?.[1]?.headers).get("idempotency-key")).toBe("planning-repair:chat-repair");
+        expect(new Headers(mockedFetch.mock.calls[2]?.[1]?.headers).get("x-vozeb-pro-points-idempotency-key")).toBe("billing-json:repair");
+        expect(onInvalidResponse).toHaveBeenCalledTimes(2);
+    });
+
+    it("可以关闭同一输入的结构修复请求", async () => {
+        mockedFetch.mockResolvedValue(Response.json({ choices: [{ message: { content: "不是 JSON" } }] }));
+
+        await expect(requestStructuredText({ ...requestInput(candidate("newapi")), allowRepair: false })).rejects.toThrow("模型没有返回所需的结构化结果");
+        expect(mockedFetch).toHaveBeenCalledOnce();
+    });
+
+    it("从上游包装文本中只接受可解析的 JSON 对象", async () => {
+        mockedFetch.mockResolvedValue(Response.json({ choices: [{ message: { content: "结果如下：{'result':'ok'}" } }] }));
+
+        await expect(requestStructuredText(requestInput(candidate("newapi")))).resolves.toMatchObject({ arguments: '{"result":"ok"}' });
+    });
+
     it("compatible 模型明确配置 Responses 时直接使用 Responses", async () => {
         mockedFetch.mockResolvedValue(Response.json({ output_text: "{}" }));
 
@@ -205,6 +245,12 @@ describe("text planning runtime protocol matrix", () => {
 
         await expect(requestStructuredText(requestInput(candidate("newapi")))).rejects.toMatchObject({ status: 422 });
         expect(mockedFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("上游拒绝过大请求体时不暴露代理内部错误", async () => {
+        mockedFetch.mockResolvedValueOnce(new Response("/backend-api/conversation failed: status=413, body=", { status: 413 }));
+
+        await expect(requestStructuredText(requestInput(candidate("newapi")))).rejects.toThrow("提交给文本模型的内容过大");
     });
 
     it("同一渠道不同模型的协议预设互不污染", async () => {

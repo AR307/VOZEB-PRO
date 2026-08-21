@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeDramaModelOutput, hasUsableDramaToolArguments, normalizeDramaContentAnalysis, normalizeDramaVisualAnalysis, readDramaChatArguments, readDramaResponsesArguments, readDramaUpstreamError } from "./drama-analysis";
+import { describeDramaModelOutput, hasCompleteDramaDialogueAttribution, hasUsableDramaToolArguments, normalizeDramaContentAnalysis, normalizeDramaVisualAnalysis, readDramaChatArguments, readDramaResponsesArguments, readDramaUpstreamError } from "./drama-analysis";
 
 describe("drama analysis contracts", () => {
     it("keeps content facts separate from visual prompts", () => {
@@ -40,6 +40,7 @@ describe("drama analysis contracts", () => {
         expect(result.shots[0]).toMatchObject({ sourceText: "她在门边看见一滴血。", duration: 7, clueNames: ["血迹"] });
         expect(result.shots[0]).not.toHaveProperty("imagePrompt");
     });
+
 
     it("restores every direct line from the source script and rejects narrative summaries", () => {
         const script = ["一旁的女人再次开口：“俊成家的，你还好吗？”", "郁心妍闭着眼回了一句：“我没事，就是有些头晕。”", "“你等着，我这就去给你叫医生。”", "郁心妍刚想说：不用，她缓一下就没事了。"].join("\n");
@@ -107,6 +108,160 @@ describe("drama analysis contracts", () => {
         );
 
         expect(result.shots[0].utterances.filter((item) => item.type === "dialogue").map((item) => item.text)).toEqual(["好。", "好。"]);
+    });
+
+    it("splits an overlong shot while preserving every line in source order", () => {
+        const lines = Array.from({ length: 12 }, (_, index) => `角色${index + 1}说：“这是第${index + 1}句对白。”`);
+        const script = lines.join("\n");
+        const result = normalizeDramaContentAnalysis(
+            {
+                episode: { outline: "连续争论", hook: "", nextPreview: "", sourceRange: "第一章" },
+                characters: [],
+                scenes: [],
+                props: [],
+                clues: [],
+                shots: [
+                    {
+                        title: "连续争论",
+                        description: "众人依次发言",
+                        sourceText: script,
+                        shotBoundary: "模型错误地合并为长镜头",
+                        dialogue: lines.map((_, index) => `这是第${index + 1}句对白。`).join("\n"),
+                        narration: "",
+                        utterances: lines.map((_, index) => ({ type: "dialogue", speaker: `角色${index + 1}`, text: `这是第${index + 1}句对白。` })),
+                        duration: 40,
+                        characterNames: [],
+                        sceneName: "会议室",
+                        propNames: [],
+                        clueNames: [],
+                    },
+                ],
+            },
+            { defaultSeconds: 5, durationSeconds: [5, 8, 10, 15] },
+            script,
+        );
+
+        expect(result.shots.map((shot) => shot.duration)).toEqual([15, 15, 10]);
+        expect(result.shots.every((shot) => [5, 8, 10, 15].includes(shot.duration))).toBe(true);
+        expect(result.shots.flatMap((shot) => shot.utterances.map((utterance) => utterance.text))).toEqual(lines.map((_, index) => `这是第${index + 1}句对白。`));
+        expect(
+            result.shots
+                .map((shot) => shot.sourceText)
+                .join("")
+                .replace(/\s/g, ""),
+        ).toBe(script.replace(/\s/g, ""));
+    });
+
+    it("rejects a fake eight-second duration when one model shot contains 78 dialogue lines", () => {
+        const lines = Array.from({ length: 78 }, (_, index) => `角色${index + 1}说：“这是必须完整保留的第${index + 1}句对白。”`);
+        const script = lines.join("\n");
+        const result = normalizeDramaContentAnalysis(
+            {
+                episode: { outline: "长篇对白", hook: "", nextPreview: "", sourceRange: "第一章" },
+                characters: [],
+                scenes: [],
+                props: [],
+                clues: [],
+                shots: [
+                    {
+                        title: "模型错误合并的镜头",
+                        description: "模型只概括了开头",
+                        sourceText: lines[0],
+                        shotBoundary: "模型没有正确切镜",
+                        dialogue: "",
+                        narration: "",
+                        utterances: [],
+                        duration: 8,
+                        characterNames: [],
+                        sceneName: "",
+                        propNames: [],
+                        clueNames: [],
+                    },
+                ],
+            },
+            { defaultSeconds: 5, durationSeconds: [5, 8, 10, 15] },
+            script,
+        );
+
+        expect(result.shots.length).toBeGreaterThan(1);
+        expect(result.shots.every((shot) => [5, 8, 10, 15].includes(shot.duration))).toBe(true);
+        expect(result.shots.flatMap((shot) => shot.utterances.filter((item) => item.type === "dialogue").map((item) => item.text))).toEqual(lines.map((_, index) => `这是必须完整保留的第${index + 1}句对白。`));
+        expect(
+            result.shots
+                .map((shot) => shot.sourceText)
+                .join("")
+                .replace(/\s/g, ""),
+        ).toBe(script.replace(/\s/g, ""));
+        expect(new Set(result.shots.map((shot) => shot.description)).size).toBe(result.shots.length);
+    });
+
+    it("does not treat quoted place names as dialogue and requires explicit speakers", () => {
+        const script = [
+            "林照雪低声道：“忍着点，九幽冥毒深入髓海，过程会有些痛苦。”",
+            "二人来到“涤心池”，池水泛起灵光。",
+            "云舒咬紧牙关：“无妨，你尽管施为。”",
+            "剑意入体，她闷哼一声：“唔……”",
+        ].join("\n");
+        const base = {
+            episode: { outline: "疗毒", hook: "", nextPreview: "", sourceRange: "第二章" },
+            characters: [
+                { name: "林照雪", description: "施术者" },
+                { name: "云舒", description: "中毒者" },
+            ],
+            scenes: [],
+            props: [],
+            clues: [],
+        };
+        const shot = {
+            title: "竹海疗毒",
+            description: "林照雪为云舒疗毒",
+            sourceText: script,
+            shotBoundary: "连续疗毒过程",
+            dialogue: "",
+            narration: "",
+            duration: 15,
+            characterNames: ["林照雪", "云舒"],
+            sceneName: "涤心池",
+            propNames: [],
+            clueNames: [],
+        };
+        const invalid = {
+            ...base,
+            shots: [
+                {
+                    ...shot,
+                    utterances: [
+                        { type: "dialogue", speaker: "林照雪", text: "忍着点，九幽冥毒深入髓海，过程会有些痛苦。" },
+                        { type: "dialogue", speaker: "", text: "涤心池" },
+                        { type: "dialogue", speaker: "", text: "无妨，你尽管施为。" },
+                        { type: "dialogue", speaker: "她", text: "唔……" },
+                    ],
+                },
+            ],
+        };
+        const valid = {
+            ...base,
+            shots: [
+                {
+                    ...shot,
+                    utterances: [
+                        { type: "dialogue", speaker: "林照雪", text: "忍着点，九幽冥毒深入髓海，过程会有些痛苦。" },
+                        { type: "dialogue", speaker: "云舒", text: "无妨，你尽管施为。" },
+                        { type: "dialogue", speaker: "云舒", text: "唔……" },
+                    ],
+                },
+            ],
+        };
+
+        expect(hasCompleteDramaDialogueAttribution(JSON.stringify(invalid), script)).toBe(false);
+        expect(hasCompleteDramaDialogueAttribution(JSON.stringify(valid), script)).toBe(true);
+
+        const result = normalizeDramaContentAnalysis(valid, { defaultSeconds: 5, durationSeconds: [5, 8, 10, 15] }, script);
+        expect(result.shots.flatMap((item) => item.utterances.filter((utterance) => utterance.type === "dialogue").map((utterance) => [utterance.speaker, utterance.text]))).toEqual([
+            ["林照雪", "忍着点，九幽冥毒深入髓海，过程会有些痛苦。"],
+            ["云舒", "无妨，你尽管施为。"],
+            ["云舒", "唔……"],
+        ]);
     });
 
     it("only accepts visual fields for reviewed shot ids", () => {

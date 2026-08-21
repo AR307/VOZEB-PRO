@@ -20,7 +20,9 @@ export async function uploadServerMedia(input: string | Blob, type: ServerMediaT
     const originalName = input instanceof File ? input.name.trim() : "";
     if (!blob.size) throw new Error("上传文件为空");
     if (blob.size > maxBytes) throw new Error(maxBytes === CREATIVE_UPLOAD_MAX_BYTES ? "单个文件不能超过 20MB" : "生成媒体文件过大");
-    if (!isCreativeUploadMimeType(blob.type) || !blob.type.startsWith(`${type}/`)) throw new Error(`仅支持${type === "image" ? "图片" : type === "video" ? "视频" : "音频"}格式`);
+    const declaredMimeType = blob.type.split(";", 1)[0]?.trim().toLowerCase() || "";
+    const unknownMimeType = !declaredMimeType || declaredMimeType === "application/octet-stream";
+    if (!unknownMimeType && (!isCreativeUploadMimeType(declaredMimeType) || !declaredMimeType.startsWith(`${type}/`))) throw new Error(`仅支持${type === "image" ? "图片" : type === "video" ? "视频" : "音频"}格式`);
 
     const form = new FormData();
     form.append("type", type);

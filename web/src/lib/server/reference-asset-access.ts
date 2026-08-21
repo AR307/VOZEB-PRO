@@ -4,18 +4,25 @@ import { REFERENCE_ASSET_SIGNATURE_PURPOSE } from "@/lib/reference-asset-url";
 
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
 const SIGNED_URL_TTL_SECONDS = SIGNED_URL_TTL_MS / 1000;
+const GENERATION_ASSET_SIGNATURE_SCOPE = "generation";
 
 export function createSignedReferenceAssetUrl(token: string, origin: string, now = Date.now()) {
-    const secret = signingSecret();
-    const normalizedOrigin = normalizeOrigin(origin);
-    if (!secret || !normalizedOrigin || !token) return "";
-    const expires = Math.floor((now + SIGNED_URL_TTL_MS) / 1000);
-    const signature = sign(token, REFERENCE_ASSET_SIGNATURE_PURPOSE, expires, secret);
-    const path = token.split("/").map(encodeURIComponent).join("/");
-    return `${normalizedOrigin}/api/reference-assets/${path}?purpose=${REFERENCE_ASSET_SIGNATURE_PURPOSE}&expires=${expires}&signature=${signature}`;
+    return createSignedAssetUrl("reference-assets", token, token, origin, now);
+}
+
+export function createSignedGenerationAssetUrl(token: string, origin: string, now = Date.now()) {
+    return createSignedAssetUrl("generation-log-assets", token, scopedGenerationToken(token), origin, now);
 }
 
 export function signReferenceAssetInputUrl(value: string, origin: string, now = Date.now()) {
+    return signAssetInputUrl(value, "/api/reference-assets/", origin, (token) => createSignedReferenceAssetUrl(token, origin, now));
+}
+
+export function signGenerationAssetInputUrl(value: string, origin: string, now = Date.now()) {
+    return signAssetInputUrl(value, "/api/generation-log-assets/", origin, (token) => createSignedGenerationAssetUrl(token, origin, now));
+}
+
+function signAssetInputUrl(value: string, prefix: string, origin: string, createSignedUrl: (token: string) => string) {
     const raw = value.trim();
     if (!raw) return "";
     let url: URL;
@@ -24,17 +31,34 @@ export function signReferenceAssetInputUrl(value: string, origin: string, now = 
     } catch {
         return raw;
     }
-    const prefix = "/api/reference-assets/";
     if (!url.pathname.startsWith(prefix)) return raw;
     const token = url.pathname
         .slice(prefix.length)
         .split("/")
         .map((part) => decodeURIComponent(part))
         .join("/");
-    return createSignedReferenceAssetUrl(token, origin, now) || raw;
+    return createSignedUrl(token) || raw;
 }
 
 export function verifyReferenceAssetSignature(token: string, purpose: string | null, expiresValue: string | null, signature: string | null, now = Date.now()) {
+    return verifyAssetSignature(token, purpose, expiresValue, signature, now);
+}
+
+export function verifyGenerationAssetSignature(token: string, purpose: string | null, expiresValue: string | null, signature: string | null, now = Date.now()) {
+    return verifyAssetSignature(scopedGenerationToken(token), purpose, expiresValue, signature, now);
+}
+
+function createSignedAssetUrl(route: "reference-assets" | "generation-log-assets", token: string, signedToken: string, origin: string, now: number) {
+    const secret = signingSecret();
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (!secret || !normalizedOrigin || !token) return "";
+    const expires = Math.floor((now + SIGNED_URL_TTL_MS) / 1000);
+    const signature = sign(signedToken, REFERENCE_ASSET_SIGNATURE_PURPOSE, expires, secret);
+    const path = token.split("/").map(encodeURIComponent).join("/");
+    return `${normalizedOrigin}/api/${route}/${path}?purpose=${REFERENCE_ASSET_SIGNATURE_PURPOSE}&expires=${expires}&signature=${signature}`;
+}
+
+function verifyAssetSignature(token: string, purpose: string | null, expiresValue: string | null, signature: string | null, now: number) {
     const secret = signingSecret();
     const expires = Number(expiresValue);
     const nowSeconds = Math.floor(now / 1000);
@@ -42,6 +66,10 @@ export function verifyReferenceAssetSignature(token: string, purpose: string | n
     const expected = Buffer.from(sign(token, purpose, expires, secret));
     const actual = Buffer.from(signature);
     return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function scopedGenerationToken(token: string) {
+    return `${GENERATION_ASSET_SIGNATURE_SCOPE}\0${token}`;
 }
 
 function sign(token: string, purpose: string, expires: number, secret: string) {

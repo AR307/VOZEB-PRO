@@ -228,8 +228,8 @@ describe("CanvasNode error content", () => {
         const markup = renderImageNode({ data: reviewNode, onRetry: noop });
 
         expect(markup).toContain("上游创建状态待确认");
-        expect(markup).toContain("等待管理员确认");
-        expect(markup).toContain("重新检查处理结果");
+        expect(markup).toContain("等待状态确认");
+        expect(markup).toContain("检查状态");
         expect(markup).not.toContain(">重试<");
     });
 });

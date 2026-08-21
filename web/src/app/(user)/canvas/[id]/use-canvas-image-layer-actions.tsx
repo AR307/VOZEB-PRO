@@ -3,21 +3,19 @@
 import { useCallback, useRef } from "react";
 
 import { requestCanvasImageDecomposition } from "@/services/api/canvas-image-decomposition";
-import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
+import { canvasImageLayerSlotId } from "@/lib/canvas-image-decomposition";
 import { nanoid } from "nanoid";
 
 import { CanvasNodeType, type CanvasNodeData } from "../types";
-import { buildCanvasImageDecompositionData, splitSubjectAndBackgroundDataUrl } from "../utils/canvas-image-data";
-import { createLocalCanvasLayerNode, runCanvasBackgroundLayer, stableCanvasLayerSource } from "./canvas-image-layer-runtime";
-import { NODE_STATUS_LOADING } from "./canvas-page-elements";
-import { pauseCanvasGenerationReview } from "./canvas-generation-review";
-import { buildGenerationConfig, buildImageGenerationMetadata, imageMetadata, isGenerationCanceled, uploadCanvasImage } from "./canvas-page-utils";
+import { splitSubjectAndBackgroundDataUrl } from "../utils/canvas-image-data";
+import { withCanvasLayerAnalysisStatus } from "./canvas-image-layer-analysis-status";
+import { canvasEcommerceBackgroundPrompt, canvasEcommerceElementPrompt, createCanvasLayerTaskNode, runCanvasImageLayerTask, runCanvasImageLayerTaskBatch, stableCanvasLayerSource } from "./canvas-image-layer-runtime";
+import { buildGenerationConfig, imageMetadata, uploadCanvasImage } from "./canvas-page-utils";
 import type { CanvasPageState } from "./use-canvas-page-state";
 import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
 
 export function useCanvasImageLayerActions({ state, tasks }: { state: CanvasPageState; tasks: CanvasTaskRuntime }) {
     const { message, effectiveConfig, isAiConfigReady, nodes, openConfigDialog, setNodes, setConnections, setSelectedNodeIds, setSelectedConnectionId, setToolbarNodeId, setDialogNodeId, setRunningNodeId } = state;
-    const { startGenerationRequest, finishGenerationRequest, startAndCompleteImageTask } = tasks;
     const operationNodeIds = useRef(new Set<string>());
 
     const removeBackgroundImageNode = useCallback(
@@ -70,143 +68,75 @@ export function useCanvasImageLayerActions({ state, tasks }: { state: CanvasPage
             }
 
             const messageKey = `canvas-layers-${node.id}`;
+            const analysisMessageKey = `${messageKey}-analysis`;
             operationNodeIds.current.add(node.id);
-            message.loading({ key: messageKey, content: "正在识别并本地切割独立元素…", duration: 0 });
             try {
-                const source = await stableCanvasLayerSource(node, setNodes);
-                const decomposition = await requestCanvasImageDecomposition({ requestId: nanoid(), source: source.serverUrl || source.url || source.dataUrl });
-                if (decomposition.strategy === "subject") {
-                    const subject = await splitSubjectAndBackgroundDataUrl(node.metadata.content);
-                    const [foreground, mask] = await Promise.all([uploadCanvasImage(subject.foregroundBlob), uploadCanvasImage(subject.editMaskBlob)]);
-                    const foregroundNode = createLocalCanvasLayerNode(node, nanoid(), "主体", foreground, nodes);
-                    setNodes((current) => [...current, foregroundNode]);
-                    setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: foregroundNode.id }]);
-                    setSelectedNodeIds(new Set([foregroundNode.id]));
-                    setSelectedConnectionId(null);
-                    setToolbarNodeId(foregroundNode.id);
-                    const background = await runCanvasBackgroundLayer({
-                        sourceNode: node,
-                        source,
-                        config: { ...baseConfig, size: `${subject.width}x${subject.height}` },
-                        mask,
-                        validationMask: mask,
-                        prompt: "移除主体并自然补全被遮挡的背景，保持原图背景、构图、光线、色彩和尺寸，主体之外不要修改。",
-                        occupiedNodes: [...nodes, foregroundNode],
-                        messageKey,
-                        state,
-                        tasks,
-                    });
-                    if (background) message.success({ key: messageKey, content: "已生成独立主体和背景图层" });
-                    return;
-                }
-
-                const local = await buildCanvasImageDecompositionData(node.metadata.content, decomposition, ({ completed, total, name }) => {
-                    message.loading({ key: messageKey, content: `正在本地切割 ${name}（${completed}/${total}）…`, duration: 0 });
+                const { source, decomposition } = await withCanvasLayerAnalysisStatus(message, analysisMessageKey, async () => {
+                    const stableSource = await stableCanvasLayerSource(node, setNodes);
+                    const analysis = await requestCanvasImageDecomposition({ requestId: nanoid(), source: stableSource.serverUrl || stableSource.url || stableSource.dataUrl });
+                    return { source: stableSource, decomposition: analysis };
                 });
-                if (!local.layers.length) throw new Error("没有识别到可独立分层的元素");
-                const [mask, validationMask, uploadedLayers] = await Promise.all([
-                    uploadCanvasImage(local.editMaskBlob),
-                    uploadCanvasImage(local.validationMaskBlob),
-                    Promise.all(local.layers.map(async (layer) => ({ ...layer, image: await uploadCanvasImage(layer.blob) }))),
-                ]);
+                if (!decomposition.layers.length) throw new Error("没有识别到可独立分层的元素");
+                const config = { ...baseConfig, size: `${decomposition.width}x${decomposition.height}` };
                 const layerNodes: CanvasNodeData[] = [];
-                for (const { candidate, image } of uploadedLayers) {
-                    layerNodes.push(
-                        createLocalCanvasLayerNode(node, nanoid(), candidate.name, image, [...nodes, ...layerNodes], {
+                const layerPlans: Array<{ targetNode: CanvasNodeData; prompt: string; outputBackground?: "transparent"; layerBatch: { grant: string; slotId: string } }> = [];
+                for (const candidate of decomposition.layers) {
+                    const prompt = canvasEcommerceElementPrompt(candidate, decomposition);
+                    const layerNode = createCanvasLayerTaskNode(
+                        node,
+                        nanoid(),
+                        candidate.name,
+                        [...nodes, ...layerNodes],
+                        config,
+                        prompt,
+                        source,
+                        {
                             kind: candidate.kind,
                             bbox: candidate.bbox,
                             zIndex: candidate.zIndex,
                             groupId: candidate.groupId,
                             sourceWidth: decomposition.width,
                             sourceHeight: decomposition.height,
-                        }),
+                        },
+                        "transparent",
+                        { grant: decomposition.batchGrant, slotId: canvasImageLayerSlotId(candidate.id) },
                     );
+                    layerNodes.push(layerNode);
+                    layerPlans.push({ targetNode: layerNode, prompt, outputBackground: "transparent", layerBatch: { grant: decomposition.batchGrant, slotId: canvasImageLayerSlotId(candidate.id) } });
                 }
-                setNodes((current) => [...current, ...layerNodes]);
-                setConnections((current) => [...current, ...layerNodes.map((layer) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: layer.id }))]);
+                const backgroundPrompt = canvasEcommerceBackgroundPrompt(decomposition);
+                const backgroundBatch = { grant: decomposition.batchGrant, slotId: "background" };
+                const backgroundNode = createCanvasLayerTaskNode(node, nanoid(), "背景", [...nodes, ...layerNodes], config, backgroundPrompt, source, undefined, undefined, backgroundBatch);
+                const taskPlans = [...layerPlans, { targetNode: backgroundNode, prompt: backgroundPrompt, layerBatch: backgroundBatch }];
+                const taskNodes = [...layerNodes, backgroundNode];
+                setNodes((current) => [...current, ...taskNodes]);
+                setConnections((current) => [...current, ...taskNodes.map((layer) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: layer.id }))]);
                 setSelectedNodeIds(new Set(layerNodes.map((layer) => layer.id)));
                 setSelectedConnectionId(null);
-                setToolbarNodeId(layerNodes[0]?.id || null);
+                setToolbarNodeId(layerNodes[0]?.id || backgroundNode.id);
+                setRunningNodeId(node.id);
 
-                let completed = 0;
-                let failed = 0;
-                for (const [index, layerNode] of layerNodes.entries()) {
-                    const uploaded = uploadedLayers[index];
-                    const { bbox } = uploaded.candidate;
-                    const config = { ...baseConfig, size: `${local.width}x${local.height}` };
-                    const prompt = `从完整主图中精准提取“${uploaded.candidate.name}”为独立透明图层。目标位于原图 ${decomposition.width}x${decomposition.height} 坐标 x=${bbox.x}, y=${bbox.y}, width=${bbox.width}, height=${bbox.height}。只保留该完整元素，移除其余画面并输出真实透明 Alpha PNG；保持原有文字、颜色、结构、比例和清晰边缘，不得新增、重绘、改写或混入其他元素。`;
-                    setNodes((current) =>
-                        current.map((item) =>
-                            item.id === layerNode.id
-                                ? {
-                                      ...item,
-                                      metadata: {
-                                          ...item.metadata,
-                                          ...buildImageGenerationMetadata("edit", config, 1, [source]),
-                                          prompt,
-                                          status: NODE_STATUS_LOADING,
-                                          imageOutputBackground: "transparent",
-                                          errorDetails: undefined,
-                                      },
-                                  }
-                                : item,
-                        ),
-                    );
-                    message.loading({ key: messageKey, content: `正在请求 ${uploaded.candidate.name}（${index + 1}/${layerNodes.length}）…`, duration: 0 });
-                    const controller = startGenerationRequest(layerNode.id, node.id, layerNode.id);
-                    setRunningNodeId(layerNode.id);
-                    try {
-                        await startAndCompleteImageTask(layerNode.id, config, prompt, [source], undefined, controller, { outputBackground: "transparent" });
-                        completed += 1;
-                    } catch (error) {
-                        if (isGenerationCanceled(error)) {
-                            message.destroy(messageKey);
-                            setNodes((current) => current.map((item) => (item.id === layerNode.id ? { ...item, metadata: { ...item.metadata, status: "success", imageTask: undefined, errorDetails: undefined } } : item)));
-                            return;
-                        }
-                        failed += 1;
-                        const errorDetails = error instanceof Error ? error.message : `${uploaded.candidate.name}分层失败`;
-                        if (isGenerationTaskNeedsReviewError(error)) setNodes((current) => pauseCanvasGenerationReview(current, [layerNode.id], errorDetails));
-                        else
-                            setNodes((current) =>
-                                current.map((item) =>
-                                    item.id === layerNode.id
-                                        ? {
-                                              ...item,
-                                              metadata: {
-                                                  ...item.metadata,
-                                                  status: "success",
-                                                  imageTask: undefined,
-                                                  errorDetails: `上游精修失败，已保留本地切割：${errorDetails}`,
-                                              },
-                                          }
-                                        : item,
-                                ),
-                            );
-                    } finally {
-                        finishGenerationRequest(layerNode.id, controller);
-                        setRunningNodeId(null);
-                    }
-                }
-
-                const preservedVisuals = decomposition.backgroundPreservedVisuals.length ? `必须保留这些背景内嵌视觉：${decomposition.backgroundPreservedVisuals.join("、")}。` : "";
-                const backgroundPrompt = `移除蒙版覆盖的全部独立前景元素并自然补全被遮挡的背景，保持原图背景、构图、光线、色彩和尺寸，蒙版外不要修改。${preservedVisuals}${decomposition.backgroundDescription ? `背景应延续：${decomposition.backgroundDescription}` : ""}`;
-                const background = await runCanvasBackgroundLayer({
-                    sourceNode: node,
-                    source,
-                    config: { ...baseConfig, size: `${local.width}x${local.height}` },
-                    mask,
-                    validationMask,
-                    prompt: backgroundPrompt,
-                    occupiedNodes: [...nodes, ...layerNodes],
-                    messageKey,
-                    state,
-                    tasks,
-                });
-                if (!background) failed += 1;
-                const resultText = `${completed} 个元素已完成${background ? "，背景已补全" : ""}`;
-                if (failed) message.warning({ key: messageKey, content: `${resultText}，${failed} 项失败，可保留本地切割结果` });
-                else message.success({ key: messageKey, content: resultText });
+                const settled = await runCanvasImageLayerTaskBatch(taskPlans, source, (plan, stableSource) =>
+                    runCanvasImageLayerTask({
+                        sourceNode: node,
+                        targetNode: plan.targetNode,
+                        source: stableSource,
+                        config,
+                        prompt: plan.prompt,
+                        outputBackground: plan.outputBackground,
+                        layerBatch: plan.layerBatch,
+                        state,
+                        tasks,
+                    }),
+                );
+                const outcomes = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : ["failed" as const]));
+                const completed = outcomes.filter((outcome) => outcome === "completed").length;
+                const needsReview = outcomes.filter((outcome) => outcome === "needs_review").length;
+                const failed = outcomes.filter((outcome) => outcome === "failed").length;
+                const cancelled = outcomes.filter((outcome) => outcome === "cancelled").length;
+                if (needsReview || failed) message.warning({ key: messageKey, content: `已完成 ${completed} 项，${needsReview ? `${needsReview} 项待检查` : ""}${needsReview && failed ? "，" : ""}${failed ? `${failed} 项失败` : ""}` });
+                else if (cancelled) message.info({ key: messageKey, content: `已完成 ${completed} 项，其余任务已停止` });
+                else message.success({ key: messageKey, content: `${layerNodes.length} 个独立元素和背景已完成` });
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "分层失败";
                 message.error({ key: messageKey, content: errorDetails });
@@ -215,24 +145,7 @@ export function useCanvasImageLayerActions({ state, tasks }: { state: CanvasPage
                 setRunningNodeId(null);
             }
         },
-        [
-            effectiveConfig,
-            finishGenerationRequest,
-            isAiConfigReady,
-            message,
-            nodes,
-            openConfigDialog,
-            setConnections,
-            setNodes,
-            setRunningNodeId,
-            setSelectedConnectionId,
-            setSelectedNodeIds,
-            setToolbarNodeId,
-            startAndCompleteImageTask,
-            startGenerationRequest,
-            state,
-            tasks,
-        ],
+        [effectiveConfig, isAiConfigReady, message, nodes, openConfigDialog, setConnections, setNodes, setRunningNodeId, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId, state, tasks],
     );
 
     return { removeBackgroundImageNode, splitImageLayers };

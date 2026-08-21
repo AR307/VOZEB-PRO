@@ -10,7 +10,7 @@ import { createCreativeConversation, getCreativeConversation, listCreativeConver
 import { createDramaProject, deleteDramaProject, DramaProjectStoreError, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
-import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
+import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
 
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024;
 
@@ -131,7 +131,7 @@ export async function deleteDramaProjectForUser(userId: string, id: string) {
     const deleted = await deleteDramaProject(userId, projectId);
     if (!deleted) throw new DramaProjectServiceError("短剧项目不存在", 404);
     if (current?.creativeConversationId) await updateCreativeConversation(current.creativeConversationId, userId, { status: "archived" });
-    if (current) await deleteUserLocalMediaAssets(userId, collectLocalMediaStorageKeys(current));
+    if (current) await deleteUserMediaAssetsCascade(userId, collectLocalMediaStorageKeys(current));
 }
 
 export async function deleteDramaAgentConversationForUser(userId: string, projectIdValue: string, conversationIdValue: unknown) {
@@ -164,7 +164,7 @@ export async function deleteDramaAgentConversationForUser(userId: string, projec
         if (error instanceof CreativeEntityDeletionConflict) throw new DramaProjectServiceError(error.message, 409);
         throw error;
     }
-    await deleteUserLocalMediaAssets(userId, result.mediaStorageKeys);
+    await deleteUserMediaAssetsCascade(userId, result.mediaStorageKeys);
     const updatedProject = result.dramaProject || project;
     return { deleted: result.deletedConversations > 0, activeConversationId: updatedProject.creativeConversationId || "", project: updatedProject };
 }

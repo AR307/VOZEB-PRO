@@ -1,7 +1,7 @@
 import type { SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { LogicalModelCapability } from "@/lib/auth/store";
 import { channelProtocolDefinition, protocolModelConfig } from "@/lib/channel-protocol-registry";
-import { hasProviderReadSignatureShape, isReferenceAssetUrl } from "@/lib/reference-asset-url";
+import { hasProviderReadSignatureShape, isProviderMediaAssetUrl } from "@/lib/reference-asset-url";
 import type { VideoGenerationReference, VideoReferenceRole } from "@/lib/video-reference-contract";
 
 type TemplateValues = Record<string, unknown>;
@@ -48,7 +48,7 @@ export function assertReferenceUrls(config: SystemChannelAdvancedConfig | undefi
 }
 
 function isUnsignedReferenceAssetUrl(value: string) {
-    return isReferenceAssetUrl(value) && !hasProviderReadSignatureShape(value);
+    return isProviderMediaAssetUrl(value) && !hasProviderReadSignatureShape(value);
 }
 
 function renderProviderRequest(template: string, values: TemplateValues, align?: (payload: Record<string, unknown>, values: TemplateValues) => Record<string, unknown>) {

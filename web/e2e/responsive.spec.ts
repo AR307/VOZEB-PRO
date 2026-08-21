@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
 import { billingProductsFixture, expectDialogWithinViewport, expectNoHorizontalOverflow, masonryGalleryFixture, masonryLayoutIsReady, openCreativeHistory, readMasonryLayout } from "./responsive-helpers";
 
@@ -1308,6 +1308,8 @@ test("admin user editor groups permission controls and keeps the footer visible"
 
 test("conversation and Canvas deletion stay deleted after refresh", async ({ page, request }) => {
     const suffix = randomUUID().slice(0, 8);
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
     const conversationTitles = [`删除回归 A ${suffix}`, `删除回归 B ${suffix}`, `删除回归 C ${suffix}`];
     const conversations = await Promise.all(
         conversationTitles.map(async (title) => {
@@ -1316,6 +1318,7 @@ test("conversation and Canvas deletion stay deleted after refresh", async ({ pag
             return ((await response.json()) as { data: { conversation: { id: string } } }).data.conversation;
         }),
     );
+    const conversationMedia = await uploadCreativeDeletionFixture(request, conversations[0].id, `conversation-${suffix}.png`);
 
     await page.goto(`/create?conversationId=${encodeURIComponent(conversations[0].id)}`, { waitUntil: "domcontentloaded" });
     let historyDialog = await openCreativeHistory(page);
@@ -1329,6 +1332,7 @@ test("conversation and Canvas deletion stay deleted after refresh", async ({ pag
     await conversationDialog.getByRole("button", { name: /删\s*除/ }).click();
     await expect(historyDialog.getByText(conversationTitles[0], { exact: true })).toBeHidden();
     expect((await request.get(`/api/creative/conversations/${conversations[0].id}`)).status()).toBe(404);
+    expect((await request.get(conversationMedia.serverUrl)).status()).toBe(404);
 
     await historyDialog.getByRole("button", { name: "批量管理" }).click();
     await historyDialog.getByRole("checkbox", { name: `选择${conversationTitles[1]}` }).check();
@@ -1345,7 +1349,26 @@ test("conversation and Canvas deletion stay deleted after refresh", async ({ pag
     for (const title of conversationTitles) await expect(historyDialog.getByText(title, { exact: true })).toHaveCount(0);
 
     const canvasTitle = `删除画布回归 ${suffix}`;
-    const canvasResponse = await request.post("/api/canvas/projects", { data: { title: canvasTitle, project: { nodes: [], connections: [] } } });
+    const canvasMedia = await uploadReferenceDeletionFixture(request, `canvas-${suffix}.png`);
+    const canvasResponse = await request.post("/api/canvas/projects", {
+        data: {
+            title: canvasTitle,
+            project: {
+                nodes: [
+                    {
+                        id: `image-${suffix}`,
+                        type: "image",
+                        title: "待删除图片",
+                        position: { x: 80, y: 80 },
+                        width: 240,
+                        height: 160,
+                        metadata: { content: canvasMedia.url, serverUrl: canvasMedia.url, storageKey: canvasMedia.storageKey, mimeType: "image/png", status: "success" },
+                    },
+                ],
+                connections: [],
+            },
+        },
+    });
     expect(canvasResponse.ok(), await canvasResponse.text()).toBe(true);
     const canvasProject = ((await canvasResponse.json()) as { data: { project: { id: string; creativeConversationId: string } } }).data.project;
     await page.goto("/canvas", { waitUntil: "domcontentloaded" });
@@ -1361,7 +1384,38 @@ test("conversation and Canvas deletion stay deleted after refresh", async ({ pag
     await expect(page.getByText(canvasTitle, { exact: true })).toHaveCount(0);
     expect((await request.get(`/api/canvas/projects/${canvasProject.id}`)).status()).toBe(404);
     expect((await request.get(`/api/creative/conversations/${canvasProject.creativeConversationId}`)).status()).toBe(404);
+    expect((await request.get(canvasMedia.url)).status()).toBe(404);
+    await expect(page.locator(".ant-message-error, .ant-notification-notice-error")).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
 });
+
+async function uploadCreativeDeletionFixture(request: APIRequestContext, conversationId: string, name: string) {
+    const response = await request.post("/api/creative/assets", {
+        multipart: {
+            conversationId,
+            file: { name, mimeType: "image/png", buffer: deletionFixturePng() },
+        },
+    });
+    expect(response.ok(), await response.text()).toBe(true);
+    return ((await response.json()) as { data: { asset: { serverUrl: string; storageKey: string } } }).data.asset;
+}
+
+async function uploadReferenceDeletionFixture(request: APIRequestContext, name: string) {
+    const response = await request.post("/api/reference-assets", {
+        multipart: {
+            type: "image",
+            persistent: "true",
+            file: { name, mimeType: "image/png", buffer: deletionFixturePng() },
+        },
+    });
+    expect(response.ok(), await response.text()).toBe(true);
+    const result = (await response.json()) as { url: string; key: string };
+    return { url: result.url, storageKey: result.key };
+}
+
+function deletionFixturePng() {
+    return Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XcX9WQAAAABJRU5ErkJggg==", "base64");
+}
 
 test("eight billing plans remain dense and usable across desktop and mobile", async ({ page }, testInfo) => {
     await page.route("**/api/billing/products", (route) =>

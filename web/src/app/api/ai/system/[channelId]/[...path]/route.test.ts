@@ -33,7 +33,9 @@ vi.mock("@/lib/server/security", () => ({
 }));
 
 import { GET, maxDuration, POST, PUT } from "./route";
+import { CREATIVE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
+import { SYSTEM_PROXY_JSON_BODY_MAX_BYTES } from "@/lib/server/system-proxy-request-limits";
 import { systemAiBillingHeaders, systemAiPointsIdempotencyKey } from "@/lib/server/system-ai-billing";
 
 const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_media"] }) };
@@ -41,6 +43,10 @@ const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_m
 describe("system generation proxy runtime", () => {
     it("keeps long image and video submissions alive beyond the framework default", () => {
         expect(maxDuration).toBeGreaterThanOrEqual(40 * 60);
+    });
+
+    it("accepts the JSON expansion of one maximum-size visual reference", () => {
+        expect(SYSTEM_PROXY_JSON_BODY_MAX_BYTES).toBeGreaterThan(Math.ceil((CREATIVE_UPLOAD_MAX_BYTES * 4) / 3));
     });
 });
 
@@ -482,6 +488,27 @@ describe("Stable Diffusion proxy", () => {
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://sd.example.com/sdapi/v1/txt2img");
         expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
+    });
+
+    it("forwards a visual JSON body larger than the former four-megabyte ceiling", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ images: ["image-base64"] }));
+        const body = JSON.stringify({ prompt: "layer this image", init_images: ["A".repeat(5 * 1024 * 1024)] });
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/sdapi/v1/txt2img", {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "x-vozeb-pro-logical-model": "image-local",
+                    "x-vozeb-pro-upstream-model": "sdxl",
+                },
+                body,
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["sdapi", "v1", "txt2img"] }) },
+        );
+
+        expect(new TextEncoder().encode(body).byteLength).toBeGreaterThan(4 * 1024 * 1024);
+        expect(response.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledOnce();
     });
 });
 

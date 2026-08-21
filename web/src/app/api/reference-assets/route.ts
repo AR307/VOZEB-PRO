@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { fileTypeFromBuffer } from "file-type";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { CREATIVE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
+import { CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import { writePersistentMediaDataUrl, writeReferenceMediaDataUrl } from "@/lib/server/reference-asset-store";
 import { readJsonBodyResult } from "@/lib/auth/request";
 import { createSignedReferenceAssetUrl } from "@/lib/server/reference-asset-access";
@@ -62,8 +63,9 @@ async function readUploadInput(request: Request): Promise<UploadInput> {
         if (!(file instanceof File) || !file.size) throw new UploadInputError("缺少参考素材");
         if (file.size > CREATIVE_UPLOAD_MAX_BYTES) throw new RequestBodyTooLargeError("单个文件不能超过 20MB");
         const type = mediaType(form.get("type"));
-        if (!file.type.startsWith(`${type}/`)) throw new UploadInputError("参考素材格式不正确");
-        const dataUrl = `data:${file.type};base64,${Buffer.from(await file.arrayBuffer()).toString("base64")}`;
+        const bytes = Buffer.from(await file.arrayBuffer());
+        const mimeType = await resolveMultipartMimeType(bytes, type, file.type);
+        const dataUrl = `data:${mimeType};base64,${bytes.toString("base64")}`;
         return { dataUrl, type, persistent: String(form.get("persistent") || "") === "true", originalName: file.name || undefined };
     }
 
@@ -77,6 +79,17 @@ async function readUploadInput(request: Request): Promise<UploadInput> {
         persistent: result.data.persistent === true,
         originalName: typeof result.data.originalName === "string" ? result.data.originalName : undefined,
     };
+}
+
+async function resolveMultipartMimeType(bytes: Buffer, type: UploadInput["type"], declaredMime: string) {
+    const detectedMime = (await fileTypeFromBuffer(bytes))?.mime?.toLowerCase() || "";
+    if (detectedMime) {
+        if (!isCreativeUploadMimeType(detectedMime) || !detectedMime.startsWith(`${type}/`)) throw new UploadInputError("参考素材格式不正确");
+        return detectedMime;
+    }
+    const normalizedDeclaredMime = declaredMime.split(";", 1)[0]?.trim().toLowerCase() || "";
+    if (!isCreativeUploadMimeType(normalizedDeclaredMime) || !normalizedDeclaredMime.startsWith(`${type}/`)) throw new UploadInputError("参考素材格式不正确");
+    return normalizedDeclaredMime;
 }
 
 function mediaType(value: FormDataEntryValue | unknown): UploadInput["type"] {

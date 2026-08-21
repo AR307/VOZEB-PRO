@@ -39,7 +39,7 @@ describe("canvas image decomposition route", () => {
         const response = await POST(request({ requestId: "request-one", source: "/api/reference-assets/source.png" }));
 
         expect(response.status).toBe(200);
-        await expect(response.json()).resolves.toEqual({ code: 0, data: decomposition, msg: "OK" });
+        await expect(response.json()).resolves.toMatchObject({ code: 0, data: { ...decomposition, batchGrant: expect.any(String) }, msg: "OK" });
         expect(mocks.decomposeCanvasImage).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", requestId: "request-one", source: "/api/reference-assets/source.png" }));
     });
 

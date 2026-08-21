@@ -84,6 +84,8 @@ export function createCanvasResourceReferenceIndex(nodes: CanvasNodeData[], conn
     };
 }
 
+export type CanvasResourceReferenceIndex = ReturnType<typeof createCanvasResourceReferenceIndex>;
+
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
     const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
     return nodes.flatMap((node): CanvasResourceReference[] => {

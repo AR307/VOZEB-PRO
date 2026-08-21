@@ -29,6 +29,7 @@ import {
     Quote,
     Redo2,
     RemoveFormatting,
+    ReplaceAll,
     Search,
     Strikethrough,
     UnderlineIcon,
@@ -277,13 +278,34 @@ export function DramaRichScriptEditor({
                 <span className="ml-auto shrink-0 px-2 text-[11px] tabular-nums text-muted-foreground">{episode.script.length.toLocaleString("zh-CN")} 字</span>
             </div>
             <EditorContent editor={editor} className="hide-scrollbar min-h-0 flex-1 overflow-y-auto bg-card/35" />
-            <Modal title="查找替换" open={searchOpen} width={420} centered destroyOnHidden okText="全部替换" cancelText="关闭" okButtonProps={{ disabled: !searchText }} onCancel={() => setSearchOpen(false)} onOk={replaceAll}>
-                <div className="space-y-3 py-1">
-                    <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="查找内容" aria-label="查找内容" onPressEnter={findNext} />
-                    <Input value={replaceText} onChange={(event) => setReplaceText(event.target.value)} placeholder="替换为" aria-label="替换为" />
-                    <Button icon={<Search className="size-3.5" />} disabled={!searchText} onClick={findNext}>
+            <Modal
+                title="查找与替换"
+                open={searchOpen}
+                width={480}
+                centered
+                destroyOnHidden
+                onCancel={() => setSearchOpen(false)}
+                footer={[
+                    <Button key="close" onClick={() => setSearchOpen(false)}>
+                        关闭
+                    </Button>,
+                    <Button key="find" icon={<Search className="size-3.5" />} disabled={!searchText} onClick={findNext}>
                         查找下一个
-                    </Button>
+                    </Button>,
+                    <Button key="replace" type="primary" icon={<ReplaceAll className="size-3.5" />} disabled={!searchText} onClick={replaceAll}>
+                        全部替换
+                    </Button>,
+                ]}
+            >
+                <div className="grid gap-4 py-1" data-drama-search-dialog>
+                    <label className="grid gap-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">查找</span>
+                        <Input autoFocus allowClear prefix={<Search className="size-4 text-muted-foreground" />} value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="输入要查找的内容" aria-label="查找内容" onPressEnter={findNext} />
+                    </label>
+                    <label className="grid gap-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">替换为</span>
+                        <Input allowClear prefix={<ReplaceAll className="size-4 text-muted-foreground" />} value={replaceText} onChange={(event) => setReplaceText(event.target.value)} placeholder="输入替换后的内容" aria-label="替换为" onPressEnter={replaceAll} />
+                    </label>
                 </div>
             </Modal>
         </section>

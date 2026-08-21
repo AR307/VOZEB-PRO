@@ -18,6 +18,7 @@ import { isGenerationSource, recordGenerationLog } from "@/lib/server/generation
 import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
 import { resolveImageTaskOptions } from "@/lib/server/image-task-config";
 import { generationCapacityRetryAfterSeconds, getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
+import { verifyCanvasImageLayerGrant } from "@/lib/server/canvas-image-layer-grant";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
@@ -150,75 +151,85 @@ export async function POST(request: Request) {
         const existing = await getStoredGenerationTaskByRequest<ImageTask>("image", currentUser.id, requestId, resolvedBody.context?.attemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
-    const concurrencyRequestId = requestId || `image-request:${currentUser.id}:${crypto.randomUUID()}`;
-    resolvedBody.context = { ...(resolvedBody.context || {}), clientRequestId: concurrencyRequestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
+    const layerGrant = resolveCanvasLayerGrant(resolvedBody, currentUser.id);
+    if (resolvedBody.layerBatch && !layerGrant) return NextResponse.json({ error: "图片分层批次凭证无效，请重新发起分层" }, { status: 400 });
+    const concurrencyRequestId = layerGrant?.requestId || requestId || `image-request:${currentUser.id}:${crypto.randomUUID()}`;
+    resolvedBody.context = {
+        ...(resolvedBody.context || {}),
+        clientRequestId: concurrencyRequestId,
+        ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}),
+        ...(layerGrant ? { concurrencyClass: "canvas-layer" as const } : {}),
+    };
     const settings = await getAuthSettings();
-    const response = await withGenerationConcurrencyLimit(
-        currentUser.id,
-        "image",
-        10 * 60 * 1000,
-        settings.generationConcurrency.image,
-        async () => {
-            const configs = sanitizeConfigs(resolvedBody.config, settings);
-            const prompt = (resolvedBody.prompt || "").trim();
-            const kind = resolvedBody.kind === "edit" ? "edit" : "generation";
-            if (!configs.length || !prompt) return NextResponse.json({ error: "任务参数不完整" }, { status: 400 });
-            const references = Array.isArray(resolvedBody.references) ? resolvedBody.references.filter((item) => Boolean(item?.dataUrl || item?.url || item?.remoteUrl || item?.serverUrl)) : [];
-            const constrainedConfigs = configs.filter((config) => {
-                try {
-                    assertCapabilityConstraints(config.capabilityProfile, {
-                        capability: "image",
-                        referenceCount: references.length,
-                        aspectRatio: config.size,
-                        resolution: config.quality,
-                    });
-                    return true;
-                } catch {
-                    return false;
-                }
-            });
-            const compatibleConfigs = constrainedConfigs.filter((config) => {
-                try {
-                    assertReferenceCapabilities(config.advancedConfig, [...references.map(() => ({ type: "image" })), ...(resolvedBody.mask ? [{ type: "image" }] : [])]);
-                    return true;
-                } catch {
-                    return false;
-                }
-            });
-            if (!compatibleConfigs.length) return NextResponse.json({ error: "当前模型能力不满足参考素材、比例或分辨率参数" }, { status: 400 });
-            const config = compatibleConfigs[0];
-            if (config.outputMode === "layers" && (kind !== "edit" || references.length !== 1)) {
-                return NextResponse.json({ error: "电商分层需要且只能使用一张源图" }, { status: 400 });
+    const createTask = async () => {
+        const configs = sanitizeConfigs(resolvedBody.config, settings);
+        const prompt = (resolvedBody.prompt || "").trim();
+        const kind = resolvedBody.kind === "edit" ? "edit" : "generation";
+        if (!configs.length || !prompt) return NextResponse.json({ error: "任务参数不完整" }, { status: 400 });
+        const references = Array.isArray(resolvedBody.references) ? resolvedBody.references.filter((item) => Boolean(item?.dataUrl || item?.url || item?.remoteUrl || item?.serverUrl)) : [];
+        const constrainedConfigs = configs.filter((config) => {
+            try {
+                assertCapabilityConstraints(config.capabilityProfile, {
+                    capability: "image",
+                    referenceCount: references.length,
+                    aspectRatio: config.size,
+                    resolution: config.quality,
+                });
+                return true;
+            } catch {
+                return false;
             }
-            const task = await createImageTask({
-                ...(resolvedBody.context || {}),
-                userId: currentUser.id,
-                username: currentUser.username,
-                displayName: currentUser.displayName,
-                kind,
-                source: isGenerationSource(resolvedBody.source) ? resolvedBody.source : "image-workbench",
-                title: typeof resolvedBody.title === "string" ? resolvedBody.title : "",
-                config,
-                candidateConfigs: compatibleConfigs.slice(1),
-                prompt,
-                references,
-                mask: resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl ? resolvedBody.mask : undefined,
-            });
-            await linkStoredGenerationTask("image", task.id, resolvedBody.context || {});
-            const cookie = request.headers.get("cookie") || "";
-            const origin = resolveInternalOrigin(new URL(request.url).origin);
-            const publicOrigin = requestPublicOrigin(request);
-            await scheduleGenerationTask("image", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });
-            after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin, cookie, limit: 1, taskIds: [task.id] }));
+        });
+        const compatibleConfigs = constrainedConfigs.filter((config) => {
+            try {
+                assertReferenceCapabilities(config.advancedConfig, [...references.map(() => ({ type: "image" })), ...(resolvedBody.mask ? [{ type: "image" }] : [])]);
+                return true;
+            } catch {
+                return false;
+            }
+        });
+        if (!compatibleConfigs.length) return NextResponse.json({ error: "当前模型能力不满足参考素材、比例或分辨率参数" }, { status: 400 });
+        const config = compatibleConfigs[0];
+        if (config.outputMode === "layers" && (kind !== "edit" || references.length !== 1)) {
+            return NextResponse.json({ error: "电商分层需要且只能使用一张源图" }, { status: 400 });
+        }
+        const task = await createImageTask({
+            ...(resolvedBody.context || {}),
+            userId: currentUser.id,
+            username: currentUser.username,
+            displayName: currentUser.displayName,
+            kind,
+            source: isGenerationSource(resolvedBody.source) ? resolvedBody.source : "image-workbench",
+            title: typeof resolvedBody.title === "string" ? resolvedBody.title : "",
+            config,
+            candidateConfigs: compatibleConfigs.slice(1),
+            prompt,
+            references,
+            mask: resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl ? resolvedBody.mask : undefined,
+        });
+        await linkStoredGenerationTask("image", task.id, resolvedBody.context || {});
+        const cookie = request.headers.get("cookie") || "";
+        const origin = resolveInternalOrigin(new URL(request.url).origin);
+        const publicOrigin = requestPublicOrigin(request);
+        await scheduleGenerationTask("image", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });
+        after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin, cookie, limit: 1, taskIds: [task.id] }));
 
-            return NextResponse.json({ task: publicTask(task) });
-        },
-        undefined,
-        concurrencyRequestId,
-    );
+        return NextResponse.json({ task: publicTask(task) });
+    };
+    const response = layerGrant ? await createTask() : await withGenerationConcurrencyLimit(currentUser.id, "image", 10 * 60 * 1000, settings.generationConcurrency.image, createTask, undefined, concurrencyRequestId);
     if (response) return response;
     const retryAfter = await generationCapacityRetryAfterSeconds(currentUser.id, "image", 10 * 60 * 1000);
     return NextResponse.json({ error: "当前用户生图任务已达到并发上限，请稍后再试" }, { status: 429, ...(retryAfter ? { headers: { "Retry-After": String(retryAfter) } } : {}) });
+}
+
+function resolveCanvasLayerGrant(body: CreateImageTaskBody, userId: string) {
+    if (body.source !== "canvas" || body.kind !== "edit" || body.context?.surface !== "canvas" || !Array.isArray(body.references) || body.references.length !== 1) return null;
+    const sourceCandidates = [body.references[0]?.serverUrl, body.references[0]?.url, body.references[0]?.remoteUrl, body.references[0]?.dataUrl].filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
+    for (const source of sourceCandidates) {
+        const verified = verifyCanvasImageLayerGrant({ userId, source, batch: body.layerBatch, outputBackground: body.config?.outputBackground });
+        if (verified) return verified;
+    }
+    return null;
 }
 
 function positiveAttemptNo(value: string | null) {

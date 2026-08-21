@@ -318,6 +318,34 @@ function toolArguments(name, payload) {
         };
     }
     if (name === "create_agent_plan") {
+        if (plannerGenerationMode(payload) === "video") {
+            return {
+                intent: "generation",
+                objective: "验证视频工作台完整生成链路",
+                audience: "协议测试用户",
+                reply: "已收到，我会生成一段协议测试视频。",
+                decisions: [{ label: "视频模型", value: "e2e-video", reason: "使用本地协议测试模型" }],
+                foundation: {
+                    complexity: "simple",
+                    brief: { objective: "验证视频工作台完整生成链路" },
+                    direction: { summary: "清晰的蓝色横版测试视频" },
+                },
+                deliverables: [
+                    {
+                        id: "fixture-video",
+                        title: "协议测试视频",
+                        type: "video",
+                        model: "e2e-video",
+                        prompt: "内部协议视频执行提示：镜头缓慢推进",
+                        count: 1,
+                        ratio: "16:9",
+                        quality: "720",
+                        seconds: 5,
+                        dependencies: [],
+                    },
+                ],
+            };
+        }
         const imageAndVideo = /图片.*视频|视频.*图片/.test(plannerRequestText(payload));
         if (imageAndVideo) {
             return {
@@ -449,6 +477,15 @@ function plannerRequestText(payload) {
     const userMessage = messages.findLast((message) => message?.role === "user");
     const content = userMessage?.content ?? (typeof payload.input === "string" ? payload.input : "");
     return typeof content === "string" ? content : JSON.stringify(content);
+}
+
+function plannerGenerationMode(payload) {
+    try {
+        const value = JSON.parse(plannerRequestText(payload));
+        return ["image", "video", "audio"].includes(value?.generationPreferences?.mode) ? value.generationPreferences.mode : "";
+    } catch {
+        return "";
+    }
 }
 
 function imageRequestDimensions(payload) {

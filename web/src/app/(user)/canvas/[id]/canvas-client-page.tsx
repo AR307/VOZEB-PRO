@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Modal } from "antd";
 import { imagePreviewUrl } from "@/lib/media-image-url";
@@ -45,6 +45,8 @@ function VozebProCanvasPage() {
     const [nodeCreatePosition, setNodeCreatePosition] = useState<Position | null>(null);
     const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>("pan");
     const controller = useCanvasPageController();
+    const hoverCommitHandleRef = useRef<number | null>(null);
+    const queuedHoveredNodeIdRef = useRef<string | null>(null);
     const {
         message,
         modal,
@@ -87,6 +89,7 @@ function VozebProCanvasPage() {
         setChatSessions,
         activeChatId,
         setActiveChatId,
+        setSize,
         viewport,
         setViewport,
         selectedNodeIds,
@@ -268,6 +271,25 @@ function VozebProCanvasPage() {
         openAgent,
         closeAgent,
     } = controller;
+    const scheduleHoveredNode = (nodeId: string | null) => {
+        queuedHoveredNodeIdRef.current = nodeId;
+        if (hoverCommitHandleRef.current !== null) return;
+        const commit = () => {
+            hoverCommitHandleRef.current = null;
+            setHoveredNodeId(queuedHoveredNodeIdRef.current);
+        };
+        const requestIdle = (window as Window & { requestIdleCallback?: (callback: () => void) => number }).requestIdleCallback;
+        hoverCommitHandleRef.current = requestIdle ? requestIdle(commit) : requestAnimationFrame(commit);
+    };
+    useEffect(
+        () => () => {
+            if (hoverCommitHandleRef.current === null) return;
+            const cancelIdle = (window as Window & { cancelIdleCallback?: (handle: number) => void }).cancelIdleCallback;
+            if (cancelIdle) cancelIdle(hoverCommitHandleRef.current);
+            else cancelAnimationFrame(hoverCommitHandleRef.current);
+        },
+        [],
+    );
     const hiddenCanvasNodeIds = useMemo(() => new Set(nodes.filter((node) => isHiddenBatchChild(node, nodes, collapsingBatchIds)).map((node) => node.id)), [collapsingBatchIds, nodes]);
     if (!projectLoaded) return <CanvasRefreshShell />;
     return (
@@ -327,10 +349,10 @@ function VozebProCanvasPage() {
                     nodeProps={{
                         onHoverStart: (nodeId) => {
                             if (nodeDraggingRef.current) return;
-                            setHoveredNodeId(nodeId);
+                            scheduleHoveredNode(nodeId);
                         },
                         onHoverEnd: (nodeId) => {
-                            setHoveredNodeId((current) => (current === nodeId ? null : current));
+                            if (queuedHoveredNodeIdRef.current === nodeId) scheduleHoveredNode(null);
                         },
                         onContentChange: handleNodeContentChange,
                         onToggleBatch: toggleBatchExpanded,
@@ -451,6 +473,7 @@ function VozebProCanvasPage() {
                         setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: id });
                     }}
                     onDrop={(event) => handleDrop(event as React.DragEvent<HTMLDivElement>)}
+                    onSizeChange={setSize}
                     onDragStateChange={(dragging) => {
                         nodeDraggingRef.current = dragging;
                         setIsNodeDragging(dragging);

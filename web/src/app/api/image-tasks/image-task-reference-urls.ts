@@ -1,7 +1,8 @@
 import type { ImageTaskReference } from "@/lib/server/image-task-store";
 import { isRemoteMediaUrl } from "@/lib/browser-media-url";
+import { canAccessGenerationAsset } from "@/lib/server/generation-log-store";
 import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
-import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
+import { createSignedReferenceAssetUrl, signGenerationAssetInputUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { resolvePublicRequestOrigin } from "@/lib/server/public-request-origin";
 
 export function referenceRequestUrl(reference: ImageTaskReference, origin = "") {
@@ -15,14 +16,16 @@ export function jsonImageReferenceRequestUrl(reference: ImageTaskReference, orig
 }
 
 export async function publicImageReferenceRequestUrl(reference: ImageTaskReference, origin: string, publicOrigin: string, context: { ownerUserId: string; taskId: string }) {
-    const candidates = referenceRequestUrlCandidates(reference, origin).filter((value) => isExternalPublicMediaUrl(value));
-    if (candidates.length) return candidates[0];
-    const localCandidate = referenceRequestUrlCandidates(reference, origin).find((value) => /\/api\/reference-assets\//.test(value));
-    if (localCandidate) {
-        const signedUrl = signReferenceAssetInputUrl(localCandidate, publicOrigin);
-        if (signedUrl !== localCandidate) return signedUrl;
+    const candidates = referenceRequestUrlCandidates(reference, origin);
+    const managedCandidate = candidates.map((value) => managedMediaInput(value, origin, publicOrigin)).find((value): value is { value: string; pathname: string; scope: "reference" | "generation" } => Boolean(value));
+    if (managedCandidate) {
+        if (managedCandidate.scope === "generation" && !(await canAccessGenerationAsset(context.ownerUserId, "user", managedCandidate.pathname))) throw new Error("参考图不存在或无权访问");
+        const signedUrl = managedCandidate.scope === "reference" ? signReferenceAssetInputUrl(managedCandidate.value, publicOrigin) : signGenerationAssetInputUrl(managedCandidate.value, publicOrigin);
+        if (signedUrl !== managedCandidate.value) return signedUrl;
         throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
     }
+    const publicCandidate = candidates.find((value) => isExternalPublicMediaUrl(value));
+    if (publicCandidate) return publicCandidate;
 
     const dataUrl = (reference.dataUrl || "").trim();
     if (!/^data:image\//i.test(dataUrl)) throw new Error("\u53c2\u8003\u56fe\u9700\u8981\u516c\u7f51\u56fe\u7247 URL\uff0c\u8bf7\u91cd\u65b0\u4e0a\u4f20\u53c2\u8003\u56fe");
@@ -32,6 +35,20 @@ export async function publicImageReferenceRequestUrl(reference: ImageTaskReferen
     const signedUrl = createSignedReferenceAssetUrl(asset.token, publicOrigin);
     if (!signedUrl) throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
     return asset.url || signedUrl;
+}
+
+function managedMediaInput(value: string, internalOrigin: string, publicOrigin: string) {
+    try {
+        const publicSiteOrigin = new URL(publicOrigin).origin;
+        const internalSiteOrigin = new URL(internalOrigin).origin;
+        const url = new URL(value, internalSiteOrigin);
+        if (url.origin !== publicSiteOrigin && url.origin !== internalSiteOrigin) return null;
+        if (url.pathname.startsWith("/api/reference-assets/")) return { value, pathname: url.pathname, scope: "reference" as const };
+        if (url.pathname.startsWith("/api/generation-log-assets/")) return { value, pathname: url.pathname, scope: "generation" as const };
+    } catch {
+        return null;
+    }
+    return null;
 }
 
 export function referenceRequestUrlCandidates(reference: ImageTaskReference, origin = "") {

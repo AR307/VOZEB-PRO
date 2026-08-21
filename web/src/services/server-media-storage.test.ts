@@ -89,4 +89,16 @@ describe("server media storage", () => {
         expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/reference-assets");
         expect(fetchMock.mock.calls[1]?.[1]?.method).toBe("POST");
     });
+
+    it("forwards unknown binary media to the server for byte-level validation", async () => {
+        fetchMock.mockResolvedValueOnce(new Response("webp", { headers: { "Content-Type": "application/octet-stream" } })).mockResolvedValueOnce(
+            new Response(JSON.stringify({ token: "permanent/2026/08/20/images/external.webp", url: "/api/reference-assets/permanent/2026/08/20/images/external.webp", mimeType: "image/webp" }), {
+                headers: { "Content-Type": "application/json" },
+            }),
+        );
+
+        await expect(uploadServerMedia("https://cdn.example/reference.webp", "image")).resolves.toMatchObject({ storageKey: "permanent/2026/08/20/images/external.webp", mimeType: "image/webp" });
+        const form = fetchMock.mock.calls[1]?.[1]?.body as FormData;
+        expect((form.get("file") as File).type).toBe("application/octet-stream");
+    });
 });

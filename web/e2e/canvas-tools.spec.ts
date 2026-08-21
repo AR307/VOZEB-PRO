@@ -10,19 +10,25 @@ import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, expectNoHo
 
 test.describe.configure({ mode: "serial" });
 
-test("canvas smart layering locally cuts elements and refines each one with an independent task", async ({ page, request }) => {
+test("canvas smart layering refines each element with an independent task", async ({ page, request }) => {
     const imageTaskRequests: Array<{
         config?: { outputBackground?: string; outputMode?: string };
         prompt?: string;
         references?: Array<{ dataUrl?: string; serverUrl?: string }>;
     }> = [];
     let decompositionRequests = 0;
-    let subjectWorkerRequests = 0;
+    let releaseDecomposition: (() => void) | undefined;
+    const decompositionGate = new Promise<void>((resolve) => {
+        releaseDecomposition = resolve;
+    });
+    await page.route("**/api/canvas/image-decomposition", async (route) => {
+        await decompositionGate;
+        await route.continue();
+    });
     page.on("request", (current) => {
         const path = new URL(current.url()).pathname;
         if (current.method() === "POST" && path === "/api/image-tasks") imageTaskRequests.push((current.postDataJSON() || {}) as (typeof imageTaskRequests)[number]);
         if (current.method() === "POST" && path === "/api/canvas/image-decomposition") decompositionRequests += 1;
-        if (path.endsWith("/canvas/subject-segmenter-worker.js")) subjectWorkerRequests += 1;
     });
     const sourceBytes = await fiveElementFixture();
     const upload = await request.post("/api/reference-assets", {
@@ -42,6 +48,10 @@ test("canvas smart layering locally cuts elements and refines each one with an i
         await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
         await page.locator('[data-node-id="source-image"]').click();
         await page.getByRole("button", { name: "智能分层", exact: true }).click();
+        const analysisStatus = page.getByText("正在分层分析", { exact: true });
+        await expect(analysisStatus).toBeVisible();
+        releaseDecomposition?.();
+        await expect(analysisStatus).toBeHidden({ timeout: 90_000 });
         const generated = page.locator('[data-node-id]:not([data-node-id="source-image"])');
         await expect(generated.first()).toBeVisible({ timeout: 90_000 });
         await expect.poll(() => imageTaskRequests.length, { timeout: 180_000 }).toBe(6);
@@ -56,6 +66,18 @@ test("canvas smart layering locally cuts elements and refines each one with an i
                 { timeout: 180_000 },
             )
             .toBe("success");
+        await expect
+            .poll(
+                async () => {
+                    const current = await readCanvasProject(request, projectPath);
+                    return current.nodes
+                        .filter((item) => item.metadata?.sourceLayerNodeId === "source-image" && item.metadata?.layerName !== "背景")
+                        .map((item) => item.metadata?.status)
+                        .sort();
+                },
+                { timeout: 180_000 },
+            )
+            .toEqual(Array.from({ length: 5 }, () => "success"));
         const saved = await readCanvasProject(request, projectPath);
         const layerNodes = saved.nodes.filter((item) => item.metadata?.sourceLayerNodeId === "source-image" && item.metadata?.layerName !== "背景");
         const background = saved.nodes.find((item) => item.metadata?.sourceLayerNodeId === "source-image" && item.metadata?.layerName === "背景");
@@ -77,7 +99,7 @@ test("canvas smart layering locally cuts elements and refines each one with an i
         expect(elementRequests, "每个元素应单独请求透明分层").toHaveLength(5);
         expect(elementRequests.map((item) => item.references?.[0]?.dataUrl)).toEqual(Array.from({ length: 5 }, () => sourceAsset.url));
         expect(
-            elementRequests.every((item) => item.prompt?.includes("从完整主图中精准提取") && item.prompt.includes("坐标 x=")),
+            elementRequests.every((item) => item.prompt?.includes("从这张完整主图中精准提取") && item.prompt.includes("元素范围 x=")),
             "元素任务必须引用完整主图并携带原图坐标",
         ).toBe(true);
         expect(
@@ -85,11 +107,15 @@ test("canvas smart layering locally cuts elements and refines each one with an i
             "背景应使用独立补全任务",
         ).toHaveLength(1);
         expect(imageTaskRequests.every((item) => item.config?.outputMode === undefined)).toBe(true);
-        expect(subjectWorkerRequests, "智能分层应恢复本地元素切割").toBeGreaterThan(0);
+        expect(
+            imageTaskRequests.some((item) => item.config?.outputMode === "layers"),
+            "智能分层不得把独立元素任务改成上游批量层任务",
+        ).toBe(false);
         await expect(generated.first()).toBeVisible();
         await generated.first().click();
         await expect(generated.first().locator(":scope > div").first()).toHaveCSS("border-color", "rgb(47, 128, 255)");
     } finally {
+        releaseDecomposition?.();
         try {
             await deleteCanvasProject(request, project.id);
         } finally {
@@ -178,6 +204,23 @@ test("canvas Agent can reference images beyond the first fifty without stalling"
 
         await expect(composer).toHaveValue("@图片1 @图片2 @图片3 ");
         await expect(panel.locator('[data-canvas-agent-input-row] img[alt="image-64"]')).toBeVisible();
+        await composer.fill(`${await composer.inputValue()}${Array.from({ length: 18 }, (_, index) => `\n保持参考主体一致，补充第 ${index + 1} 条镜头运动说明。`).join("")}`);
+        await expect.poll(() => composer.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+        const mentionBounds = await panel.locator('[data-testid="canvas-agent-mention-preview"]').evaluate((preview) => {
+            const previewRect = preview.getBoundingClientRect();
+            const textareaRect = preview.parentElement?.querySelector("textarea")?.getBoundingClientRect();
+            const scrollLayerRect = preview.querySelector("[data-canvas-agent-mention-scroll-layer]")?.getBoundingClientRect();
+            return {
+                previewTop: previewRect.top,
+                previewBottom: previewRect.bottom,
+                textareaTop: textareaRect?.top ?? Number.NaN,
+                textareaBottom: textareaRect?.bottom ?? Number.NaN,
+                scrollLayerTop: scrollLayerRect?.top,
+            };
+        });
+        expect(mentionBounds.previewTop).toBeGreaterThanOrEqual(mentionBounds.textareaTop - 1);
+        expect(mentionBounds.previewBottom).toBeLessThanOrEqual(mentionBounds.textareaBottom + 1);
+        expect(mentionBounds.scrollLayerTop ?? Number.POSITIVE_INFINITY).toBeLessThan(mentionBounds.previewTop);
         await expect(page.locator('.node-element[data-node-id="image-64"]')).toHaveCSS("z-index", "50");
         const previewWidths = await page.locator('.node-element[data-node-id^="image-"] img').evaluateAll((images) => images.map((image) => new URL((image as HTMLImageElement).src).searchParams.get("width")).filter(Boolean));
         const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);

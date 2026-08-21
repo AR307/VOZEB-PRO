@@ -81,10 +81,11 @@ export function planToOps(plan: AgentPlan, tasks: AgentRunTask[], runId: string,
 export function taskCanvasEventOps(runId: string, index: number, task: AgentRunTask, eventType: string, childTaskId?: string) {
     if (eventType === "task.completed") return taskResultOps(runId, index, task);
     if (eventType === "task.child.completed" || eventType === "task.child.failed") return taskChildResultOps(runId, index, task, eventType, childTaskId);
-    if (!new Set(["task.running", "task.created", "task.failed"]).has(eventType)) return null;
+    if (!new Set(["task.running", "task.created", "task.needs_review", "task.failed"]).has(eventType)) return null;
     const taskNodeId = agentCanvasTaskNodeId(runId, index);
     const nodeIds = task.type === "text" ? [] : agentCanvasOutputNodeIds(runId, index, task);
     const failed = eventType === "task.failed";
+    const needsReview = eventType === "task.needs_review";
     const taskIds = task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : undefined;
     const partialFailure = failed && task.type !== "text" && task.childTasks?.some((child) => child.status === "completed") ? failedTaskOutputOps(runId, index, task) : null;
     const ops: Array<Record<string, unknown>> = [
@@ -92,9 +93,9 @@ export function taskCanvasEventOps(runId: string, index: number, task: AgentRunT
             type: "update_node",
             id: taskNodeId,
             metadata: {
-                agentTaskStatus: failed ? "failed" : "running",
+                agentTaskStatus: failed ? "failed" : needsReview ? "needs_review" : "running",
                 agentTaskAttempts: task.attempts,
-                agentTaskError: failed ? task.error : "",
+                agentTaskError: failed || needsReview ? task.error : "",
                 agentTaskOutputNodeIds: nodeIds,
                 agentGenerationTaskIds: taskIds || [],
             },
@@ -104,8 +105,8 @@ export function taskCanvasEventOps(runId: string, index: number, task: AgentRunT
                 type: "update_node",
                 id,
                 metadata: {
-                    ...outputMetadata(runId, task, failed ? "error" : "loading"),
-                    errorDetails: failed ? task.error || "生成任务失败" : undefined,
+                    ...outputMetadata(runId, task, failed ? "error" : needsReview ? "needs_review" : "loading"),
+                    errorDetails: failed ? task.error || "生成任务失败" : needsReview ? task.error || "上游创建结果待确认" : undefined,
                     agentGenerationTaskIds: taskIds || [],
                 },
             }))),
@@ -212,7 +213,7 @@ export function taskResultOps(runId: string, index: number, task: AgentRunTask) 
     return { nodeIds, ops };
 }
 
-function outputMetadata(runId: string, task: AgentRunTask, status: "loading" | "error") {
+function outputMetadata(runId: string, task: AgentRunTask, status: "loading" | "needs_review" | "error") {
     return {
         agentRunId: runId,
         agentTaskId: task.id,

@@ -47,6 +47,9 @@ describe("create Agent home layout", () => {
         expect(page).not.toContain("最近创作");
         expect(page).toContain("<CreateInspirationGallery");
         expect(page.indexOf("<CreateWorkbenchOverview")).toBeLessThan(page.indexOf("<CreateInspirationGallery"));
+        expect(page).not.toContain("composerHeight");
+        expect(page).not.toContain("top-[117px]");
+        expect(page).toContain('data-testid="creative-composer-dock" data-compact="false" className="mt-5 w-full sm:mt-8"');
         expect(page).toContain("usePublicImage");
         expect(composer).toContain('centered ? "max-w-[1080px]"');
         expect(composer).toContain('data-compact={compact ? "true" : "false"}');

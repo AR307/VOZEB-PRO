@@ -4,6 +4,7 @@ import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { isAuthInputError } from "@/lib/auth/store";
 import { CanvasImageDecompositionError, decomposeCanvasImage } from "@/lib/server/canvas-image-decomposition-service";
+import { createCanvasImageLayerGrant } from "@/lib/server/canvas-image-layer-grant";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 
@@ -31,13 +32,14 @@ export async function POST(request: Request) {
     if (!requestId || !source) return NextResponse.json({ code: 400, data: null, msg: "缺少需要分层的图片" }, { status: 400 });
 
     try {
-        const data = await decomposeCanvasImage({
+        const decomposition = await decomposeCanvasImage({
             origin: resolveInternalOrigin(new URL(request.url).origin),
             cookie: request.headers.get("cookie") || "",
             userId: user.id,
             requestId,
             source,
         });
+        const data = { ...decomposition, batchGrant: createCanvasImageLayerGrant({ userId: user.id, requestId, source, decomposition }) };
         return NextResponse.json({ code: 0, data, msg: "OK" });
     } catch (error) {
         const status = error instanceof CanvasImageDecompositionError ? error.status : 502;

@@ -3,7 +3,8 @@ import { recordChannelRuntimeFailure, recordChannelRuntimeSuccess } from "@/lib/
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
-import { strictJsonObjectText } from "@/lib/server/structured-model-output";
+import { extractJsonObjectText } from "@/lib/server/structured-model-output";
+import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
 
 export type TextPlanningProtocol = "responses" | "chat" | "gemini" | "custom";
@@ -15,6 +16,7 @@ export type TextPlanningCandidate = {
 };
 export type TextPlanningTool = { name: string; description: string; parameters: Record<string, unknown> };
 export type TextPlanningCall = { arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number };
+type TextPlanningRequestErrorReason = "http" | "transport" | "invalid-structure";
 
 type RuntimeState = {
     preferred?: TextPlanningProtocol;
@@ -38,13 +40,14 @@ export type StructuredTextRequest = {
     signal?: AbortSignal;
     allowNaturalLanguage?: boolean;
     preferNativeTools?: boolean;
+    allowRepair?: boolean;
     validateArguments?: (argumentsText: string) => boolean;
     onInvalidResponse?: (headers: Headers) => Promise<unknown>;
 };
 
 type ProtocolRequest = {
     protocol: TextPlanningProtocol;
-    variant: "json" | "tool";
+    variant: "json" | "tool" | "repair";
     path: string;
     body: Record<string, unknown>;
     resultField?: string;
@@ -59,6 +62,7 @@ export class TextPlanningRequestError extends Error {
         message: string,
         readonly status = 502,
         readonly retryable = status >= 500 || status === 408 || status === 429,
+        readonly reason: TextPlanningRequestErrorReason = "http",
     ) {
         super(message);
         this.name = "TextPlanningRequestError";
@@ -73,7 +77,7 @@ export function rankTextPlanningCandidates<T extends TextPlanningCandidate>(cand
 }
 
 export function preferredTextPlanningProtocol(candidate: TextPlanningCandidate): TextPlanningProtocol {
-    return planningProtocolRequest(candidate, []).protocol;
+    return planningProtocolRequest(candidate, [], "json").protocol;
 }
 
 export async function requestStructuredText(input: StructuredTextRequest): Promise<TextPlanningCall> {
@@ -86,7 +90,7 @@ export async function requestStructuredText(input: StructuredTextRequest): Promi
                 const response = await requestTextProtocol(input, request);
                 return await readStructuredResponse(input, request, response, startedAt);
             } catch (error) {
-                if (index === requests.length - 1 || !shouldFallbackFromNativeTool(error)) throw error;
+                if (index === requests.length - 1 || (!shouldFallbackFromNativeTool(error, request) && !shouldRepairStructuredResponse(error, request))) throw error;
             }
         }
         throw new TextPlanningRequestError("模型没有返回所需的结构化结果", 502, false);
@@ -106,51 +110,55 @@ export function resetTextPlanningRuntime() {
 }
 
 function planningProtocolRequests(input: StructuredTextRequest, messages: Array<{ role: string; content: string }>) {
-    const promptRequest = planningProtocolRequest(input.candidate, messages);
-    if (!input.preferNativeTools || promptRequest.protocol === "custom") return [promptRequest];
-    return [planningProtocolRequest(input.candidate, messages, input.tool), promptRequest];
+    const promptRequest = planningProtocolRequest(input.candidate, messages, "json");
+    if (input.allowRepair === false) {
+        return input.preferNativeTools && promptRequest.protocol !== "custom" ? [planningProtocolRequest(input.candidate, messages, "tool", input.tool), promptRequest] : [promptRequest];
+    }
+    const recoveryRequest = planningProtocolRequest(input.candidate, planningMessages(input, true), "repair");
+    if (!input.preferNativeTools || promptRequest.protocol === "custom") return [promptRequest, recoveryRequest];
+    return [planningProtocolRequest(input.candidate, messages, "tool", input.tool), promptRequest, recoveryRequest];
 }
 
-function planningProtocolRequest(candidate: TextPlanningCandidate, messages: Array<{ role: string; content: string }>, tool?: TextPlanningTool): ProtocolRequest {
+function planningProtocolRequest(candidate: TextPlanningCandidate, messages: Array<{ role: string; content: string }>, variant: ProtocolRequest["variant"], tool?: TextPlanningTool): ProtocolRequest {
     const resolved = resolveTextProtocol({
         model: candidate.upstreamModel,
         apiFormat: candidate.channel.apiFormat,
         advancedConfig: candidate.channel.advancedConfig,
         throughSystemProxy: true,
     });
-    if (resolved.kind === "responses") return responsesRequest(candidate.upstreamModel, messages, resolved.path, tool);
-    if (resolved.kind === "gemini") return geminiRequest(candidate.upstreamModel, resolved.path, messages, tool);
-    if (resolved.kind === "custom") return customRequest(candidate.upstreamModel, resolved.path, resolved.requestTemplate!, resolved.resultField!, messages);
-    return chatRequest(candidate.upstreamModel, messages, resolved.path, tool);
+    if (resolved.kind === "responses") return responsesRequest(candidate.upstreamModel, messages, resolved.path, variant === "tool" ? tool : undefined, variant);
+    if (resolved.kind === "gemini") return geminiRequest(candidate.upstreamModel, resolved.path, messages, variant === "tool" ? tool : undefined, variant);
+    if (resolved.kind === "custom") return customRequest(candidate.upstreamModel, resolved.path, resolved.requestTemplate!, resolved.resultField!, messages, variant);
+    return chatRequest(candidate.upstreamModel, messages, resolved.path, variant === "tool" ? tool : undefined, variant);
 }
 
-function chatRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/chat/completions", tool?: TextPlanningTool): ProtocolRequest {
+function chatRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/chat/completions", tool?: TextPlanningTool, variant: ProtocolRequest["variant"] = "json"): ProtocolRequest {
     return {
         protocol: "chat",
-        variant: tool ? "tool" : "json",
+        variant,
         path,
         body: {
             model,
             messages,
-            ...(tool ? { tools: [{ type: "function", function: tool }], tool_choice: { type: "function", function: { name: tool.name } } } : {}),
+            ...(tool ? { tools: [{ type: "function", function: tool }], tool_choice: { type: "function", function: { name: tool.name } } } : variant === "json" || variant === "repair" ? { response_format: { type: "json_object" } } : {}),
         },
     };
 }
 
-function responsesRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/responses", tool?: TextPlanningTool): ProtocolRequest {
+function responsesRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/responses", tool?: TextPlanningTool, variant: ProtocolRequest["variant"] = "json"): ProtocolRequest {
     return {
         protocol: "responses",
-        variant: tool ? "tool" : "json",
+        variant,
         path,
         body: {
             model,
             input: messages,
-            ...(tool ? { tools: [{ type: "function", ...tool }], tool_choice: { type: "function", name: tool.name } } : {}),
+            ...(tool ? { tools: [{ type: "function", ...tool }], tool_choice: { type: "function", name: tool.name } } : variant === "json" || variant === "repair" ? { text: { format: { type: "json_object" } } } : {}),
         },
     };
 }
 
-function geminiRequest(model: string, configuredPath: string, messages: Array<{ role: string; content: string }>, tool?: TextPlanningTool): ProtocolRequest {
+function geminiRequest(model: string, configuredPath: string, messages: Array<{ role: string; content: string }>, tool?: TextPlanningTool, variant: ProtocolRequest["variant"] = "json"): ProtocolRequest {
     const systemText = messages
         .filter((message) => message.role === "system")
         .map((message) => message.content)
@@ -158,25 +166,29 @@ function geminiRequest(model: string, configuredPath: string, messages: Array<{ 
     const path = configuredPath || `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:generateContent`;
     return {
         protocol: "gemini",
-        variant: tool ? "tool" : "json",
+        variant,
         path,
         body: {
             contents: messages.filter((message) => message.role !== "system").map((message) => ({ role: message.role === "assistant" ? "model" : "user", parts: [{ text: message.content }] })),
             ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
-            ...(tool ? { tools: [{ functionDeclarations: [tool] }], toolConfig: { functionCallingConfig: { mode: "ANY", allowedFunctionNames: [tool.name] } } } : {}),
+            ...(tool
+                ? { tools: [{ functionDeclarations: [tool] }], toolConfig: { functionCallingConfig: { mode: "ANY", allowedFunctionNames: [tool.name] } } }
+                : variant === "json" || variant === "repair"
+                  ? { generationConfig: { responseMimeType: "application/json" } }
+                  : {}),
         },
     };
 }
 
-function customRequest(model: string, configuredPath: string, requestTemplate: string, resultField: string, messages: Array<{ role: string; content: string }>): ProtocolRequest {
+function customRequest(model: string, configuredPath: string, requestTemplate: string, resultField: string, messages: Array<{ role: string; content: string }>, variant: ProtocolRequest["variant"]): ProtocolRequest {
     const prompt = messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
     const values = { model, messages, prompt, input: prompt, text: prompt };
-    return { protocol: "custom", variant: "json", path: configuredPath, body: buildProviderRequest(requestTemplate, values, values), resultField };
+    return { protocol: "custom", variant, path: configuredPath, body: buildProviderRequest(requestTemplate, values, values), resultField };
 }
 
 async function requestTextProtocol(input: StructuredTextRequest, request: ProtocolRequest) {
     const base = `${input.origin}/api/ai/system/${encodeURIComponent(input.candidate.channelId)}`;
-    const headers = new Headers(request.variant === "json" && input.fallbackHeaders ? input.fallbackHeaders : input.headers);
+    const headers = request.variant === "repair" ? repairRequestHeaders(input) : new Headers(request.variant !== "tool" && input.fallbackHeaders ? input.fallbackHeaders : input.headers);
     headers.set("content-type", "application/json");
     if (input.cookie) headers.set("cookie", input.cookie);
     scopeProtocolIdempotency(headers, request.protocol, request.variant);
@@ -186,8 +198,18 @@ async function requestTextProtocol(input: StructuredTextRequest, request: Protoc
         return await fetchInternalApi(`${base}${normalizePath(request.path)}`, { method: "POST", headers, body: JSON.stringify(request.body), cache: "no-store", signal });
     } catch (error) {
         if (input.signal?.aborted) throw error;
-        throw new TextPlanningRequestError(isTimeoutError(error) ? "文本模型规划响应超时，正在切换备用渠道" : "文本模型渠道暂时无法连接", 504);
+        throw new TextPlanningRequestError(isTimeoutError(error) ? "文本模型规划响应超时，正在切换备用渠道" : "文本模型渠道暂时无法连接", 504, true, "transport");
     }
+}
+
+function repairRequestHeaders(input: StructuredTextRequest) {
+    const headers = new Headers(input.fallbackHeaders || input.headers);
+    const logicalModel = headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER)?.trim();
+    const businessRequestId = headers.get(SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER)?.trim();
+    const upstreamModel = headers.get(SYSTEM_AI_UPSTREAM_MODEL_HEADER)?.trim() || input.candidate.upstreamModel;
+    if (!logicalModel || !businessRequestId) return headers;
+    Object.entries(systemAiBillingHeaders(logicalModel, `${businessRequestId}:repair`, upstreamModel)).forEach(([name, value]) => headers.set(name, value));
+    return headers;
 }
 
 function scopeProtocolIdempotency(headers: Headers, protocol: TextPlanningProtocol, variant: ProtocolRequest["variant"]) {
@@ -203,12 +225,12 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
         throw new TextPlanningRequestError(safeUpstreamError(raw, response.status), response.status, retryableStatus(response.status));
     }
     const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!payload) throw new TextPlanningRequestError("文本模型返回了无效 JSON");
+    if (!payload) throw new TextPlanningRequestError("文本模型返回了无效 JSON", 502, false, "invalid-structure");
     if (request.protocol === "custom" && isProviderBusinessError(payload)) throw new TextPlanningRequestError(readProviderError(payload) || "自定义文本协议返回失败");
     const argumentsText = readProtocolArguments(payload, input.tool.name, request, input.allowNaturalLanguage);
     if (!argumentsText || !validArguments(input, argumentsText)) {
         await input.onInvalidResponse?.(response.headers);
-        throw new TextPlanningRequestError("模型没有返回所需的结构化结果", 502, false);
+        throw new TextPlanningRequestError("模型没有返回所需的结构化结果", 502, false, "invalid-structure");
     }
     const elapsedMs = Date.now() - startedAt;
     recordTextSuccess(input.candidate, request.protocol, elapsedMs);
@@ -220,13 +242,13 @@ function readProtocolArguments(payload: Record<string, unknown>, toolName: strin
     if (request.protocol === "gemini") return geminiArguments(payload, toolName, allowNaturalLanguage);
     if (request.protocol === "custom") {
         const content = readProviderString(payload, request.resultField, TEXT_RESULT_KEYS);
-        return strictJsonObjectText(content) || (allowNaturalLanguage ? content : "");
+        return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "");
     }
     return chatArguments(payload, toolName, allowNaturalLanguage);
 }
 
-function planningMessages(input: StructuredTextRequest) {
-    const instruction = `请先在模型内部完成需求理解、约束分析、模型选择、任务拆分与依赖规划，再只返回一个严格 JSON 对象，作为 ${input.tool.name} 的最终参数。任务用途：${input.tool.description}。不要使用 Markdown、代码围栏、解释或额外文字。JSON 必须符合以下 Schema：${JSON.stringify(input.tool.parameters)}`;
+function planningMessages(input: StructuredTextRequest, recovery = false) {
+    const instruction = `${recovery ? "上一轮响应没有通过结构校验。请重新执行，不要解释失败原因，也不要复述输入。" : "请先在模型内部完成需求理解、约束分析、模型选择、任务拆分与依赖规划，再"}只返回一个严格 JSON 对象，作为 ${input.tool.name} 的最终参数。任务用途：${input.tool.description}。不要使用 Markdown、代码围栏、解释或额外文字。JSON 必须符合以下 Schema：${JSON.stringify(input.tool.parameters)}`;
     if (input.messages[0]?.role === "system") return [{ ...input.messages[0], content: `${instruction}\n\n${input.messages[0].content}` }, ...input.messages.slice(1)];
     return [{ role: "system", content: instruction }, ...input.messages];
 }
@@ -237,7 +259,7 @@ function chatArguments(payload: Record<string, unknown>, toolName: string, allow
     const argumentsText = jsonObjectArguments(record(call?.function)?.arguments);
     if (argumentsText) return argumentsText;
     const content = textContent(message?.content);
-    if (content) return strictJsonObjectText(content) || (allowNaturalLanguage ? content : "");
+    if (content) return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "");
     // Some compatible gateways wrap a Chat result as a Responses payload.
     return responsesArguments(payload, toolName, allowNaturalLanguage);
 }
@@ -254,7 +276,7 @@ function responsesArguments(payload: Record<string, unknown>, toolName: string, 
             .flatMap((item) => [typeof item.text === "string" ? item.text : "", ...records(item.content).map((content) => (typeof content.text === "string" ? content.text : ""))])
             .join("")
             .trim();
-    return strictJsonObjectText(content) || (allowNaturalLanguage ? content : "");
+    return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "");
 }
 
 function geminiArguments(payload: Record<string, unknown>, toolName: string, allowNaturalLanguage: boolean) {
@@ -265,7 +287,7 @@ function geminiArguments(payload: Record<string, unknown>, toolName: string, all
         .map((part) => (typeof part.text === "string" ? part.text : ""))
         .join("")
         .trim();
-    return strictJsonObjectText(content) || (allowNaturalLanguage ? content : "");
+    return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "");
 }
 
 function candidateScore(state: RuntimeState | undefined, now: number) {
@@ -307,7 +329,17 @@ function runtimeKey(candidate: TextPlanningCandidate) {
 }
 
 function safeUpstreamError(value: string, status: number) {
-    const fallback = status === 401 || status === 403 ? "文本模型渠道鉴权失败，请管理员检查密钥" : status === 429 ? "文本模型渠道请求过于频繁，请稍后重试" : status >= 500 ? `文本模型渠道暂不可用（HTTP ${status}）` : "文本模型调用失败";
+    const fallback =
+        status === 401 || status === 403
+            ? "文本模型渠道鉴权失败，请管理员检查密钥"
+            : status === 413
+              ? "提交给文本模型的内容过大，请减少单次分析内容后重试"
+              : status === 429
+                ? "文本模型渠道请求过于频繁，请稍后重试"
+                : status >= 500
+                  ? `文本模型渠道暂不可用（HTTP ${status}）`
+                  : "文本模型调用失败";
+    if (status === 413) return fallback;
     if (!value.trim() || /<!doctype\s+html|<html\b|<title>|<body\b|\bnginx\b|\bcloudflare\b/i.test(value)) return fallback;
     try {
         const payload = JSON.parse(value) as { msg?: unknown; error?: unknown };
@@ -340,11 +372,11 @@ function firstRecord(value: unknown) {
 }
 
 function jsonObjectArguments(value: unknown) {
-    if (typeof value === "string") return value.trim();
+    if (typeof value === "string") return extractJsonObjectText(value);
     const object = record(value);
     if (!object) return "";
     try {
-        return JSON.stringify(object);
+        return extractJsonObjectText(JSON.stringify(object));
     } catch {
         return "";
     }
@@ -371,8 +403,12 @@ function retryableStatus(status: number) {
     return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
-function shouldFallbackFromNativeTool(error: unknown) {
-    return error instanceof TextPlanningRequestError && (error.message === "模型没有返回所需的结构化结果" || error.status === 400 || error.status === 422);
+function shouldFallbackFromNativeTool(error: unknown, request: ProtocolRequest) {
+    return request.variant === "tool" && error instanceof TextPlanningRequestError && (error.reason === "invalid-structure" || error.status === 400 || error.status === 422);
+}
+
+function shouldRepairStructuredResponse(error: unknown, request: ProtocolRequest) {
+    return request.variant === "json" && error instanceof TextPlanningRequestError && error.reason === "invalid-structure";
 }
 
 function isTimeoutError(error: unknown) {

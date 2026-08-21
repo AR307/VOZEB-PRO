@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 
 import { nanoid } from "nanoid";
 import { buildNodeGenerationInputs, type NodeGenerationInput } from "../components/canvas-node-generation";
-import { CanvasNodeType, type ConnectionHandle } from "../types";
+import { CanvasNodeType, type CanvasNodeData, type ConnectionHandle } from "../types";
 import { useCanvasLocalAgentBridge } from "../use-canvas-local-agent-bridge";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
-import { createCanvasResourceReferenceIndex } from "../utils/canvas-resource-references";
+import { createCanvasResourceReferenceIndex, type CanvasResourceReferenceIndex } from "../utils/canvas-resource-references";
 
 import { PendingConnectionCreate, type CanvasCreatableNodeType, createCanvasNode } from "./canvas-page-elements";
 import { getGenerationCount, normalizeConnection } from "./canvas-page-utils";
@@ -188,23 +188,28 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
 
+    const configNodeIds = useMemo(() => nodes.filter((node) => node.type === CanvasNodeType.Config).map((node) => node.id), [nodes]);
+    const resourceReferenceIndexCacheRef = useRef<{ nodes: CanvasNodeData[]; connections: typeof connections; index: CanvasResourceReferenceIndex } | null>(null);
+    const resourceReferenceIndex = useMemo(() => {
+        const previous = resourceReferenceIndexCacheRef.current;
+        if (previous && previous.connections === connections && sameCanvasResourceState(previous.nodes, nodes)) return previous.index;
+        const index = createCanvasResourceReferenceIndex(nodes, connections);
+        resourceReferenceIndexCacheRef.current = { nodes, connections, index };
+        return index;
+    }, [connections, nodes]);
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
-        nodes.forEach((node) => {
-            if (node.type !== CanvasNodeType.Config) return;
-            map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections));
-        });
+        configNodeIds.forEach((nodeId) => map.set(nodeId, buildNodeGenerationInputs(nodeId, nodes, connections, resourceReferenceIndex)));
         return map;
-    }, [connections, nodes]);
+    }, [configNodeIds, resourceReferenceIndex]);
     const resourceContextNodeId = dialogNodeId || activeNodeId;
-    const resourceReferenceIndex = useMemo(() => createCanvasResourceReferenceIndex(nodes, connections), [connections, nodes]);
     const canvasResourceReferences = useMemo(() => resourceReferenceIndex.all(resourceContextNodeId), [resourceContextNodeId, resourceReferenceIndex]);
     const resourceReferenceByNodeId = useMemo(() => new Map(canvasResourceReferences.map((reference) => [reference.nodeId, reference])), [canvasResourceReferences]);
     const mentionReferencesByNodeId = useMemo(() => {
         const map = new Map<string, ReturnType<typeof resourceReferenceIndex.forNode>>();
         nodes.forEach((node) => map.set(node.id, resourceReferenceIndex.forNode(node.id)));
         return map;
-    }, [nodes, resourceReferenceIndex]);
+    }, [resourceReferenceIndex]);
     const agentSnapshot = useMemo<CanvasAgentSnapshot>(
         () => ({ projectId, title: currentProject?.title || "未命名画布", imageSize: effectiveConfig.size, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
         [connections, currentProject?.title, effectiveConfig.size, nodes, projectId, selectedNodeIds, viewport],
@@ -280,6 +285,31 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         agentSnapshot,
         applyAgentOps,
     };
+}
+
+function sameCanvasResourceState(previous: CanvasNodeData[], next: CanvasNodeData[]) {
+    if (previous.length !== next.length) return false;
+    for (let index = 0; index < previous.length; index += 1) {
+        const left = previous[index];
+        const right = next[index];
+        if (left.id !== right.id || left.type !== right.type || left.title !== right.title || left.width !== right.width || left.height !== right.height) return false;
+        const leftMetadata = left.metadata;
+        const rightMetadata = right.metadata;
+        if (
+            leftMetadata?.content !== rightMetadata?.content ||
+            leftMetadata?.prompt !== rightMetadata?.prompt ||
+            leftMetadata?.storageKey !== rightMetadata?.storageKey ||
+            leftMetadata?.remoteUrl !== rightMetadata?.remoteUrl ||
+            leftMetadata?.serverUrl !== rightMetadata?.serverUrl ||
+            leftMetadata?.mimeType !== rightMetadata?.mimeType ||
+            leftMetadata?.naturalWidth !== rightMetadata?.naturalWidth ||
+            leftMetadata?.naturalHeight !== rightMetadata?.naturalHeight ||
+            leftMetadata?.bytes !== rightMetadata?.bytes ||
+            leftMetadata?.durationMs !== rightMetadata?.durationMs
+        )
+            return false;
+    }
+    return true;
 }
 
 export type CanvasInteractionCore = ReturnType<typeof useCanvasInteractionCore>;

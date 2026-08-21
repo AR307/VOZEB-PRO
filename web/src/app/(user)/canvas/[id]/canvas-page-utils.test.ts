@@ -29,6 +29,7 @@ import {
     resolveMetadataImageEditMask,
     resolveMetadataImageEditValidationMask,
     resolveMetadataReferences,
+    uploadGeneratedCanvasImage,
 } from "./canvas-page-utils";
 
 describe("Canvas project hydration", () => {
@@ -98,6 +99,47 @@ describe("Canvas project hydration", () => {
         expect(prepareAssistantImages(sessions)[0]?.messages[0]?.references?.[0]?.dataUrl).toBe("/api/reference-assets/permanent/user/canvas/reference.webp");
         expect(mocks.readImageMeta).not.toHaveBeenCalled();
         expect(mocks.uploadImage).not.toHaveBeenCalled();
+    });
+
+    it("reuses complete permanent generation metadata without re-reading or uploading the image", async () => {
+        await expect(
+            uploadGeneratedCanvasImage({
+                dataUrl: "/api/generation-log-assets/permanent/2026/08/20/images/result.png",
+                serverUrl: "/api/generation-log-assets/permanent/2026/08/20/images/result.png",
+                remoteUrl: "https://upstream.example.com/result.png",
+                width: 1536,
+                height: 1024,
+                bytes: 234567,
+                mimeType: "image/png",
+            }),
+        ).resolves.toEqual({
+            url: "/api/generation-log-assets/permanent/2026/08/20/images/result.png",
+            storageKey: "permanent/2026/08/20/images/result.png",
+            remoteUrl: "https://upstream.example.com/result.png",
+            serverUrl: "/api/generation-log-assets/permanent/2026/08/20/images/result.png",
+            width: 1536,
+            height: 1024,
+            bytes: 234567,
+            mimeType: "image/png",
+        });
+        expect(mocks.uploadImage).not.toHaveBeenCalled();
+        expect(mocks.readImageMeta).not.toHaveBeenCalled();
+    });
+
+    it("keeps the existing validation path when generated metadata is incomplete", async () => {
+        mocks.uploadImage.mockResolvedValueOnce({
+            url: "/api/generation-log-assets/permanent/result.png",
+            storageKey: "permanent/result.png",
+            serverUrl: "/api/generation-log-assets/permanent/result.png",
+            width: 1024,
+            height: 1024,
+            bytes: 123,
+            mimeType: "image/png",
+        });
+
+        await uploadGeneratedCanvasImage({ dataUrl: "/api/generation-log-assets/permanent/result.png", serverUrl: "/api/generation-log-assets/permanent/result.png" });
+
+        expect(mocks.uploadImage).toHaveBeenCalledWith("/api/generation-log-assets/permanent/result.png");
     });
 });
 

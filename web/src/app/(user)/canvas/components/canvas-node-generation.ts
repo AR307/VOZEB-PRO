@@ -4,7 +4,7 @@ import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
-import { getGenerationResourceNodes } from "../utils/canvas-resource-references";
+import { createCanvasResourceReferenceIndex, type CanvasResourceReferenceIndex } from "../utils/canvas-resource-references";
 
 type NodeGenerationContext = {
     prompt: string;
@@ -107,8 +107,8 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     };
 }
 
-export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
-    return getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
+export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], resourceReferenceIndex: CanvasResourceReferenceIndex = createCanvasResourceReferenceIndex(nodes, connections)): NodeGenerationInput[] {
+    return resourceReferenceIndex.resourceNodesFor(nodeId, false).flatMap((node): NodeGenerationInput[] => {
         const image = readReferenceImage(node);
         if (image) return [{ nodeId: node.id, type: "image" as const, title: node.title, image }];
         const video = readReferenceVideo(node);
