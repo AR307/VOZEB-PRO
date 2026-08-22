@@ -96,7 +96,7 @@ export function DramaRichScriptEditor({
         content: episode.scriptRichContent || plainTextToDramaRichContent(episode.script),
         editorProps: {
             attributes: {
-                class: "mr-auto min-h-full w-full max-w-[900px] px-8 py-6 text-left text-[16px] leading-[1.8] text-foreground outline-none sm:px-10 sm:py-7 [&_a]:text-violet-600 [&_a]:underline dark:[&_a]:text-violet-300 [&_blockquote]:my-4 [&_blockquote]:border-l-2 [&_blockquote]:border-violet-300 [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-7 [&_p]:m-0 [&_p]:min-h-[1.8em] [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-7",
+                class: "min-h-full w-full max-w-none px-8 py-6 text-left text-[16px] leading-[1.8] text-foreground outline-none sm:px-10 sm:py-7 [&_a]:text-violet-600 [&_a]:underline dark:[&_a]:text-violet-300 [&_blockquote]:my-4 [&_blockquote]:border-l-2 [&_blockquote]:border-violet-300 [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-7 [&_p]:m-0 [&_p]:min-h-[1.8em] [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-7",
                 "aria-label": "本集剧本编辑器",
             },
             handleClick: (view) => {

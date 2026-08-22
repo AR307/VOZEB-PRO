@@ -68,7 +68,7 @@ test("creative workspaces remain usable without horizontal overflow in light and
                 if ((page.viewportSize()?.width || 0) >= 1600) {
                     await expect(page.locator("[data-drama-script-workspace]")).toBeVisible();
                     const columns = await page.locator("[data-drama-script-workspace]").evaluate((element) => {
-                        const targets = ["[data-drama-scene-structure]", "[data-drama-script-editor]", "[data-drama-episode-settings]"];
+                        const targets = ["[data-drama-scene-structure]", "[data-drama-script-editor]"];
                         return targets.map((selector) => {
                             const rect = element.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
                             return rect ? { left: Math.round(rect.left), width: Math.round(rect.width) } : null;
@@ -76,8 +76,8 @@ test("creative workspaces remain usable without horizontal overflow in light and
                     });
                     expect(columns.every(Boolean)).toBe(true);
                     expect(columns[0]?.width).toBeGreaterThanOrEqual(200);
-                    expect(columns[2]?.width).toBeGreaterThanOrEqual(280);
-                    expect(columns[1]?.width).toBeGreaterThan(320);
+                    expect(columns[1]?.width).toBeGreaterThan(900);
+                    await expect(page.getByRole("button", { name: "打开本集设置" })).toBeVisible();
                 }
             } else {
                 expect(Math.abs((closedLayout[0]?.x || 0) - (closedLayout[1]?.x || 0))).toBeLessThanOrEqual(1);

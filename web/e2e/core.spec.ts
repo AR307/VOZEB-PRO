@@ -494,7 +494,7 @@ test("Drama production persists storyboard and shot video results through reload
     }
 });
 
-test("Drama wide script workspace keeps episode settings and production mode visible", async ({ page, request }) => {
+test("Drama wide script workspace keeps episode settings collapsed and editor wide", async ({ page, request }) => {
     await page.setViewportSize({ width: 1672, height: 1000 });
     const created = await request.post("/api/drama/projects", {
         data: {
@@ -509,24 +509,27 @@ test("Drama wide script workspace keeps episode settings and production mode vis
     try {
         await page.goto(`/drama/${project.id}`, { waitUntil: "domcontentloaded" });
         const workspace = page.locator("[data-drama-script-workspace]");
-        const settings = workspace.locator("[data-drama-episode-settings]");
         await expect(workspace).toBeVisible({ timeout: 20_000 });
+        await expect(workspace.locator("[data-drama-episode-settings]")).toHaveCount(0);
+        const settingsButton = page.getByRole("button", { name: "打开本集设置" });
+        await expect(settingsButton).toBeVisible();
+        await settingsButton.click();
+        const settings = page.locator("[data-drama-episode-settings]");
         await expect(settings).toBeVisible();
         await expect(settings.getByText("视频生产模式", { exact: true })).toBeVisible();
         await expect(settings.getByText("分镜驱动", { exact: true })).toBeVisible();
-        await expect(page.getByRole("button", { name: "打开本集设置" })).toBeHidden();
 
         const columns = await workspace.evaluate((element) =>
-            ["[data-drama-scene-structure]", "[data-drama-script-editor]", "[data-drama-episode-settings]"].map((selector) => {
+            ["[data-drama-scene-structure]", "[data-drama-script-editor]"].map((selector) => {
                 const rect = element.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
                 return rect ? { left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width) } : null;
             }),
         );
         expect(columns.every(Boolean)).toBe(true);
         expect(columns[0]?.right).toBeLessThanOrEqual(columns[1]?.left || 0);
-        expect(columns[1]?.right).toBeLessThanOrEqual(columns[2]?.left || 0);
-        expect(columns[1]?.width).toBeGreaterThan(320);
-        expect(columns[2]?.width).toBeGreaterThanOrEqual(280);
+        expect(columns[1]?.width).toBeGreaterThan(900);
+        const editorWidth = await page.locator("[data-drama-script-editor] .ProseMirror").evaluate((element) => Math.round(element.getBoundingClientRect().width));
+        expect(editorWidth).toBeGreaterThan(900);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     } finally {
         const deleted = await request.delete(`/api/drama/projects/${project.id}`);
@@ -577,6 +580,7 @@ test("Drama imports Word chapters and persists an edited episode number", async 
                 { episodeNumber: 2, title: "第 2 集 · 第二章 真相", sourceRange: "第二章 真相", script: "第二章 真相\n门后站着林夏。" },
             ]);
 
+        await page.getByRole("button", { name: "打开本集设置" }).click();
         const episodeNumber = page.locator("[data-drama-episode-settings]").getByRole("spinbutton", { name: "集数" });
         await expect(episodeNumber).toHaveValue("1");
         await episodeNumber.fill("7");
@@ -585,6 +589,7 @@ test("Drama imports Word chapters and persists an edited episode number", async 
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await expect(page.locator("[data-drama-script-workspace]")).toBeVisible({ timeout: 20_000 });
+        await page.getByRole("button", { name: "打开本集设置" }).click();
         await expect(page.locator("[data-drama-episode-settings]").getByRole("spinbutton", { name: "集数" })).toHaveValue("7");
         await expect(page.getByText("第 07 集", { exact: true })).toBeVisible();
     } finally {
