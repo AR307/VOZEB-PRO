@@ -636,7 +636,8 @@ test("creative conversation keeps successful media rounds copy-only", async ({ p
             element.dataset.compactTransitions = [element.dataset.compactTransitions, `${state}:${height}`].filter(Boolean).join(",");
         }).observe(element, { attributes: true, attributeFilter: ["data-compact"] });
     });
-    await scrollArea.evaluate((element) => element.scrollTo({ top: 0 }));
+    await scrollArea.hover();
+    await page.mouse.wheel(0, -10_000);
     await expect(composer).toHaveAttribute("data-compact", "true");
     await expect(page.getByRole("button", { name: "回到底部" })).toBeVisible();
     await expect.poll(() => composer.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(64);

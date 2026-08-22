@@ -26,6 +26,12 @@ describe("writeImageGenerationLog", () => {
 
         expect(mocks.record.mock.calls[0][0].assets[0]).toMatchObject({ targetSize: "1024x1024" });
     });
+
+    it("preserves validated media metadata in the generation log", async () => {
+        await writeImageGenerationLog(imageTask(), "success", [{ dataUrl: "/api/generation-log-assets/result.png", width: 64, height: 64, bytes: 128, mimeType: "image/png" }], 10);
+
+        expect(mocks.record.mock.calls[0][0].assets[0]).toMatchObject({ width: 64, height: 64, bytes: 128, mimeType: "image/png" });
+    });
 });
 
 function imageTask(config: Partial<ImageTask["config"]> = {}): ImageTask {

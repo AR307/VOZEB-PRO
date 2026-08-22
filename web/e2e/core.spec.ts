@@ -217,7 +217,7 @@ test("unified creative page reaches the local planning and image protocols", asy
         )
         .toBe("completed");
     await expect(page.getByTestId("creative-media-result")).toBeVisible();
-    await expect(page.getByTestId("creative-media-result").getByRole("img")).toHaveAttribute("src", /\/api\/generation-log-assets\/permanent\/.+\.png/);
+    await expect(page.getByTestId("creative-media-result").getByTestId("creative-primary-result").getByRole("img")).toHaveAttribute("src", /\/api\/generation-log-assets\/permanent\/.+\.png/);
 
     const state = await protocolFixtureState(request);
     expect(state.requests.some((item) => item.method === "POST" && item.path.endsWith("/chat/completions"))).toBe(true);
@@ -268,8 +268,8 @@ test("unified creative Agent reaches the local image and video protocols", async
     const runId = ((await runResponse.json()) as { data: { run: { id: string } } }).data.run.id;
     await waitForAgentRun(request, runId);
 
-    await expect(page.getByTestId("creative-media-result").getByRole("img")).toHaveAttribute("src", /\/api\/generation-log-assets\/permanent\/.+\.png/);
-    const video = page.getByTestId("creative-media-result").locator("video");
+    await expect(page.getByTestId("creative-media-result").getByTestId("creative-primary-result").getByRole("img")).toHaveAttribute("src", /\/api\/generation-log-assets\/permanent\/.+\.png/);
+    const video = page.getByTestId("creative-video-result").locator("video");
     await expect(video).toHaveAttribute("src", /\/api\/reference-assets\/permanent\/.+\.mp4/);
     const videoResponse = await request.get((await video.getAttribute("src"))!);
     expect(videoResponse.ok(), await videoResponse.text()).toBe(true);
