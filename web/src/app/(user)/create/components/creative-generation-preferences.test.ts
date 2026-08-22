@@ -33,8 +33,12 @@ describe("generationPreferenceSummary", () => {
     });
 
     it("keeps intelligent ratio and quality available when a model declares fixed capabilities", () => {
-        expect(generationRatioOptions("image", { aspectRatios: ["9:16"] }).map((option) => option.value)).toEqual(["auto", "9:16"]);
+        expect(generationRatioOptions("image", { aspectRatios: ["9:16"] }).map((option) => option.value)).toEqual(["auto", "9:16", "1152x2048", "2160x3840"]);
         expect(generationResolutionOptions("video", { resolutions: ["1080P"] }).map((option) => option.value)).toEqual(["auto", "1080P"]);
+    });
+
+    it("keeps high-resolution image presets for a declared image ratio", () => {
+        expect(generationRatioOptions("image", { aspectRatios: ["16:9"] }).map((option) => option.value)).toEqual(["auto", "16:9", "2048x1152", "3840x2160"]);
     });
 
     it("exposes the same positive custom pixel editor for images and videos", async () => {

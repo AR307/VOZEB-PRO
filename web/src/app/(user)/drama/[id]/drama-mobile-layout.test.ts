@@ -72,9 +72,9 @@ describe("drama mobile list layout", () => {
         expect(agent).toContain("activated");
         expect(agent).not.toContain("剧本右侧工作栏");
         expect(agent).toContain("destroyOnHidden={false}");
-        expect(scriptWorkspace).toContain("<DramaEpisodeSettings");
-        expect(scriptWorkspace).toContain("min-[1366px]:grid-cols-[200px_minmax(0,1fr)_282px]");
-        expect(sections).toContain("min-[1366px]:!hidden");
+        expect(scriptWorkspace).not.toContain("<DramaEpisodeSettings");
+        expect(scriptWorkspace).toContain("min-[1120px]:grid-cols-[200px_minmax(700px,1fr)]");
+        expect(sections).not.toContain("min-[1366px]:!hidden");
         for (const label of ["分镜驱动", "直接生成", "参考图"]) {
             expect(episodeSettings).toContain(label);
             expect(storyboardCard).toContain(label);

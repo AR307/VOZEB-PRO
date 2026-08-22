@@ -371,7 +371,7 @@ export function DramaScriptPanel({
                                 AI 整理
                             </Button>
                             <Popover trigger="click" placement="bottomRight" styles={{ container: { padding: 12, width: 320 } }} content={<DramaEpisodeSettings project={project} episode={episode} embedded />}>
-                                <Button className="!h-8 !px-2.5 min-[1366px]:!hidden" size="small" icon={<Settings2 className="size-3.5" />} aria-label="打开本集设置">
+                                <Button className="!h-8 !px-2.5" size="small" icon={<Settings2 className="size-3.5" />} aria-label="打开本集设置">
                                     本集设置
                                 </Button>
                             </Popover>

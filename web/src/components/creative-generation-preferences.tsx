@@ -88,16 +88,20 @@ type ResolutionOption = { value: string; label: string; shortLabel?: string };
 export function generationRatioOptions(capability: MediaCapability, profile?: CreativeModelCapabilityProfile): RatioOption[] {
     const defaults = capability === "image" ? imageRatios : videoRatios;
     if (!profile?.aspectRatios?.length) return [...defaults];
-    const configured = profile.aspectRatios
-        .filter((value) => value.trim().toLowerCase() !== "auto")
-        .map((value) => {
-            const preset = defaults.find((option) => option.value.toLowerCase() === value.toLowerCase());
-            if (preset) return preset;
-            const [width, height] = ratioPreviewSize(value);
-            return { value, label: value, width, height };
-        });
+    const configuredValues = profile.aspectRatios.filter((value) => value.trim().toLowerCase() !== "auto");
+    const configured = configuredValues.map((value) => {
+        const preset = defaults.find((option) => option.value.toLowerCase() === value.toLowerCase());
+        if (preset) return preset;
+        const [width, height] = ratioPreviewSize(value);
+        return { value, label: value, width, height };
+    });
     const smart = defaults.find((option) => option.value === "auto")!;
-    return [smart, ...configured.filter((option, index, options) => options.findIndex((item) => item.value.toLowerCase() === option.value.toLowerCase()) === index)];
+    const uniqueConfigured = configured.filter((option, index, options) => options.findIndex((item) => item.value.toLowerCase() === option.value.toLowerCase()) === index);
+    if (capability !== "image") return [smart, ...uniqueConfigured];
+
+    const declaredRatios = configuredValues.filter((value) => /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(value.trim())).map(normalizedRatio);
+    const highResolutionPresets = defaults.filter((option) => parseCustomDimensions(option.value) && declaredRatios.includes(normalizedRatio(option.value)));
+    return [smart, ...uniqueConfigured, ...highResolutionPresets.filter((option) => !uniqueConfigured.some((item) => item.value.toLowerCase() === option.value.toLowerCase()))];
 }
 
 export function generationResolutionOptions(capability: MediaCapability, profile?: CreativeModelCapabilityProfile): ResolutionOption[] {
@@ -131,6 +135,22 @@ function ratioPreviewSize(value: string): [number, number] {
     if (!match) return [18, 18];
     const ratio = Number(match[1]) / Number(match[2]);
     return ratio >= 1 ? [24, Math.max(8, 24 / ratio)] : [Math.max(8, 24 * ratio), 24];
+}
+
+function normalizedRatio(value: string) {
+    const dimensions = value.trim().match(/^(\d+)x(\d+)$/i);
+    const ratio = dimensions ? `${dimensions[1]}:${dimensions[2]}` : value.trim();
+    const parts = ratio.split(":").map(Number);
+    if (parts.length !== 2 || !parts.every((part) => Number.isFinite(part) && part > 0)) return ratio.toLowerCase();
+    const divisor = greatestCommonDivisor(parts[0], parts[1]);
+    return `${parts[0] / divisor}:${parts[1] / divisor}`;
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+    let a = Math.abs(left);
+    let b = Math.abs(right);
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
 }
 
 function normalizeResolution(value: string) {
