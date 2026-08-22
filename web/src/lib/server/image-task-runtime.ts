@@ -113,29 +113,22 @@ export async function persistImageTaskResult(task: ImageTask, origin: string, re
 export async function markImageTaskFailed(task: ImageTask, error: string) {
     const current = (await getImageTask(task.id)) || task;
     if (current.status === "success" || current.status === "cancelled") return current;
-    if (current.billing?.pointsRecordId && !current.billing.refunded) {
-        const settings = await getAuthSettings();
-        await refundUserPoints(
-            current.userId,
-            generationModelId(current.config),
-            current.billing.pointsCost,
-            "image",
-            imageUnits(current.config.quality, settings.generationPointMultipliers.imageQuality),
-            `image-task:${current.id}:attempt:${current.attemptNo || 1}:refund`,
-            current.billing.pointsRecordId,
-        );
-        await updateImageTask(current.id, { billing: { ...current.billing, refunded: true } });
-    }
     const attempts = finishGenerationAttempt(current.attempts || [], current.attemptNo || current.attempts?.at(-1)?.attemptNo || 1, {
         status: "failed",
         error,
         pointsCost: current.billing?.pointsCost,
         pointsRecordId: current.billing?.pointsRecordId,
     });
+    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500), retryable: true, billing: current.billing });
+    if (!failed) {
+        const latest = await getImageTask(current.id);
+        if (latest?.status === "error" || latest?.status === "cancelled") return refundImageTask(latest);
+        return latest;
+    }
     await updateImageTask(current.id, { attempts, candidateConfigs: [], attemptNo: attempts.at(-1)?.attemptNo });
-    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500), retryable: true });
-    await writeImageGenerationLog({ ...current, retryable: true }, "failed", "", Date.now() - current.createdAt, error).catch((logError) => console.error("Image generation failure log write failed", logError));
-    return failed;
+    const refunded = await refundImageTask(failed);
+    await writeImageGenerationLog({ ...refunded, retryable: true }, "failed", "", Date.now() - current.createdAt, error).catch((logError) => console.error("Image generation failure log write failed", logError));
+    return refunded;
 }
 
 async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunResult, origin: string, authContext: string): Promise<ImageUpstreamStep> {
@@ -275,15 +268,9 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
         if (current?.status === "cancelled") await refundImageTask(current);
         return current;
     }
-    const logged = await writeImageGenerationLog(current, "success", safeResults, Date.now() - current.createdAt);
-    const loggedAssets = logged?.assets?.length ? logged.assets : logged?.asset ? [logged.asset] : [];
-    const finalResults = loggedAssets.length
-        ? loggedAssets.map((asset) => ({ dataUrl: asset.serverUrl || asset.url, remoteUrl: asset.remoteUrl, serverUrl: asset.serverUrl, width: asset.width, height: asset.height, bytes: asset.bytes, mimeType: asset.mimeType }))
-        : safeResults;
-    const finalResult = finalResults[0];
     const completed = await transitionImageTask(current, ["pending", "running"], {
         status: "success",
-        result: { ...finalResult, results: finalResults },
+        result: { ...safeResults[0], results: safeResults },
         pointsRemaining: result.pointsRemaining,
         retryable: false,
     });
@@ -292,6 +279,15 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
         if (latest?.status === "cancelled") await refundImageTask(latest);
         return latest;
     }
+    const logged = await writeImageGenerationLog(completed, "success", safeResults, Date.now() - completed.createdAt).catch((logError) => {
+        console.error("Image generation success log write failed", logError);
+        return undefined;
+    });
+    const loggedAssets = logged?.assets?.length ? logged.assets : logged?.asset ? [logged.asset] : [];
+    const finalResults = loggedAssets.length
+        ? loggedAssets.map((asset) => ({ dataUrl: asset.serverUrl || asset.url, remoteUrl: asset.remoteUrl, serverUrl: asset.serverUrl, width: asset.width, height: asset.height, bytes: asset.bytes, mimeType: asset.mimeType }))
+        : safeResults;
+    const finalResult = finalResults[0];
     const attempts = finishGenerationAttempt(completed.attempts || [], completed.attemptNo || completed.attempts?.at(-1)?.attemptNo || 1, {
         status: "succeeded",
         pointsCost: result.pointsCost ?? completed.billing?.pointsCost,

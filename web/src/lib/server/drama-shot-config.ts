@@ -76,7 +76,13 @@ function discreteDurationSlices(requested: number, options: number[]) {
 }
 
 function configuredDurationSeconds(value: Record<string, unknown>) {
-    return Array.from(new Set(Object.keys(value).map(Number).filter((seconds) => Number.isFinite(seconds) && Number.isInteger(seconds) && seconds > 0))).sort((left, right) => left - right);
+    return Array.from(
+        new Set(
+            Object.keys(value)
+                .map(Number)
+                .filter((seconds) => Number.isFinite(seconds) && Number.isInteger(seconds) && seconds > 0),
+        ),
+    ).sort((left, right) => left - right);
 }
 
 function normalizedDurationSeconds(value: unknown) {

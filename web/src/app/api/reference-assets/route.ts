@@ -35,7 +35,7 @@ export async function POST(request: Request) {
             .join("/")}`;
         return NextResponse.json({
             url: browserUrl,
-            upstreamUrl: asset.url || createSignedReferenceAssetUrl(asset.token, origin) || undefined,
+            upstreamUrl: asset.url || createSignedReferenceAssetUrl(asset.token, origin, currentUser.id) || undefined,
             token: asset.token,
             key: asset.token,
             storage: asset.storage,

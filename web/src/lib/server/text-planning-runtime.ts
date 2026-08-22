@@ -2,7 +2,7 @@ import type { SystemModelChannel } from "@/lib/auth/store";
 import { recordChannelRuntimeFailure, recordChannelRuntimeSuccess } from "@/lib/server/channel-runtime-health";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
-import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
+import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString, readProviderValue } from "@/lib/server/provider-task-config";
 import { extractJsonObjectText } from "@/lib/server/structured-model-output";
 import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
@@ -17,6 +17,7 @@ export type TextPlanningCandidate = {
 export type TextPlanningTool = { name: string; description: string; parameters: Record<string, unknown> };
 export type TextPlanningCall = { arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number };
 type TextPlanningRequestErrorReason = "http" | "transport" | "invalid-structure";
+export type StructuredTextFailureCode = "invalid-response-json" | "missing-structured-result" | "invalid-structured-result";
 
 type RuntimeState = {
     preferred?: TextPlanningProtocol;
@@ -63,10 +64,15 @@ export class TextPlanningRequestError extends Error {
         readonly status = 502,
         readonly retryable = status >= 500 || status === 408 || status === 429,
         readonly reason: TextPlanningRequestErrorReason = "http",
+        readonly failureCode?: StructuredTextFailureCode,
     ) {
         super(message);
         this.name = "TextPlanningRequestError";
     }
+}
+
+export function isStructuredTextFailure(error: unknown): error is TextPlanningRequestError {
+    return error instanceof TextPlanningRequestError && error.reason === "invalid-structure";
 }
 
 export function rankTextPlanningCandidates<T extends TextPlanningCandidate>(candidates: T[], now = Date.now()) {
@@ -224,13 +230,35 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
         const raw = await response.text();
         throw new TextPlanningRequestError(safeUpstreamError(raw, response.status), response.status, retryableStatus(response.status));
     }
-    const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!payload) throw new TextPlanningRequestError("文本模型返回了无效 JSON", 502, false, "invalid-structure");
-    if (request.protocol === "custom" && isProviderBusinessError(payload)) throw new TextPlanningRequestError(readProviderError(payload) || "自定义文本协议返回失败");
-    const argumentsText = readProtocolArguments(payload, input.tool.name, request, input.allowNaturalLanguage);
-    if (!argumentsText || !validArguments(input, argumentsText)) {
+    const raw = await response.text();
+    let payload: Record<string, unknown> | null = null;
+    try {
+        const parsed = JSON.parse(raw.replace(/^\uFEFF/u, "").trim());
+        payload = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
         await input.onInvalidResponse?.(response.headers);
-        throw new TextPlanningRequestError("模型没有返回所需的结构化结果", 502, false, "invalid-structure");
+        console.error("[text-planning] structured response is not JSON", JSON.stringify({ protocol: request.protocol, status: response.status, responseBytes: Buffer.byteLength(raw, "utf8") }));
+        throw new TextPlanningRequestError(`文本模型返回了无效 JSON（协议：${request.protocol}）`, 502, false, "invalid-structure", "invalid-response-json");
+    }
+    if (!payload) {
+        await input.onInvalidResponse?.(response.headers);
+        console.error("[text-planning] structured response has invalid top-level value", JSON.stringify({ protocol: request.protocol, status: response.status, responseBytes: Buffer.byteLength(raw, "utf8") }));
+        throw new TextPlanningRequestError(`文本模型返回的顶层数据无效（协议：${request.protocol}）`, 502, false, "invalid-structure", "invalid-response-json");
+    }
+    if (request.protocol === "custom" && isProviderBusinessError(payload)) {
+        await input.onInvalidResponse?.(response.headers);
+        throw new TextPlanningRequestError(readProviderError(payload) || "自定义文本协议返回失败");
+    }
+    const argumentsText = readProtocolArguments(payload, input.tool.name, request, input.allowNaturalLanguage);
+    if (!argumentsText) {
+        await input.onInvalidResponse?.(response.headers);
+        console.error("[text-planning] structured response has no readable result", JSON.stringify({ protocol: request.protocol, tool: input.tool.name, ...describeStructuredPayload(payload) }));
+        throw new TextPlanningRequestError(`文本模型没有返回可识别的结构化结果（协议：${request.protocol}）`, 502, false, "invalid-structure", "missing-structured-result");
+    }
+    if (!validArguments(input, argumentsText)) {
+        await input.onInvalidResponse?.(response.headers);
+        console.error("[text-planning] structured response failed argument validation", JSON.stringify({ protocol: request.protocol, tool: input.tool.name, ...describeStructuredPayload(payload) }));
+        throw new TextPlanningRequestError(`文本模型返回了 JSON，但字段不符合 ${input.tool.name} 要求`, 502, false, "invalid-structure", "invalid-structured-result");
     }
     const elapsedMs = Date.now() - startedAt;
     recordTextSuccess(input.candidate, request.protocol, elapsedMs);
@@ -241,7 +269,8 @@ function readProtocolArguments(payload: Record<string, unknown>, toolName: strin
     if (request.protocol === "responses") return responsesArguments(payload, toolName, allowNaturalLanguage);
     if (request.protocol === "gemini") return geminiArguments(payload, toolName, allowNaturalLanguage);
     if (request.protocol === "custom") {
-        const content = readProviderString(payload, request.resultField, TEXT_RESULT_KEYS);
+        const configured = readProviderValue(payload, request.resultField);
+        const content = jsonObjectArguments(configured) || readProviderString(payload, request.resultField, TEXT_RESULT_KEYS);
         return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "");
     }
     return chatArguments(payload, toolName, allowNaturalLanguage);
@@ -255,13 +284,14 @@ function planningMessages(input: StructuredTextRequest, recovery = false) {
 
 function chatArguments(payload: Record<string, unknown>, toolName: string, allowNaturalLanguage: boolean) {
     const message = firstRecord(payload.choices)?.message as Record<string, unknown> | undefined;
-    const call = records(message?.tool_calls).find((item) => record(item.function)?.name === toolName);
+    const toolCalls = records(message?.tool_calls);
+    const call = toolCalls.find((item) => record(item.function)?.name === toolName) || (toolCalls.length === 1 ? toolCalls[0] : undefined);
     const argumentsText = jsonObjectArguments(record(call?.function)?.arguments);
     if (argumentsText) return argumentsText;
     const content = textContent(message?.content);
     if (content) return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "");
     // Some compatible gateways wrap a Chat result as a Responses payload.
-    return responsesArguments(payload, toolName, allowNaturalLanguage);
+    return responsesArguments(payload, toolName, allowNaturalLanguage) || directStructuredObject(payload);
 }
 
 function responsesArguments(payload: Record<string, unknown>, toolName: string, allowNaturalLanguage: boolean) {
@@ -276,18 +306,50 @@ function responsesArguments(payload: Record<string, unknown>, toolName: string, 
             .flatMap((item) => [typeof item.text === "string" ? item.text : "", ...records(item.content).map((content) => (typeof content.text === "string" ? content.text : ""))])
             .join("")
             .trim();
-    return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "");
+    return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "") || directStructuredObject(payload);
 }
 
 function geminiArguments(payload: Record<string, unknown>, toolName: string, allowNaturalLanguage: boolean) {
     const parts = records(record(firstRecord(payload.candidates)?.content)?.parts);
     const call = parts.map((part) => record(part.functionCall)).find((item) => item?.name === toolName);
-    if (call?.args && typeof call.args === "object") return JSON.stringify(call.args);
+    const callArguments = jsonObjectArguments(call?.args);
+    if (callArguments) return callArguments;
     const content = parts
         .map((part) => (typeof part.text === "string" ? part.text : ""))
         .join("")
         .trim();
-    return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "");
+    return extractJsonObjectText(content) || (allowNaturalLanguage ? content : "") || directStructuredObject(payload);
+}
+
+function directStructuredObject(payload: Record<string, unknown>) {
+    const hasProtocolEnvelope = Array.isArray(payload.choices) || Array.isArray(payload.output) || Array.isArray(payload.candidates);
+    const values = hasProtocolEnvelope ? [payload.data, payload.result, payload.response] : [payload, payload.data, payload.result, payload.response];
+    for (const value of values) {
+        const argumentsText = jsonObjectArguments(value);
+        if (argumentsText) return argumentsText;
+    }
+    return "";
+}
+
+function describeStructuredPayload(payload: Record<string, unknown>) {
+    const choices = records(payload.choices);
+    const message = record(choices[0]?.message);
+    const output = records(payload.output);
+    return {
+        topLevelKeys: Object.keys(payload).slice(0, 16),
+        choices: choices.length,
+        messageKeys: message ? Object.keys(message).slice(0, 12) : [],
+        toolCalls: records(message?.tool_calls).length,
+        output: output.length,
+        candidates: records(payload.candidates).length,
+        resultTypes: ["data", "result", "response", "output_text"].map((key) => `${key}:${valueType(payload[key])}`),
+    };
+}
+
+function valueType(value: unknown) {
+    if (value === null) return "null";
+    if (Array.isArray(value)) return "array";
+    return typeof value;
 }
 
 function candidateScore(state: RuntimeState | undefined, now: number) {

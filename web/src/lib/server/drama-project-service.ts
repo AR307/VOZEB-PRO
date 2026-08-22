@@ -43,6 +43,7 @@ export async function createDramaProjectForUser(userId: string, value: unknown) 
     const projectId = input.sourceHandoffId ? `drama-${input.sourceHandoffId}` : `drama-${nanoid()}`;
     const episode: DramaEpisode = {
         id: `episode-${nanoid()}`,
+        episodeNumber: 1,
         title: "第 1 集",
         script: input.initialScript,
         outline: "",
@@ -190,7 +191,7 @@ function normalizeCreateInput(value: unknown): Required<Omit<CreateDramaProjectI
 export function normalizeProject(value: unknown, current: DramaProject): DramaProject {
     const input = object(value);
     const episodes = array(input.episodes)
-        .map(normalizeEpisode)
+        .map((value, index) => normalizeEpisode(value, index))
         .filter((episode): episode is DramaEpisode => Boolean(episode));
     if (!episodes.length) throw new DramaProjectServiceError("短剧项目至少需要一集", 400);
     const activeEpisodeId = cleanText(input.activeEpisodeId);
@@ -218,7 +219,7 @@ export function normalizeProject(value: unknown, current: DramaProject): DramaPr
     };
 }
 
-function normalizeEpisode(value: unknown): DramaEpisode | null {
+function normalizeEpisode(value: unknown, index: number): DramaEpisode | null {
     const input = object(value);
     const id = cleanText(input.id);
     if (!id) return null;
@@ -237,6 +238,7 @@ function normalizeEpisode(value: unknown): DramaEpisode | null {
     const scriptRichContent = normalizeDramaScriptRichContent(input.scriptRichContent);
     return {
         id,
+        episodeNumber: optionalPositiveInteger(input.episodeNumber) || index + 1,
         title: cleanText(input.title) || "未命名剧集",
         script: scriptRichContent ? dramaRichContentToPlainText(scriptRichContent).trim() : script,
         scriptRichContent,

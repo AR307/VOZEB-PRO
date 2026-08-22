@@ -70,7 +70,7 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
     headers.set("content-type", "application/json");
     const response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: JSON.stringify(payload), cache: "no-store" });
     if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "自定义图片接口调用失败"));
-    const data = await parseImageSubmissionJson<ImageApiResponse>(response);
+    const data = await parseImageSubmissionJson<ImageApiResponse>(task, response);
     return parseChargedImageResponse(task, response, async () => {
         if (isProviderBusinessError(data)) throw new GenerationSubmissionSafeFailure(readProviderError(data) || "自定义图片接口返回失败");
         const mediaBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;

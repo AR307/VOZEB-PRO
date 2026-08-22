@@ -18,7 +18,7 @@ function collectBoundaries(value: string) {
         ["“", "”"],
         ["「", "」"],
         ["『", "』"],
-        ["\"", "\""],
+        ['"', '"'],
     ]);
     let closer = "";
     for (let index = 0; index < value.length; index += 1) {

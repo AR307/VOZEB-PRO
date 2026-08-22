@@ -300,11 +300,28 @@ export function DramaRichScriptEditor({
                 <div className="grid gap-4 py-1" data-drama-search-dialog>
                     <label className="grid gap-1.5">
                         <span className="text-xs font-medium text-muted-foreground">查找</span>
-                        <Input autoFocus allowClear prefix={<Search className="size-4 text-muted-foreground" />} value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="输入要查找的内容" aria-label="查找内容" onPressEnter={findNext} />
+                        <Input
+                            autoFocus
+                            allowClear
+                            prefix={<Search className="size-4 text-muted-foreground" />}
+                            value={searchText}
+                            onChange={(event) => setSearchText(event.target.value)}
+                            placeholder="输入要查找的内容"
+                            aria-label="查找内容"
+                            onPressEnter={findNext}
+                        />
                     </label>
                     <label className="grid gap-1.5">
                         <span className="text-xs font-medium text-muted-foreground">替换为</span>
-                        <Input allowClear prefix={<ReplaceAll className="size-4 text-muted-foreground" />} value={replaceText} onChange={(event) => setReplaceText(event.target.value)} placeholder="输入替换后的内容" aria-label="替换为" onPressEnter={replaceAll} />
+                        <Input
+                            allowClear
+                            prefix={<ReplaceAll className="size-4 text-muted-foreground" />}
+                            value={replaceText}
+                            onChange={(event) => setReplaceText(event.target.value)}
+                            placeholder="输入替换后的内容"
+                            aria-label="替换为"
+                            onPressEnter={replaceAll}
+                        />
                     </label>
                 </div>
             </Modal>

@@ -25,11 +25,7 @@ const advanced: SystemChannelAdvancedConfig = {
 describe("parseChannelExampleConfig", () => {
     it("keeps the create path for text cURL examples", () => {
         const channel = { id: "one", name: "测试", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
-        const result = parseChannelExampleConfig(
-            `curl --url https://api.example.com/v1/chat/completions --data '{"model":"writer-v1","messages":[{"role":"user","content":"hello"}]}'\n{"choices":[{"message":{"content":"ok"}}]}`,
-            channel,
-            advanced,
-        );
+        const result = parseChannelExampleConfig(`curl --url https://api.example.com/v1/chat/completions --data '{"model":"writer-v1","messages":[{"role":"user","content":"hello"}]}'\n{"choices":[{"message":{"content":"ok"}}]}`, channel, advanced);
 
         expect(result?.patch.advancedConfig).toMatchObject({ createPath: "/chat/completions", textModel: "writer-v1" });
     });
@@ -56,21 +52,9 @@ describe("parseChannelExampleConfig", () => {
 
     it("classifies shared task endpoints from request and response evidence", () => {
         const channel = { id: "one", name: "测试", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
-        const image = parseChannelExampleConfig(
-            'POST /v2/tasks\nBody {"model":"image-standard","prompt":"test","reference_images":[]}\nResponse {"task_id":"image-task","status":"queued"}',
-            channel,
-            advanced,
-        );
-        const video = parseChannelExampleConfig(
-            'POST /v2/tasks\nBody {"model":"video-standard","prompt":"test","duration":8}\nResponse {"task_id":"video-task","status":"queued"}',
-            channel,
-            advanced,
-        );
-        const imageQuery = parseChannelExampleConfig(
-            'GET /v2/image-tasks/:task_id\nResponse {"status":"completed","image_url":"https://cdn.example.test/image.png"}',
-            channel,
-            advanced,
-        );
+        const image = parseChannelExampleConfig('POST /v2/tasks\nBody {"model":"image-standard","prompt":"test","reference_images":[]}\nResponse {"task_id":"image-task","status":"queued"}', channel, advanced);
+        const video = parseChannelExampleConfig('POST /v2/tasks\nBody {"model":"video-standard","prompt":"test","duration":8}\nResponse {"task_id":"video-task","status":"queued"}', channel, advanced);
+        const imageQuery = parseChannelExampleConfig('GET /v2/image-tasks/:task_id\nResponse {"status":"completed","image_url":"https://cdn.example.test/image.png"}', channel, advanced);
 
         expect(image?.patch.advancedConfig).toMatchObject({ createPath: "/v2/tasks", imageModel: "image-standard", supportsReferenceImage: true });
         expect(video?.patch.advancedConfig).toMatchObject({ createPath: "/v2/tasks", videoModel: "video-standard", durationRange: "8 秒或按上游限制" });

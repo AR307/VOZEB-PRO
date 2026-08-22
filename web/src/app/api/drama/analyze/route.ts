@@ -3,14 +3,14 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBody } from "@/lib/auth/request";
 import { getAuthSettings, isAuthInputError, refundUserPoints } from "@/lib/auth/store";
-import { describeDramaAnalysisCandidate, dramaContentTool, dramaVisualTool, hasCompleteDramaContentAnalysis, hasCompleteDramaDialogueAttribution, hasUsableDramaToolArguments, normalizeDramaContentAnalysis } from "@/lib/server/drama-analysis";
+import { describeDramaAnalysisCandidate, dramaContentTool, dramaVisualTool, hasCompleteDramaContentAnalysis, hasUsableDramaToolArguments, normalizeDramaContentAnalysis } from "@/lib/server/drama-analysis";
 import { mergeDramaContentAnalyses } from "@/lib/server/drama-analysis-merge";
 import { splitDramaScriptAtBoundary } from "@/lib/server/drama-analysis-segmentation";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { checkRateLimit } from "@/lib/server/security";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
-import { rankTextPlanningCandidates, requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
+import { isStructuredTextFailure, rankTextPlanningCandidates, requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody, type NormalizedDramaVisualInput } from "@/lib/server/drama-analysis-input";
 import { dramaShotDurationInstruction, resolveDramaVideoDurationPolicy } from "@/lib/server/drama-shot-config";
 import { analyzeDramaVisualBatches } from "@/lib/server/drama-visual-analysis-runtime";
@@ -79,6 +79,8 @@ export async function POST(request: Request) {
                                 user.id,
                                 tool,
                                 visualBatchIdempotencyKey(user.id, requestId, candidate, batch),
+                                undefined,
+                                false,
                             );
                             return { value: JSON.parse(call.args), call };
                         },
@@ -113,11 +115,15 @@ export async function POST(request: Request) {
                     },
                 });
                 const response = NextResponse.json({ code: 0, data: result.data, msg: "内容结构待审核" });
-                const pointsRemaining = result.calls.map((call) => call.pointsRemaining).filter((value): value is number => typeof value === "number").at(-1);
+                const pointsRemaining = result.calls
+                    .map((call) => call.pointsRemaining)
+                    .filter((value): value is number => typeof value === "number")
+                    .at(-1);
                 if (typeof pointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(pointsRemaining));
                 return response;
             } catch (error) {
                 latestError = error;
+                if (!shouldTryAnotherTextCandidate(error)) break;
             }
         }
         throw latestError instanceof Error ? latestError : new Error("没有可用的文本模型渠道");
@@ -135,7 +141,13 @@ function visualBatchIdempotencyKey(userId: string, requestId: string, candidate:
 function isAdaptiveVisualBatchError(error: unknown) {
     const status = error && typeof error === "object" && "status" in error ? Number(error.status) : 0;
     const message = error instanceof Error ? error.message : "";
-    return status === 413 || message === "模型没有返回所需的结构化结果" || message === "模型没有返回结构化剧本结果";
+    return status === 413 || isStructuredTextFailure(error) || message === "模型没有返回所需的结构化结果" || message === "模型没有返回结构化剧本结果";
+}
+
+function shouldTryAnotherTextCandidate(error: unknown) {
+    if (isStructuredTextFailure(error)) return false;
+    const status = error && typeof error === "object" && "status" in error ? Number(error.status) : 0;
+    return status >= 500 || status === 408 || status === 429;
 }
 
 async function requestFunctionCall(
@@ -193,7 +205,7 @@ async function analyzeDramaContentCandidate(input: {
     const calls: DramaContentCall[] = [];
     try {
         const data = await analyzeDramaScriptSegment(input, input.script, "full", calls);
-        if (!hasCompleteDramaContentAnalysis(data, input.script)) throw new Error("模型分段合并后的剧本结构不完整");
+        if (!hasCompleteDramaSourceCoverage(data, input.script)) throw new Error("模型分段合并后的剧本结构不完整");
         return { data, calls };
     } catch (error) {
         for (const call of calls) {
@@ -205,12 +217,7 @@ async function analyzeDramaContentCandidate(input: {
     }
 }
 
-async function analyzeDramaScriptSegment(
-    input: Parameters<typeof analyzeDramaContentCandidate>[0],
-    script: string,
-    segmentKey: string,
-    calls: DramaContentCall[],
-): Promise<ReturnType<typeof normalizeDramaContentAnalysis>> {
+async function analyzeDramaScriptSegment(input: Parameters<typeof analyzeDramaContentCandidate>[0], script: string, segmentKey: string, calls: DramaContentCall[]): Promise<ReturnType<typeof normalizeDramaContentAnalysis>> {
     try {
         const call = await requestFunctionCall(
             input.origin,
@@ -221,11 +228,12 @@ async function analyzeDramaScriptSegment(
             input.userId,
             input.tool,
             systemAiIdempotencyKey("drama-analyze", input.userId, "content", input.requestId, segmentKey, script, input.candidate.channel.id, input.candidate.upstreamModel),
-            (argumentsText) => hasUsableDramaToolArguments(argumentsText, input.tool.name) && hasCompleteDramaDialogueAttribution(argumentsText, script),
+            (argumentsText) => hasUsableDramaToolArguments(argumentsText, input.tool.name),
             false,
         );
         try {
             const parsed = JSON.parse(call.args);
+            if (!hasCompleteDramaSourceCoverage(parsed, script)) throw new Error("模型返回的剧本原文不完整");
             const data = normalizeDramaContentAnalysis(parsed, input.durationPolicy, script);
             if (!hasCompleteDramaContentAnalysis(data, script)) throw new Error("模型返回的剧本对白或原文不完整");
             calls.push(call);
@@ -246,7 +254,18 @@ async function analyzeDramaScriptSegment(
 function isAdaptiveContentError(error: unknown) {
     const status = error && typeof error === "object" && "status" in error ? Number(error.status) : 0;
     const message = error instanceof Error ? error.message : "";
-    return status === 413 || message === "模型没有返回所需的结构化结果" || message === "模型没有返回结构化剧本结果" || message === "模型返回的剧本对白或原文不完整";
+    return status === 413 || isStructuredTextFailure(error) || message === "模型没有返回所需的结构化结果" || message === "模型没有返回结构化剧本结果" || message === "模型返回的剧本原文不完整" || message === "模型返回的剧本对白或原文不完整";
+}
+
+function hasCompleteDramaSourceCoverage(value: unknown, sourceScript: string) {
+    const source = sourceScript.trim().replace(/\s/gu, "");
+    const output = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const shots = "shots" in output && Array.isArray(output.shots) ? output.shots : [];
+    const covered = shots
+        .map((shot) => (shot && typeof shot === "object" && !Array.isArray(shot) && "sourceText" in shot && typeof shot.sourceText === "string" ? shot.sourceText : ""))
+        .join("")
+        .replace(/\s/gu, "");
+    return Boolean(source && covered === source);
 }
 
 function readCallResult(args: string, headers: Headers) {

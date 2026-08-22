@@ -9,6 +9,7 @@ import {
     findImageResult,
     ImageQueryContractError,
     imageRequestAspectRatio,
+    imagePointsIdempotencyKey,
     imageTaskPollAttempts,
     imageTaskPollUrls,
     imageTaskRequestTimeoutMs,
@@ -56,6 +57,12 @@ describe("GlobalAiOpc image task paths", () => {
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
         expect(headers.get("x-vozeb-pro-worker-user-id")).toBe("user-one");
         expect(headers.get("x-vozeb-pro-logical-model")).toBe("image-logical");
+    });
+
+    it("uses a distinct billing identity for response-format fallback", () => {
+        const task = { id: "image-task-one", attemptNo: 2 } as never;
+        expect(imagePointsIdempotencyKey(task)).toBe("image-task:image-task-one:attempt:2");
+        expect(imagePointsIdempotencyKey(task, "base64")).toBe("image-task:image-task-one:attempt:2:base64");
     });
 
     it("upscales small exact dimensions for the provider instead of rejecting the task", () => {

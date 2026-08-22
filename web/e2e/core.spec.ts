@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { strToU8, zipSync } from "fflate";
 import { createCanvasProject, deleteCanvasProject, expectCanvasSaved, readCanvasProject } from "./canvas-e2e-helpers";
 import { E2E_PAYMENT_WEBHOOK_SECRET, E2E_PROTOCOL_ORIGIN, pollTask, protocolFixtureState, resetProtocolFixture } from "./support";
 
@@ -533,6 +534,65 @@ test("Drama wide script workspace keeps episode settings and production mode vis
     }
 });
 
+test("Drama imports Word chapters and persists an edited episode number", async ({ page, request }) => {
+    await page.setViewportSize({ width: 1672, height: 1000 });
+    const created = await request.post("/api/drama/projects", {
+        data: {
+            title: `短剧 Word 导入 ${randomUUID().slice(0, 8)}`,
+            summary: "验证 Word 章节导入和集数持久化",
+            ratio: "9:16",
+            initialScript: "待替换的初始剧本。",
+        },
+    });
+    expect(created.ok(), await created.text()).toBe(true);
+    const project = ((await created.json()) as { data: { project: { id: string } } }).data.project;
+
+    try {
+        await page.goto(`/drama/${project.id}`, { waitUntil: "domcontentloaded" });
+        await expect(page.locator("[data-drama-script-workspace]")).toBeVisible({ timeout: 20_000 });
+
+        const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>第一章 归来</w:t></w:r></w:p>
+<w:p><w:r><w:t>顾言推开城门。</w:t></w:r></w:p>
+<w:p><w:r><w:t>第二章 真相</w:t></w:r></w:p>
+<w:p><w:r><w:t>门后站着林夏。</w:t></w:r></w:p>
+</w:body></w:document>`;
+        const docx = Buffer.from(zipSync({ "word/document.xml": strToU8(documentXml) }));
+        await page.locator('input[type="file"][accept*=".docx"]').setInputFiles({ name: "章节小说.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: docx });
+
+        const importDialog = page.getByRole("dialog", { name: "导入整本剧本" });
+        await expect(importDialog).toBeVisible();
+        await expect(importDialog.getByText("第一章 归来", { exact: true })).toBeVisible();
+        await expect(importDialog.getByText("第二章 真相", { exact: true })).toBeVisible();
+        await importDialog.getByRole("button", { name: "确认导入 2 集" }).click();
+
+        await expect
+            .poll(async () => {
+                const stored = await dramaProject(request, project.id);
+                return stored.episodes.map((episode) => ({ episodeNumber: episode.episodeNumber, title: episode.title, sourceRange: episode.sourceRange, script: episode.script }));
+            })
+            .toEqual([
+                { episodeNumber: 1, title: "第 1 集 · 第一章 归来", sourceRange: "第一章 归来", script: "第一章 归来\n顾言推开城门。" },
+                { episodeNumber: 2, title: "第 2 集 · 第二章 真相", sourceRange: "第二章 真相", script: "第二章 真相\n门后站着林夏。" },
+            ]);
+
+        const episodeNumber = page.locator("[data-drama-episode-settings]").getByRole("spinbutton", { name: "集数" });
+        await expect(episodeNumber).toHaveValue("1");
+        await episodeNumber.fill("7");
+        await episodeNumber.press("Enter");
+        await expect.poll(async () => (await dramaProject(request, project.id)).episodes[0]?.episodeNumber).toBe(7);
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator("[data-drama-script-workspace]")).toBeVisible({ timeout: 20_000 });
+        await expect(page.locator("[data-drama-episode-settings]").getByRole("spinbutton", { name: "集数" })).toHaveValue("7");
+        await expect(page.getByText("第 07 集", { exact: true })).toBeVisible();
+    } finally {
+        const deleted = await request.delete(`/api/drama/projects/${project.id}`);
+        expect(deleted.ok(), await deleted.text()).toBe(true);
+    }
+});
+
 test("video request replay and cancellation keep one upstream task", async ({ request }) => {
     const clientRequestId = `e2e-video:${randomUUID()}`;
     const body = { config: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 }, prompt: "slow video", source: "video-workbench", context: { clientRequestId } };
@@ -584,6 +644,10 @@ async function dramaProject(request: APIRequestContext, projectId: string) {
                 project: {
                     creativeConversationId?: string;
                     episodes: Array<{
+                        episodeNumber?: number;
+                        title: string;
+                        script: string;
+                        sourceRange: string;
                         reviewStatus: string;
                         shots: Array<{
                             storyboardStatus?: string;

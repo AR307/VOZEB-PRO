@@ -30,7 +30,7 @@ async function normalizeReference(reference: VideoGenerationReference, context: 
         originalName: "video-reference.png",
         maxBytes: CREATIVE_UPLOAD_MAX_BYTES,
     });
-    const url = createSignedReferenceAssetUrl(asset.token, context.publicOrigin);
+    const url = createSignedReferenceAssetUrl(asset.token, context.publicOrigin, context.userId);
     if (!url) throw new Error("视频参考素材签名不可用，请检查站点地址和加密密钥");
     return { ...reference, url };
 }

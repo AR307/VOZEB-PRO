@@ -69,6 +69,18 @@ describe("protocol fixture server", () => {
             backgroundPreservedVisuals: ["蓝色渐变", "柔和环境光"],
             layers: [{ kind: "product" }, { kind: "headline" }, { kind: "logo" }, { kind: "badge" }, { kind: "decoration" }],
         });
+
+        const script = "主角推门进入明亮的测试房间，说：测试开始。";
+        const drama = await fetch(`${origin}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                messages: [{ role: "user", content: JSON.stringify({ script }) }],
+                tools: [{ type: "function", function: { name: "analyze_drama_content" } }],
+                tool_choice: { type: "function", function: { name: "analyze_drama_content" } },
+            }),
+        }).then((value) => value.json());
+        expect(JSON.parse(drama.choices[0].message.tool_calls[0].function.arguments).shots[0].sourceText).toBe(script);
     });
 
     it("serves OpenAI and Stable Diffusion image results", async () => {

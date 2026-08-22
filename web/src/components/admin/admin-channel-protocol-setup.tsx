@@ -203,12 +203,7 @@ export function AdminChannelProtocolSetup({ channel, protocolLocked = false, onC
                             {drafts.length > 1 ? (
                                 <div className="mb-3 max-w-xl">
                                     <LabeledControl label="选择要应用的上游协议">
-                                        <Select
-                                            className="w-full"
-                                            value={selectedDraftIndex}
-                                            options={drafts.map((item, index) => ({ value: index, label: draftOptionLabel(item, index) }))}
-                                            onChange={setSelectedDraftIndex}
-                                        />
+                                        <Select className="w-full" value={selectedDraftIndex} options={drafts.map((item, index) => ({ value: index, label: draftOptionLabel(item, index) }))} onChange={setSelectedDraftIndex} />
                                     </LabeledControl>
                                 </div>
                             ) : null}

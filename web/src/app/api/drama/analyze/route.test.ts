@@ -14,7 +14,7 @@ vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings, isA
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn((origin: string) => origin) }));
 vi.mock("@/lib/server/logical-model-router", () => ({ resolveLogicalModelCandidates: mocks.resolveLogicalModelCandidates }));
 vi.mock("@/lib/server/security", () => ({ checkRateLimit: mocks.checkRateLimit }));
-vi.mock("@/lib/server/text-planning-runtime", () => ({ rankTextPlanningCandidates: vi.fn((items: unknown[]) => items), requestStructuredText: mocks.requestStructuredText }));
+vi.mock("@/lib/server/text-planning-runtime", () => ({ isStructuredTextFailure: vi.fn(() => false), rankTextPlanningCandidates: vi.fn((items: unknown[]) => items), requestStructuredText: mocks.requestStructuredText }));
 
 import { POST } from "./route";
 
@@ -120,12 +120,86 @@ describe("POST /api/drama/analyze", () => {
                     shots: [{ characterNames: [], utterances: [{ type: "dialogue", speaker: "", text: "灰黑色风暴扫过废墟。" }] }],
                 }),
             ),
-        ).toBe(false);
+        ).toBe(true);
         expect(toolBillingKey).toMatch(/:tool$/);
         expect(fallbackBillingKey).toMatch(/:json$/);
         expect(fallbackBillingKey).not.toBe(toolBillingKey);
         expect(input.messages?.[0]?.content).toContain("5、8、10、15 秒");
         expect(input.messages?.[0]?.content).toContain("不能删句");
+    });
+
+    it("normalizes missing model utterances from the original novel instead of rejecting the request", async () => {
+        const script = "顾言推开城门说：“先离开这里。”\n风雪压过城门。";
+        mocks.requestStructuredText.mockResolvedValueOnce({
+            arguments: JSON.stringify({
+                episode: { outline: "城门告急", hook: "", nextPreview: "", sourceRange: "第一章" },
+                characters: [],
+                scenes: [],
+                props: [],
+                clues: [],
+                shots: [{ title: "城门", description: "顾言推开城门", sourceText: script, shotBoundary: "对白后切镜", dialogue: "", narration: "", utterances: [], duration: 5, characterNames: [], sceneName: "城门", propNames: [], clueNames: [] }],
+            }),
+            headers: new Headers(),
+            protocol: "chat",
+            elapsedMs: 10,
+        });
+
+        const response = await POST(
+            new Request("http://localhost/api/drama/analyze", {
+                method: "POST",
+                headers: { "content-type": "application/json", cookie: "session=test" },
+                body: JSON.stringify({ requestId: "drama-content-recover-dialogue", phase: "content", script }),
+            }),
+        );
+        const payload = (await response.json()) as { data: { shots: Array<{ utterances: Array<{ speaker: string; text: string }> }> }; meta?: { mode?: string } };
+
+        expect(response.status).toBe(200);
+        expect(payload.meta?.mode).not.toBe("fallback");
+        expect(payload.data.shots.flatMap((shot) => shot.utterances)).toEqual([expect.objectContaining({ speaker: "顾言", text: "先离开这里。" })]);
+    });
+
+    it("rejects dialogue that still has no specific speaker after source normalization", async () => {
+        const script = "他说：“快走！”";
+        mocks.requestStructuredText.mockResolvedValueOnce({
+            arguments: JSON.stringify({
+                episode: { outline: "紧急撤离", hook: "", nextPreview: "", sourceRange: "第一章" },
+                characters: [],
+                scenes: [],
+                props: [],
+                clues: [],
+                shots: [
+                    {
+                        title: "撤离",
+                        description: "有人催促离开",
+                        sourceText: script,
+                        shotBoundary: "对白结束",
+                        dialogue: "快走！",
+                        narration: "",
+                        utterances: [{ type: "dialogue", speaker: "他", text: "快走！" }],
+                        duration: 5,
+                        characterNames: [],
+                        sceneName: "",
+                        propNames: [],
+                        clueNames: [],
+                    },
+                ],
+            }),
+            headers: new Headers(),
+            protocol: "chat",
+            elapsedMs: 10,
+        });
+
+        const response = await POST(
+            new Request("http://localhost/api/drama/analyze", {
+                method: "POST",
+                headers: { "content-type": "application/json", cookie: "session=test" },
+                body: JSON.stringify({ requestId: "drama-content-unresolved-speaker", phase: "content", script }),
+            }),
+        );
+
+        expect(response.status).toBe(502);
+        await expect(response.json()).resolves.toMatchObject({ code: 502, data: null, msg: "模型返回的剧本对白或原文不完整" });
+        expect(mocks.requestStructuredText).toHaveBeenCalledOnce();
     });
 
     it("splits a malformed single eight-second response before returning it to the editor", async () => {
@@ -159,23 +233,27 @@ describe("POST /api/drama/analyze", () => {
             protocol: "chat",
             elapsedMs: 10,
         });
-        mocks.requestStructuredText.mockResolvedValueOnce({
-            arguments: JSON.stringify({
-                episode: { outline: "长篇对白", hook: "", nextPreview: "", sourceRange: "第一章" },
-                characters: [],
-                scenes: [],
-                props: [],
-                clues: [],
-                shots: [{ title: "错误合并镜头", description: "只概括了开头", sourceText: lines[0], shotBoundary: "没有正确切镜", dialogue: "", narration: "", utterances: [], duration: 8, characterNames: [], sceneName: "", propNames: [], clueNames: [] }],
-            }),
-            headers: new Headers({ "x-vozeb-pro-points-cost": "2", "x-vozeb-pro-points-record-id": "points-full" }),
-            protocol: "chat",
-            elapsedMs: 10,
-        }).mockImplementation(async (input) => {
-            const messages = (input as { messages: Array<{ role: string; content: string }> }).messages;
-            const payload = JSON.parse(messages.at(-1)!.content) as { script: string };
-            return responseForSegment(payload.script);
-        });
+        mocks.requestStructuredText
+            .mockResolvedValueOnce({
+                arguments: JSON.stringify({
+                    episode: { outline: "长篇对白", hook: "", nextPreview: "", sourceRange: "第一章" },
+                    characters: [],
+                    scenes: [],
+                    props: [],
+                    clues: [],
+                    shots: [
+                        { title: "错误合并镜头", description: "只概括了开头", sourceText: lines[0], shotBoundary: "没有正确切镜", dialogue: "", narration: "", utterances: [], duration: 8, characterNames: [], sceneName: "", propNames: [], clueNames: [] },
+                    ],
+                }),
+                headers: new Headers({ "x-vozeb-pro-points-cost": "2", "x-vozeb-pro-points-record-id": "points-full" }),
+                protocol: "chat",
+                elapsedMs: 10,
+            })
+            .mockImplementation(async (input) => {
+                const messages = (input as { messages: Array<{ role: string; content: string }> }).messages;
+                const payload = JSON.parse(messages.at(-1)!.content) as { script: string };
+                return responseForSegment(payload.script);
+            });
 
         const response = await POST(
             new Request("http://localhost/api/drama/analyze", {
@@ -210,37 +288,39 @@ describe("POST /api/drama/analyze", () => {
                 scenes: [],
                 props: [],
                 clues: [],
-                shots: [{
-                    title: "对白",
-                    description: segment,
-                    sourceText: segment,
-                    shotBoundary: "说话人转换",
-                    dialogue: [...segment.matchAll(/：“([^”]+)”/gu)].map((match) => match[1]).join("\n"),
-                    narration: "",
-                    utterances: [...segment.matchAll(/(角色[^“]+)说：“([^”]+)”/gu)].map((match) => ({ type: "dialogue", speaker: match[1], text: match[2] })),
-                    duration: 5,
-                    characterNames: [...segment.matchAll(/(角色[^“]+)说/gu)].map((match) => match[1]),
-                    sceneName: "",
-                    propNames: [],
-                    clueNames: [],
-                }],
+                shots: [
+                    {
+                        title: "对白",
+                        description: segment,
+                        sourceText: segment,
+                        shotBoundary: "说话人转换",
+                        dialogue: [...segment.matchAll(/：“([^”]+)”/gu)].map((match) => match[1]).join("\n"),
+                        narration: "",
+                        utterances: [...segment.matchAll(/(角色[^“]+)说：“([^”]+)”/gu)].map((match) => ({ type: "dialogue", speaker: match[1], text: match[2] })),
+                        duration: 5,
+                        characterNames: [...segment.matchAll(/(角色[^“]+)说/gu)].map((match) => match[1]),
+                        sceneName: "",
+                        propNames: [],
+                        clueNames: [],
+                    },
+                ],
             }),
             headers: billed ? new Headers({ "x-vozeb-pro-points-cost": "3", "x-vozeb-pro-points-record-id": "points-segment" }) : new Headers(),
             protocol: "chat",
             elapsedMs: 10,
         });
-        const invalidResponse = (segment: string, billed = true) => ({
+        const invalidResponse = (segment: string, billed = true, complete = true) => ({
             ...segmentResponse(segment),
             headers: billed ? new Headers({ "x-vozeb-pro-points-cost": "4", "x-vozeb-pro-points-record-id": "points-failed-segment" }) : new Headers(),
-            arguments: JSON.stringify({ episode: { outline: "对白" }, shots: [{ sourceText: segment, description: segment, utterances: [] }] }),
+            arguments: JSON.stringify({ episode: { outline: "对白" }, shots: [{ sourceText: complete ? segment : segment.slice(0, 1), description: segment, utterances: [] }] }),
         });
         mocks.refundUserPoints.mockResolvedValue({ pointsBalance: 90 });
         mocks.requestStructuredText.mockImplementation(async (input) => {
             const messages = (input as { messages: Array<{ role: string; content: string }> }).messages;
             const requestedScript = (JSON.parse(messages.at(-1)!.content) as { script: string }).script;
-            if (requestedScript === script) return invalidResponse(requestedScript, false);
+            if (requestedScript === script) return invalidResponse(requestedScript, false, false);
             if (requestedScript === lines[0]) return segmentResponse(requestedScript, true);
-            return invalidResponse(requestedScript);
+            return invalidResponse(requestedScript, true, false);
         });
 
         const response = await POST(
@@ -305,6 +385,7 @@ describe("POST /api/drama/analyze", () => {
             return (JSON.parse(messages.at(-1)!.content) as { shots: Array<{ id: string }> }).shots.map((shot) => shot.id);
         });
         const billingKeys = mocks.requestStructuredText.mock.calls.map(([input]) => new Headers((input as { headers?: HeadersInit }).headers).get("x-vozeb-pro-points-idempotency-key"));
+        expect((mocks.requestStructuredText.mock.calls[0]?.[0] as { allowRepair?: boolean }).allowRepair).toBe(false);
 
         expect(response.status).toBe(200);
         expect(requestedShotIds).toEqual([

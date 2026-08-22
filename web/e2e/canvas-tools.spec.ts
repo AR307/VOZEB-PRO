@@ -407,6 +407,43 @@ test("canvas box selection downloads selected images and videos as a browser ZIP
         const entries = Object.keys(unzipSync(await readFile(filePath!)));
         expect(entries.some((name) => /[.]png$/i.test(name))).toBe(true);
         expect(entries.some((name) => /[.]mp4$/i.test(name))).toBe(true);
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(surface).toBeVisible({ timeout: 20_000 });
+        const selectMode = page.getByRole("button", { name: "切换到框选模式" });
+        if (await selectMode.isVisible()) await selectMode.click();
+        const mobileBoxes = await Promise.all([page.locator('[data-node-id="selected-image"]').boundingBox(), page.locator('[data-node-id="selected-video"]').boundingBox()]);
+        expect(mobileBoxes.every(Boolean)).toBe(true);
+        const mobileLeft = Math.min(...mobileBoxes.map((box) => box!.x)) - 12;
+        const mobileTop = Math.min(...mobileBoxes.map((box) => box!.y)) - 12;
+        const mobileRight = Math.max(...mobileBoxes.map((box) => box!.x + box!.width)) + 12;
+        const mobileBottom = Math.max(...mobileBoxes.map((box) => box!.y + box!.height)) + 12;
+        await page.mouse.move(mobileLeft, mobileTop);
+        await page.mouse.down();
+        await page.mouse.move(mobileRight, mobileBottom, { steps: 8 });
+        await page.mouse.up();
+
+        const mobileBatchDownload = page.getByRole("button", { name: "批量下载 2 个图片或视频" });
+        await expect(mobileBatchDownload).toBeVisible();
+        await mobileBatchDownload.scrollIntoViewIfNeeded();
+        const mobileLayout = await page.evaluate(() => {
+            const toolbar = document.querySelector<HTMLElement>("[data-canvas-toolbar] .canvas-toolbar-dock");
+            const button = document.querySelector<HTMLElement>("[data-canvas-batch-download]");
+            if (!toolbar || !button) throw new Error("Canvas 批量下载控件未渲染");
+            const toolbarBox = toolbar.getBoundingClientRect();
+            const buttonBox = button.getBoundingClientRect();
+            return {
+                buttonWidth: buttonBox.width,
+                buttonRight: buttonBox.right,
+                toolbarRight: toolbarBox.right,
+                documentScrollWidth: document.documentElement.scrollWidth,
+                viewportWidth: window.innerWidth,
+            };
+        });
+        expect(mobileLayout.buttonWidth).toBeGreaterThanOrEqual(52);
+        expect(mobileLayout.buttonRight).toBeLessThanOrEqual(mobileLayout.toolbarRight + 1);
+        expect(mobileLayout.documentScrollWidth).toBeLessThanOrEqual(mobileLayout.viewportWidth);
     } finally {
         try {
             if (project) await deleteCanvasProject(request, project.id);

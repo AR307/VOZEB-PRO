@@ -88,6 +88,19 @@ DELETE /v1/videos/:task_id`,
         expect(draft?.operations[2].config).toMatchObject({ createPath: "/v1/videos", queryPath: "/v1/videos/:task_id", cancelPath: "/v1/videos/:task_id", cancelMethod: "DELETE" });
     });
 
+    it("distinguishes curl GET polling examples from curl POST creation examples", () => {
+        const draft = parseDeterministicProtocolDraft({
+            text: [
+                `curl --url https://api.example.com/custom/videos --header 'Content-Type: application/json' --data '{"model":"video-v1","prompt":"test"}'`,
+                `{"data":{"task_id":"task-1","status":"queued"}}`,
+                `curl --url https://api.example.com/custom/results/{task_id} --header 'X-API-Key: token'`,
+                `{"data":{"status":"completed","video_url":"https://cdn.example.com/video.mp4"}}`,
+            ].join("\n"),
+        });
+
+        expect(draft?.operations[0]?.config).toMatchObject({ createPath: "/custom/videos", queryPath: "/custom/results/:task_id", resultField: "data.video_url", statusField: "data.status" });
+    });
+
     it("extracts rendered API documentation without cURL or JSON examples", () => {
         const draft = parseDeterministicProtocolDraft({
             text: `SOURCE https://developer.example.test/reference/image-create
@@ -145,9 +158,7 @@ image_url`,
                 },
             ],
         });
-        expect(draft?.operations[0].config.requestTemplate).toBe(
-            '{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}"}',
-        );
+        expect(draft?.operations[0].config.requestTemplate).toBe('{"model":"{{model}}","prompt":"{{prompt}}","reference_images":"{{images}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}"}');
     });
 
     it("keeps query paths inside their own documentation source", () => {

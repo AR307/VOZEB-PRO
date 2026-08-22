@@ -45,6 +45,10 @@ export type LocalMediaRegistrationPage = {
 
 export type UserLocalMediaRegistrationPage = Pick<LocalMediaRegistrationPage, "items" | "total" | "page" | "pageSize">;
 
+export function isLocalMediaRegistrationExpired(registration: Pick<LocalMediaRegistration, "storageClass" | "expiresAt">, now = Date.now()) {
+    return registration.storageClass === "temporary" && Boolean(registration.expiresAt) && Date.parse(registration.expiresAt || "") <= now;
+}
+
 const FILE_NAME = "local-media-assets.json";
 let mutationQueue = Promise.resolve();
 

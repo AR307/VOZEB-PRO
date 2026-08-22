@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SystemChannelAdvancedConfig, SystemModelChannel } from "@/lib/auth/store";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
-import { getTextPlanningRuntime, rankTextPlanningCandidates, requestStructuredText, resetTextPlanningRuntime, type TextPlanningCandidate } from "./text-planning-runtime";
+import { getTextPlanningRuntime, isStructuredTextFailure, rankTextPlanningCandidates, requestStructuredText, resetTextPlanningRuntime, type TextPlanningCandidate } from "./text-planning-runtime";
 
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn() }));
 vi.mock("@/lib/server/channel-runtime-health", () => ({ recordChannelRuntimeFailure: vi.fn(), recordChannelRuntimeSuccess: vi.fn() }));
@@ -122,8 +122,47 @@ describe("text planning runtime protocol matrix", () => {
     it("可以关闭同一输入的结构修复请求", async () => {
         mockedFetch.mockResolvedValue(Response.json({ choices: [{ message: { content: "不是 JSON" } }] }));
 
-        await expect(requestStructuredText({ ...requestInput(candidate("newapi")), allowRepair: false })).rejects.toThrow("模型没有返回所需的结构化结果");
+        const error = await requestStructuredText({ ...requestInput(candidate("newapi")), allowRepair: false }).catch((value) => value);
+        expect(error).toMatchObject({ failureCode: "missing-structured-result", reason: "invalid-structure" });
+        expect(isStructuredTextFailure(error)).toBe(true);
         expect(mockedFetch).toHaveBeenCalledOnce();
+    });
+
+    it("接受自定义结果字段直接返回的结构化对象", async () => {
+        mockedFetch.mockResolvedValue(Response.json({ data: { plan: { result: "object" } } }));
+
+        const result = await requestStructuredText(
+            requestInput(
+                candidate("custom", {
+                    createPath: "/planner/run",
+                    requestTemplate: '{"prompt":"{{prompt}}"}',
+                    resultField: "data.plan",
+                }),
+            ),
+        );
+
+        expect(result.arguments).toBe('{"result":"object"}');
+        expect(mockedFetch).toHaveBeenCalledOnce();
+    });
+
+    it("接受没有协议外层包装的直接结构化对象", async () => {
+        mockedFetch.mockResolvedValue(Response.json({ result: "direct" }));
+
+        const result = await requestStructuredText(requestInput(candidate("newapi")));
+
+        expect(result.arguments).toBe('{"result":"direct"}');
+        expect(mockedFetch).toHaveBeenCalledOnce();
+    });
+
+    it("reports invalid upstream JSON instead of collapsing it into a generic structure error", async () => {
+        const onInvalidResponse = vi.fn();
+        mockedFetch.mockResolvedValue(new Response("not-json", { status: 200, headers: { "content-type": "text/plain" } }));
+
+        const error = await requestStructuredText({ ...requestInput(candidate("newapi")), allowRepair: false, onInvalidResponse }).catch((value) => value);
+
+        expect(error).toMatchObject({ failureCode: "invalid-response-json", reason: "invalid-structure" });
+        expect(error.message).toContain("协议：chat");
+        expect(onInvalidResponse).toHaveBeenCalledOnce();
     });
 
     it("从上游包装文本中只接受可解析的 JSON 对象", async () => {

@@ -118,7 +118,7 @@ describe("generation log asset access", () => {
         const response = await GET(new Request("http://localhost/api/generation-log-assets/permanent/2026/07/20/images/file.png?purpose=provider-read&expires=1&signature=test&download=original"), context);
 
         expect(response.status).toBe(403);
-        expect(mocks.registration).not.toHaveBeenCalled();
+        expect(mocks.registration).toHaveBeenCalled();
     });
 
     it("marks object-backed original HEAD downloads as attachments", async () => {

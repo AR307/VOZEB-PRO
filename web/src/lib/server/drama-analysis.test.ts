@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { describeDramaModelOutput, hasCompleteDramaDialogueAttribution, hasUsableDramaToolArguments, normalizeDramaContentAnalysis, normalizeDramaVisualAnalysis, readDramaChatArguments, readDramaResponsesArguments, readDramaUpstreamError } from "./drama-analysis";
+import {
+    describeDramaModelOutput,
+    hasCompleteDramaDialogueAttribution,
+    hasUsableDramaToolArguments,
+    normalizeDramaContentAnalysis,
+    normalizeDramaVisualAnalysis,
+    readDramaChatArguments,
+    readDramaResponsesArguments,
+    readDramaUpstreamError,
+} from "./drama-analysis";
 
 describe("drama analysis contracts", () => {
     it("keeps content facts separate from visual prompts", () => {
@@ -40,7 +49,6 @@ describe("drama analysis contracts", () => {
         expect(result.shots[0]).toMatchObject({ sourceText: "她在门边看见一滴血。", duration: 7, clueNames: ["血迹"] });
         expect(result.shots[0]).not.toHaveProperty("imagePrompt");
     });
-
 
     it("restores every direct line from the source script and rejects narrative summaries", () => {
         const script = ["一旁的女人再次开口：“俊成家的，你还好吗？”", "郁心妍闭着眼回了一句：“我没事，就是有些头晕。”", "“你等着，我这就去给你叫医生。”", "郁心妍刚想说：不用，她缓一下就没事了。"].join("\n");
@@ -196,12 +204,7 @@ describe("drama analysis contracts", () => {
     });
 
     it("does not treat quoted place names as dialogue and requires explicit speakers", () => {
-        const script = [
-            "林照雪低声道：“忍着点，九幽冥毒深入髓海，过程会有些痛苦。”",
-            "二人来到“涤心池”，池水泛起灵光。",
-            "云舒咬紧牙关：“无妨，你尽管施为。”",
-            "剑意入体，她闷哼一声：“唔……”",
-        ].join("\n");
+        const script = ["林照雪低声道：“忍着点，九幽冥毒深入髓海，过程会有些痛苦。”", "二人来到“涤心池”，池水泛起灵光。", "云舒咬紧牙关：“无妨，你尽管施为。”", "剑意入体，她闷哼一声：“唔……”"].join("\n");
         const base = {
             episode: { outline: "疗毒", hook: "", nextPreview: "", sourceRange: "第二章" },
             characters: [
@@ -262,6 +265,40 @@ describe("drama analysis contracts", () => {
             ["云舒", "无妨，你尽管施为。"],
             ["云舒", "唔……"],
         ]);
+    });
+
+    it("keeps a source-attributed speaker when the model returns an unusable label", () => {
+        const script = "顾言推开城门说道：“先离开这里。”";
+        const result = normalizeDramaContentAnalysis(
+            {
+                episode: { outline: "城门告急", hook: "", nextPreview: "", sourceRange: "第一章" },
+                characters: [{ name: "顾言", description: "守城人" }],
+                scenes: [],
+                props: [],
+                clues: [],
+                shots: [
+                    {
+                        title: "城门",
+                        description: "顾言推开城门",
+                        sourceText: script,
+                        shotBoundary: "对白结束",
+                        dialogue: "先离开这里。",
+                        narration: "",
+                        utterances: [{ type: "dialogue", speaker: "未知", text: "先离开这里。" }],
+                        duration: 5,
+                        characterNames: ["顾言"],
+                        sceneName: "城门",
+                        propNames: [],
+                        clueNames: [],
+                    },
+                ],
+            },
+            5,
+            script,
+        );
+
+        expect(result.shots[0].utterances).toEqual([expect.objectContaining({ speaker: "顾言", text: "先离开这里。" })]);
+        expect(hasCompleteDramaDialogueAttribution(JSON.stringify(result), script)).toBe(true);
     });
 
     it("only accepts visual fields for reviewed shot ids", () => {

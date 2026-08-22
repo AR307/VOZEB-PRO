@@ -88,7 +88,7 @@ export function CanvasToolbar({
     }, [appearanceOpen]);
 
     return (
-        <div className="canvas-toolbar-dock-wrap pointer-events-none absolute bottom-5 left-0 right-0 z-50 flex justify-center">
+        <div data-canvas-toolbar className="canvas-toolbar-dock-wrap pointer-events-none absolute bottom-5 left-0 right-0 z-50 flex justify-center">
             {tip ? <DockTip label={tip} x={tipX} theme={theme} /> : null}
             <div
                 ref={wrapRef}
@@ -166,14 +166,16 @@ export function CanvasToolbar({
                         <Divider theme={theme} />
                         <Button
                             data-canvas-batch-download
+                            data-canvas-batch-download-count={selectedMediaCount}
                             aria-label={`批量下载 ${selectedMediaCount} 个图片或视频`}
-                            className="!h-8 !rounded-md !px-2.5 !text-xs !font-medium"
+                            title={`批量下载 ${selectedMediaCount} 个图片或视频`}
+                            className="canvas-toolbar-batch-download !flex !h-8 !min-w-[52px] !items-center !justify-center !gap-1 !rounded-md !px-2 !text-xs !font-medium"
                             style={{ background: theme.node.action, borderColor: theme.node.action, color: theme.node.actionText }}
                             icon={<Download className="size-4" />}
                             loading={selectedMediaDownloadPending}
                             onClick={onDownloadSelectedMedia}
                         >
-                            下载 {selectedMediaCount} 项
+                            <span aria-hidden="true">{formatBatchDownloadCount(selectedMediaCount)}</span>
                         </Button>
                     </>
                 ) : null}
@@ -353,6 +355,12 @@ function toolLabel(id: string) {
     if (id === "tool-delete") return "删除选中";
     if (id === "tool-clear") return "清空画布";
     return "";
+}
+
+function formatBatchDownloadCount(count: number) {
+    if (count < 1000) return String(count);
+    if (count < 10000) return `${(count / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+    return `${Math.round(count / 1000)}k`;
 }
 
 function getTipX(wrap: HTMLDivElement | null, target: HTMLElement) {

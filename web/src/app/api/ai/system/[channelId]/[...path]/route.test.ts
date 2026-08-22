@@ -208,6 +208,16 @@ describe("GlobalAiOpc native text proxy", () => {
         expect(await response.json()).toMatchObject({ choices: [{ message: { role: "assistant", content: "OK" } }] });
     });
 
+    it("refunds a charged GlobalAiOpc call when a 2xx response is not JSON", async () => {
+        mocks.consumeUserPoints.mockResolvedValue({ model: "gemini-text", cost: 1, units: 1, usageKind: "text", recordId: "points-invalid-json", remaining: 4, permanentRemaining: 4, dailyRemaining: 0, dailyExpiresAt: "" });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not-json", { status: 200, headers: { "content-type": "text/plain" } }));
+
+        const response = await POST(chatRequest({ model: "gemini-3.1-pro-preview", messages: [{ role: "user", content: "hello" }] }), textContext());
+
+        expect(response.status).toBe(502);
+        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user-one", "gemini-text", 1, "text", 1, undefined, "points-invalid-json");
+    });
+
     it("charges text calls with the logical model id instead of the upstream alias", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},

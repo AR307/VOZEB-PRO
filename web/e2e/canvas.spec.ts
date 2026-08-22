@@ -198,6 +198,49 @@ test("canvas keeps editing, selection, linking and persistence fluid", async ({ 
     }
 });
 
+test("canvas node prompt keeps image and video mentions after long text", async ({ page, request }) => {
+    const project = await createCanvasProject(request, {
+        title: `Canvas 节点长提示词引用 ${randomUUID().slice(0, 8)}`,
+        nodes: [
+            { ...node("prompt-image", "image", 60, 80, 220, 160, { content: `${E2E_PROTOCOL_ORIGIN}/media/fixture.png`, serverUrl: `${E2E_PROTOCOL_ORIGIN}/media/fixture.png` }), title: "节点参考图片" },
+            { ...node("prompt-video", "video", 60, 300, 220, 160, { content: `${E2E_PROTOCOL_ORIGIN}/media/fixture.mp4`, serverUrl: `${E2E_PROTOCOL_ORIGIN}/media/fixture.mp4` }), title: "节点参考视频" },
+            node("prompt-target", "image", 420, 180, 260, 200, {}),
+        ],
+        connections: [
+            { id: "prompt-image-edge", fromNodeId: "prompt-image", toNodeId: "prompt-target" },
+            { id: "prompt-video-edge", fromNodeId: "prompt-video", toNodeId: "prompt-target" },
+        ],
+    });
+
+    try {
+        await page.goto(`/canvas/${project.id}`, { waitUntil: "domcontentloaded" });
+        await page.locator('[data-node-id="prompt-target"]').click({ position: { x: 40, y: 40 } });
+        const prompt = page.getByRole("textbox", { name: "节点提示词" });
+        await expect(prompt).toBeVisible({ timeout: 20_000 });
+
+        const longText = Array.from({ length: 16 }, (_, index) => `第 ${index + 1} 条镜头要求保持人物、场景和光线连续。`).join("\n");
+        await prompt.fill(`${longText}\n先参考@图`);
+        let menu = page.locator('[data-canvas-resource-mention-menu="true"]');
+        await expect(menu).toBeVisible();
+        const imageOption = menu.getByRole("button").filter({ hasText: "图片1" });
+        await expect(imageOption.locator("img")).toBeVisible();
+        await imageOption.click();
+        await expect(prompt).toHaveValue(`${longText}\n先参考图片1 `);
+
+        await prompt.fill(`${await prompt.inputValue()}再结合@视`);
+        menu = page.locator('[data-canvas-resource-mention-menu="true"]');
+        await expect(menu).toBeVisible();
+        const videoOption = menu.getByRole("button").filter({ hasText: "视频1" });
+        await expect(videoOption.locator("video")).toBeVisible();
+        await videoOption.click();
+        await expect(prompt).toHaveValue(`${longText}\n先参考图片1 再结合视频1 `);
+        await expect(page.locator('[data-canvas-resource-reference="prompt-image"] img')).toBeVisible();
+        await expect(page.locator('[data-canvas-resource-reference="prompt-video"] video')).toBeVisible();
+    } finally {
+        await deleteCanvasProject(request, project.id);
+    }
+});
+
 test("canvas video first and last frame roles persist and retry from the output snapshot", async ({ page, request }) => {
     test.setTimeout(120_000);
     const project = await createCanvasProject(request, {

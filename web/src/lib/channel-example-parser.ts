@@ -219,6 +219,7 @@ function matchEndpointUrl(value: string): EndpointMatch | null {
             const end = index + spec.marker.length;
             if (lowerPath.length !== end && lowerPath[end] !== "/") continue;
             const basePath = pathname.slice(0, index).replace(/\/+$/g, "");
+            if (basePath && !looksLikeApiBasePath(basePath)) continue;
             url.pathname = basePath || "/";
             url.search = "";
             url.hash = "";
@@ -238,6 +239,10 @@ function matchEndpointUrl(value: string): EndpointMatch | null {
         return null;
     }
     return null;
+}
+
+function looksLikeApiBasePath(path: string) {
+    return /(?:^|\/)(?:api|v\d+(?:\.\d+)?)(?:\/|$)/i.test(path);
 }
 
 function matchKnownEndpointUrl(value: string) {
@@ -374,11 +379,7 @@ function findModel(requestBody: unknown, blocks: unknown[], raw: string) {
     const lines = raw.split(/\r?\n/).map((line) => line.trim());
     const marker = lines.findIndex((line) => /^(?:模型\s*ID|model\s*(?:id|name))\b/i.test(line.replace(/[（）()]/g, " ")));
     if (marker < 0) return "";
-    return (
-        lines
-            .slice(marker + 1, marker + 9)
-            .find((line) => /^[a-z0-9][a-z0-9._:/-]*(?: [a-z0-9][a-z0-9._:/-]*)*$/i.test(line) && !/^(?:model|id|name|string|required|字段|值)$/i.test(line)) || ""
-    );
+    return lines.slice(marker + 1, marker + 9).find((line) => /^[a-z0-9][a-z0-9._:/-]*(?: [a-z0-9][a-z0-9._:/-]*)*$/i.test(line) && !/^(?:model|id|name|string|required|字段|值)$/i.test(line)) || "";
 }
 
 function inferProtocol(raw: string, endpoint: EndpointMatch | null, requestBody: unknown, current: SystemChannelProtocol): SystemChannelProtocol {

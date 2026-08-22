@@ -1,9 +1,9 @@
 import type { ImageTaskReference } from "@/lib/server/image-task-store";
 import { isRemoteMediaUrl } from "@/lib/browser-media-url";
-import { canAccessGenerationAsset } from "@/lib/server/generation-log-store";
 import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
 import { createSignedReferenceAssetUrl, signGenerationAssetInputUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { resolvePublicRequestOrigin } from "@/lib/server/public-request-origin";
+import { requireManagedMediaInputOwner } from "@/lib/server/managed-media-input-access";
 
 export function referenceRequestUrl(reference: ImageTaskReference, origin = "") {
     return referenceRequestUrlCandidates(reference, origin)[0] || "";
@@ -19,8 +19,8 @@ export async function publicImageReferenceRequestUrl(reference: ImageTaskReferen
     const candidates = referenceRequestUrlCandidates(reference, origin);
     const managedCandidate = candidates.map((value) => managedMediaInput(value, origin, publicOrigin)).find((value): value is { value: string; pathname: string; scope: "reference" | "generation" } => Boolean(value));
     if (managedCandidate) {
-        if (managedCandidate.scope === "generation" && !(await canAccessGenerationAsset(context.ownerUserId, "user", managedCandidate.pathname))) throw new Error("参考图不存在或无权访问");
-        const signedUrl = managedCandidate.scope === "reference" ? signReferenceAssetInputUrl(managedCandidate.value, publicOrigin) : signGenerationAssetInputUrl(managedCandidate.value, publicOrigin);
+        const registeredOwnerUserId = await requireManagedMediaInputOwner(managedCandidate.pathname, { id: context.ownerUserId, role: "user" }, managedCandidate.scope);
+        const signedUrl = managedCandidate.scope === "reference" ? signReferenceAssetInputUrl(managedCandidate.value, publicOrigin, registeredOwnerUserId) : signGenerationAssetInputUrl(managedCandidate.value, publicOrigin, registeredOwnerUserId);
         if (signedUrl !== managedCandidate.value) return signedUrl;
         throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
     }
@@ -32,7 +32,7 @@ export async function publicImageReferenceRequestUrl(reference: ImageTaskReferen
     const asset = await writeReferenceImageDataUrl(dataUrl, { ownerUserId: context.ownerUserId, source: "image-task-reference", taskId: context.taskId });
     if (asset.url) return asset.url;
     if (!isExternalPublicOrigin(publicOrigin)) throw new Error("参考图需要公网图片 URL；本地开发 localhost 不能直接提交给上游，请部署后配置 NEXT_PUBLIC_SITE_URL");
-    const signedUrl = createSignedReferenceAssetUrl(asset.token, publicOrigin);
+    const signedUrl = createSignedReferenceAssetUrl(asset.token, publicOrigin, context.ownerUserId);
     if (!signedUrl) throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
     return asset.url || signedUrl;
 }

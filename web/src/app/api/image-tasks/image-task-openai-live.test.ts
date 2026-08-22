@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
 
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
 import { createProtocolFixtureServer } from "../../../../scripts/protocol-fixture-server.mjs";
 import { runGeminiImageTask } from "./image-task-gemini";
-import { buildJsonImageEditBodies, buildResponsesImageBodies, runOpenAiImageTask } from "./image-task-openai";
+import { buildJsonImageEditBodies, buildResponsesImageBodies, runOpenAiImageTask, runOpenAiJsonImageEditTask, runOpenAiResponsesImageTask } from "./image-task-openai";
 import { runCustomImageTask } from "./image-task-custom";
 import type { ImageTask } from "@/lib/server/image-task-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
@@ -170,6 +171,176 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             expect(body).not.toContain('name="background"');
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("uses a new billing identity when multipart editing falls back to JSON", async () => {
+        const requests: Array<{ contentType: string; idempotencyKey: string }> = [];
+        const server = createServer(async (request, response) => {
+            for await (const chunk of request) void chunk;
+            const contentType = String(request.headers["content-type"] || "");
+            requests.push({ contentType, idempotencyKey: String(request.headers["idempotency-key"] || "") });
+            response.setHeader("content-type", "application/json");
+            if (contentType.startsWith("multipart/form-data")) {
+                response.statusCode = 415;
+                response.end(JSON.stringify({ error: { message: "multipart form-data is not supported" } }));
+                return;
+            }
+            response.statusCode = 200;
+            response.end(JSON.stringify({ data: [{ b64_json: PNG_BASE64 }] }));
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Fallback fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-edit-fallback-billing",
+            kind: "edit",
+            references: [{ name: "reference.png", type: "image/png", dataUrl: PNG_DATA_URL }],
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "gpt-image-1",
+                channelId: "fixture-openai-fallback",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "compatible", createPath: "/images/generations", editPath: "/images/edits", supportsReferenceImage: true },
+            },
+        });
+
+        try {
+            await expect(runOpenAiImageTask(task, "", "", "", true)).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            expect(requests.map((request) => request.idempotencyKey)).toEqual(["image-task:image-edit-fallback-billing:attempt:1", "image-task:image-edit-fallback-billing:attempt:1:json-edit"]);
+        } finally {
+            await new Promise<void>((resolve, reject) => server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("keeps every URL to base64 to JSON fallback on a distinct billing identity", async () => {
+        const requests: Array<{ contentType: string; idempotencyKey: string }> = [];
+        const server = createServer(async (request, response) => {
+            for await (const chunk of request) void chunk;
+            const contentType = String(request.headers["content-type"] || "");
+            requests.push({ contentType, idempotencyKey: String(request.headers["idempotency-key"] || "") });
+            response.setHeader("content-type", "application/json");
+            if (requests.length === 1) {
+                response.setHeader("x-vozeb-pro-upstream-url", "http://upstream.internal/v1/images/edits");
+                response.statusCode = 200;
+                response.end(JSON.stringify({ data: [{ url: "http://renderer.internal/result.png" }] }));
+                return;
+            }
+            if (requests.length === 2) {
+                response.statusCode = 415;
+                response.end(JSON.stringify({ error: { message: "multipart form-data is not supported" } }));
+                return;
+            }
+            response.statusCode = 200;
+            response.end(JSON.stringify({ data: [{ b64_json: PNG_BASE64 }] }));
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Fallback fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-url-base64-json-billing",
+            kind: "edit",
+            references: [{ name: "reference.png", type: "image/png", dataUrl: PNG_DATA_URL }],
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "gpt-image-1",
+                channelId: "fixture-openai-fallback-chain",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "compatible", createPath: "/images/generations", editPath: "/images/edits", supportsReferenceImage: true },
+            },
+        });
+
+        try {
+            await expect(runOpenAiImageTask(task, "", "", "", true)).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            expect(requests.map((request) => request.idempotencyKey)).toEqual([
+                "image-task:image-url-base64-json-billing:attempt:1",
+                "image-task:image-url-base64-json-billing:attempt:1:base64",
+                "image-task:image-url-base64-json-billing:attempt:1:base64-json-edit",
+            ]);
+        } finally {
+            await new Promise<void>((resolve, reject) => server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("uses a distinct billing identity for each compatible JSON edit body", async () => {
+        const idempotencyKeys: string[] = [];
+        const server = createServer(async (request, response) => {
+            for await (const chunk of request) void chunk;
+            idempotencyKeys.push(String(request.headers["idempotency-key"] || ""));
+            response.setHeader("content-type", "application/json");
+            if (idempotencyKeys.length === 1) {
+                response.statusCode = 422;
+                response.end(JSON.stringify({ error: { message: "Input should be a valid dictionary or object to extract fields from" } }));
+                return;
+            }
+            response.statusCode = 200;
+            response.end(JSON.stringify({ data: [{ b64_json: PNG_BASE64 }] }));
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("JSON edit fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-json-body-billing",
+            kind: "edit",
+            references: [{ name: "reference.png", type: "image/png", dataUrl: PNG_DATA_URL }],
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "gpt-image-1",
+                channelId: "fixture-json-body-billing",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "compatible", editPath: "/images/edits", referenceRule: "JSON image references", supportsReferenceImage: true },
+            },
+        });
+
+        try {
+            await expect(runOpenAiJsonImageEditTask(task, `${origin}/v1/images/edits`, origin, "", "high", "1024x1024", "", "b64_json", true)).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            expect(idempotencyKeys).toEqual(["image-task:image-json-body-billing:attempt:1", "image-task:image-json-body-billing:attempt:1:primary-2"]);
+        } finally {
+            await new Promise<void>((resolve, reject) => server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("uses a distinct billing identity for each compatible Responses body", async () => {
+        const idempotencyKeys: string[] = [];
+        const server = createServer(async (request, response) => {
+            for await (const chunk of request) void chunk;
+            idempotencyKeys.push(String(request.headers["idempotency-key"] || ""));
+            response.setHeader("content-type", "application/json");
+            if (idempotencyKeys.length === 1) {
+                response.statusCode = 422;
+                response.end(JSON.stringify({ error: { message: "unsupported input shape" } }));
+                return;
+            }
+            response.statusCode = 200;
+            response.end(JSON.stringify({ data: [{ b64_json: PNG_BASE64 }] }));
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Responses fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-responses-body-billing",
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "gpt-image-1",
+                channelId: "fixture-responses-body-billing",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "compatible" },
+            },
+        });
+
+        try {
+            await expect(runOpenAiResponsesImageTask(task, origin, "", true)).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            expect(idempotencyKeys).toEqual(["image-task:image-responses-body-billing:attempt:1:responses", "image-task:image-responses-body-billing:attempt:1:responses-2"]);
+        } finally {
+            await new Promise<void>((resolve, reject) => server.close((error?: Error) => (error ? reject(error) : resolve())));
         }
     });
 

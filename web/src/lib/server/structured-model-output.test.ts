@@ -18,4 +18,9 @@ describe("strictJsonObjectText", () => {
         expect(extractJsonObjectText('{"text":"包含 } 字符"}')).toBe('{"text":"包含 } 字符"}');
         expect(extractJsonObjectText("[]")).toBe("");
     });
+
+    it("does not accept malformed strict JSON and repairs a truncated object before domain validation", () => {
+        expect(strictJsonObjectText('{"ok":}')).toBe("");
+        expect(extractJsonObjectText('{"ok":true')).toBe('{"ok":true}');
+    });
 });

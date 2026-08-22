@@ -31,7 +31,10 @@ async function serveGenerationAsset(request: Request, context: RouteContext) {
     const storagePath = (path || []).join("/");
     const url = new URL(request.url);
     const signature = url.searchParams.get("signature") || "";
-    const signed = verifyGenerationAssetSignature(storagePath, url.searchParams.get("purpose"), url.searchParams.get("expires"), signature);
+    let registration: Awaited<ReturnType<typeof getLocalMediaRegistration>> = null;
+    if (signature) registration = await getLocalMediaRegistration(storagePath);
+    if (signature && !registration) return NextResponse.json({ error: "资源不存在" }, { status: 404 });
+    const signed = Boolean(registration && verifyGenerationAssetSignature(storagePath, url.searchParams.get("purpose"), url.searchParams.get("expires"), signature, registration.ownerUserId));
     if (signed && url.searchParams.get("download") === "original") return NextResponse.json({ code: 403, data: null, msg: "上游读取签名不提供原件下载" }, { status: 403 });
     let rateIdentity = `signature:${signature}`;
     let currentUser: Awaited<ReturnType<typeof getCurrentUser>> = null;
@@ -49,7 +52,7 @@ async function serveGenerationAsset(request: Request, context: RouteContext) {
     const assetUrl = `/api/generation-log-assets/${(path || []).join("/")}`;
     if (currentUser && !(await canAccessGenerationAsset(currentUser.id, currentUser.role, assetUrl))) return NextResponse.json({ error: "资源不存在" }, { status: 404 });
 
-    const registration = await getLocalMediaRegistration((path || []).join("/"));
+    registration ||= await getLocalMediaRegistration((path || []).join("/"));
     if (request.method === "HEAD" && registration?.storageProvider === "object") {
         return createMediaHeadResponse(registration.mimeType, registration.bytes, {
             "Cache-Control": "private, max-age=3600",

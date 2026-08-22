@@ -80,6 +80,23 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         tasks.clear();
         return sendJson(response, 200, { ok: true });
     }
+    if (request.method === "GET" && path === "/vendor-space/knowledge/article-947") {
+        return sendBytes(
+            response,
+            200,
+            "text/html; charset=utf-8",
+            Buffer.from(`<!doctype html><html><body><article>
+                <h1>Provider integration manual</h1>
+                <p>Model catalog: GET ${url.origin}/api/v3/models</p>
+                <pre>curl --url ${url.origin}/custom/images --header 'X-API-Key: token' --header 'Content-Type: application/json' --data '{"model":"custom-image-v9","prompt":"test","width":1024,"height":1024,"references":[]}'</pre>
+                <pre>{"data":{"image_url":"${url.origin}/media/fixture.png"}}</pre>
+                <pre>curl --url ${url.origin}/custom/videos --header 'X-API-Key: token' --header 'Content-Type: application/json' --data '{"model":"custom-video-v9","prompt":"test","duration":5,"references":[]}'</pre>
+                <pre>{"data":{"task_id":"custom-video-task","status":"queued"}}</pre>
+                <pre>curl --url ${url.origin}/custom/results/:task_id --header 'X-API-Key: token'</pre>
+                <pre>{"data":{"status":"completed","video_url":"${url.origin}/media/fixture.mp4"}}</pre>
+            </article></body></html>`),
+        );
+    }
     if (request.method === "GET" && ["/models", "/api/v3/models"].includes(path)) {
         const catalog = url.searchParams.has("protocol") ? [...models, { id: "opaque-catalog-model" }] : models;
         return sendJson(response, 200, { object: "list", data: catalog });
@@ -418,6 +435,7 @@ function toolArguments(name, payload) {
     }
     if (name === "review_creative_outputs") return { mode: "visual", status: "passed", score: 100, summary: "协议测试产物通过", issues: [], retryTaskIds: [] };
     if (name === "analyze_drama_content") {
+        const sourceText = dramaSourceText(payload) || "主角推门说：测试开始。";
         return {
             episode: { outline: "主角进入测试场景并完成一句对白。", hook: "门突然打开。", nextPreview: "下一幕继续。", sourceRange: "全文" },
             characters: [{ name: "主角", description: "协议测试角色" }],
@@ -427,8 +445,8 @@ function toolArguments(name, payload) {
             shots: [
                 {
                     title: "进入房间",
-                    description: "主角推门进入房间。",
-                    sourceText: "主角推门说：测试开始。",
+                    description: sourceText,
+                    sourceText,
                     shotBoundary: "角色进入形成新镜头",
                     dialogue: "测试开始。",
                     narration: "",
@@ -477,6 +495,15 @@ function plannerRequestText(payload) {
     const userMessage = messages.findLast((message) => message?.role === "user");
     const content = userMessage?.content ?? (typeof payload.input === "string" ? payload.input : "");
     return typeof content === "string" ? content : JSON.stringify(content);
+}
+
+function dramaSourceText(payload) {
+    try {
+        const value = JSON.parse(plannerRequestText(payload));
+        return typeof value?.script === "string" ? value.script.trim() : "";
+    } catch {
+        return "";
+    }
 }
 
 function plannerGenerationMode(payload) {

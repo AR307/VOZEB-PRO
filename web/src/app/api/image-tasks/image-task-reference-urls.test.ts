@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-    canAccessGenerationAsset: vi.fn(async () => true),
+    requireManagedMediaInputOwner: vi.fn(async () => "user-one"),
     writeReferenceImageDataUrl: vi.fn(),
 }));
 
-vi.mock("@/lib/server/generation-log-store", () => ({ canAccessGenerationAsset: mocks.canAccessGenerationAsset }));
+vi.mock("@/lib/server/managed-media-input-access", () => ({ requireManagedMediaInputOwner: mocks.requireManagedMediaInputOwner }));
 vi.mock("@/lib/server/reference-asset-store", () => ({ writeReferenceImageDataUrl: mocks.writeReferenceImageDataUrl }));
 
 import { publicImageReferenceRequestUrl } from "./image-task-reference-urls";
@@ -40,16 +40,16 @@ describe("image task provider reference URLs", () => {
         const source = "/api/generation-log-assets/permanent/2026/08/20/images/generated.png";
         const result = await publicImageReferenceRequestUrl({ dataUrl: "", serverUrl: source }, "http://internal", "https://vozeb.example", { ownerUserId: "user-one", taskId: "task-one" });
 
-        expect(mocks.canAccessGenerationAsset).toHaveBeenCalledWith("user-one", "user", source);
+        expect(mocks.requireManagedMediaInputOwner).toHaveBeenCalledWith(source, { id: "user-one", role: "user" }, "generation");
         expect(result).toMatch(/^https:\/\/vozeb\.example\/api\/generation-log-assets\/.+purpose=provider-read/);
         expect(mocks.writeReferenceImageDataUrl).not.toHaveBeenCalled();
     });
 
     it("does not sign another user's generation asset", async () => {
-        mocks.canAccessGenerationAsset.mockResolvedValueOnce(false);
+        mocks.requireManagedMediaInputOwner.mockRejectedValueOnce(new Error("参考素材不存在或无权访问"));
 
         await expect(
             publicImageReferenceRequestUrl({ dataUrl: "", serverUrl: "/api/generation-log-assets/permanent/2026/08/20/images/other.png" }, "http://internal", "https://vozeb.example", { ownerUserId: "user-one", taskId: "task-one" }),
-        ).rejects.toThrow("参考图不存在或无权访问");
+        ).rejects.toThrow("参考素材不存在或无权访问");
     });
 });

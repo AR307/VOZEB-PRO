@@ -142,7 +142,7 @@ export async function runGeminiImageTask(task: ImageTask, origin: string, cookie
         cache: "no-store",
     });
     if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "图片生成失败"));
-    const payload = await parseImageSubmissionJson<GeminiPayload>(response);
+    const payload = await parseImageSubmissionJson<GeminiPayload>(task, response);
     return parseChargedImageResponse(task, response, async () => {
         if (payload.error?.message) throw new GenerationSubmissionSafeFailure(payload.error.message);
         if (payload.promptFeedback?.blockReason) throw new GenerationSubmissionSafeFailure(`Gemini 拒绝了本次请求：${payload.promptFeedback.blockReason}`);

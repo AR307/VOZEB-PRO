@@ -207,12 +207,17 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (isRedirectStatus(upstream.status)) {
         return NextResponse.json({ error: "上游接口不允许重定向，请检查后台渠道地址" }, { status: 502, headers: responseHeaders(new Headers(), null, refundedPointsRemaining) });
     }
-    if (upstream.ok) pointsSettled = true;
     if (globalAdaptation && upstream.ok) {
         const payload = await upstream.json().catch(() => null);
-        if (!payload) return NextResponse.json({ error: "上游文本接口返回了无效 JSON" }, { status: 502, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+            await refundConsumedPoints();
+            pointsResult = null;
+            return NextResponse.json({ error: "上游文本接口返回了无效 JSON" }, { status: 502, headers: responseHeaders(upstream.headers, null, refundedPointsRemaining, target) });
+        }
+        pointsSettled = true;
         return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), { status: upstream.status, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
     }
+    if (upstream.ok) pointsSettled = true;
 
     return new Response(upstream.body, {
         status: upstream.status,

@@ -50,7 +50,7 @@ vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaP
 
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "./generation-submission-error";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
-import { createImageTaskUpstreamStep, persistImageTaskResult, queryImageTaskUpstreamStep } from "./image-task-runtime";
+import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResult, queryImageTaskUpstreamStep } from "./image-task-runtime";
 import type { ImageTask } from "./image-task-store";
 
 describe("image task runtime submission safety", () => {
@@ -155,6 +155,41 @@ describe("image task runtime submission safety", () => {
         expect(mocks.refund).not.toHaveBeenCalled();
     });
 
+    it("does not refund when success wins the failure transition race", async () => {
+        state = { ...imageTask(), status: "running", billing: { pointsCost: 2, pointsRecordId: "image-race", refunded: false } };
+        mocks.transitionTask.mockImplementationOnce(async () => {
+            state = { ...state, status: "success" };
+            return null;
+        });
+
+        await expect(markImageTaskFailed(state, "late failure")).resolves.toMatchObject({ status: "success" });
+        expect(mocks.refund).not.toHaveBeenCalled();
+        expect(mocks.writeLog).not.toHaveBeenCalled();
+    });
+
+    it("commits the image error state before refunding", async () => {
+        state = { ...imageTask(), status: "running", billing: { pointsCost: 2, pointsRecordId: "image-failed", refunded: false } };
+        mocks.refund.mockImplementationOnce(async () => {
+            expect(state.status).toBe("error");
+            return undefined;
+        });
+        mocks.writeLog.mockResolvedValueOnce(undefined);
+
+        await expect(markImageTaskFailed(state, "provider failed")).resolves.toMatchObject({ status: "error", billing: { refunded: true } });
+        expect(mocks.refund).toHaveBeenCalledOnce();
+    });
+
+    it("commits image success before writing the generation log", async () => {
+        state = { ...imageTask(), status: "running", result: { dataUrl: "data:image/png;base64,c2FmZQ==" } };
+        mocks.writeLog.mockImplementationOnce(async () => {
+            expect(state.status).toBe("success");
+            return undefined;
+        });
+
+        await expect(persistImageTaskResult(state, "http://internal", "inline://image-task-result")).resolves.toMatchObject({ status: "success" });
+        expect(mocks.writeLog).toHaveBeenCalledOnce();
+    });
+
     it("fails and refunds a corrupt synchronous image result without manual review", async () => {
         state = imageTask();
         state.config = { ...state.config, advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" } };
@@ -166,9 +201,9 @@ describe("image task runtime submission safety", () => {
         expect(step).toMatchObject({ state: "result_ready", resultUrl: "inline://image-task-result" });
         expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "result_ready", resultPayload: { url: "inline://image-task-result" }, lastUpstreamStatus: "completed" }));
         if (step.state !== "result_ready") throw new Error("image result was not ready");
-        await expect(persistImageTaskResult(state, "http://internal", step.resultUrl)).rejects.toThrow("pngload_buffer");
+        await expect(persistImageTaskResult(state, "http://internal", step.resultUrl)).resolves.toMatchObject({ status: "success" });
         expect(mocks.refund).not.toHaveBeenCalled();
-        expect(state.status).toBe("running");
+        expect(state.status).toBe("success");
     });
 
     it("downloads system-proxied image results with task-bound media authorization", async () => {

@@ -313,7 +313,10 @@ export function hasCompleteDramaDialogueAttribution(value: string, sourceScript:
 
 export function hasCompleteDramaContentAnalysis(value: DramaContentAnalysis, sourceScript: string) {
     const source = sourceScript.trim().replace(/\s/gu, "");
-    const covered = value.shots.map((shot) => shot.sourceText).join("").replace(/\s/gu, "");
+    const covered = value.shots
+        .map((shot) => shot.sourceText)
+        .join("")
+        .replace(/\s/gu, "");
     return Boolean(source && value.shots.length && covered === source && hasCompleteDramaDialogueAttribution(JSON.stringify(value), sourceScript));
 }
 
@@ -559,7 +562,11 @@ function inferSpeaker(value: string, knownSpeakers: string[] = []) {
 }
 
 function inferFollowingSpeaker(value: string, knownSpeakers: string[]) {
-    const sentence = value.split(/[。！？!?；;\n]/)[0]?.trim().replace(/^[，,]/u, "") || "";
+    const sentence =
+        value
+            .split(/[。！？!?；;\n]/)[0]
+            ?.trim()
+            .replace(/^[，,]/u, "") || "";
     if (!speechVerbPattern.test(sentence) && !/(?:说|道|问|答|喊|叫|回应|回道|应道|笑道|哭道|吼道|骂道|闷哼|呻吟|惊呼)/u.test(sentence)) return "";
     const knownSpeaker = nearestKnownSpeaker(sentence, knownSpeakers);
     if (knownSpeaker) return knownSpeaker;
@@ -580,7 +587,7 @@ function looksLikeSpokenQuote(value: string, before: string) {
 function mergeUtterances(sourceUtterances: DramaUtterance[], modelUtterances: DramaUtterance[], sourceText: string) {
     const merged = sourceUtterances.map((item) => {
         const model = modelUtterances.find((candidate) => sameDialogue(candidate.text, item.text));
-        return model?.speaker ? { ...item, speaker: model.speaker } : item;
+        return model && isSpecificDramaSpeaker(model.speaker) ? { ...item, speaker: model.speaker } : item;
     });
     for (const item of modelUtterances) {
         if (item.type === "dialogue" && (narrativeDialoguePattern.test(item.text) || !isSpecificDramaSpeaker(item.speaker) || !dialogueKey(sourceText).includes(dialogueKey(item.text)))) continue;

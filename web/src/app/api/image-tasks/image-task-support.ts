@@ -274,10 +274,11 @@ export function imageSubmissionResponseError(status: number, message: string) {
     return generationSubmissionResponseError(status, message);
 }
 
-export async function parseImageSubmissionJson<T>(response: Response): Promise<T> {
+export async function parseImageSubmissionJson<T>(task: ImageTask, response: Response): Promise<T> {
     try {
         return (await response.json()) as T;
     } catch {
+        await persistChargedImageResponse(task, response.headers);
         throw new GenerationSubmissionUncertainError("图片接口返回了无效 JSON，创建结果待确认");
     }
 }
@@ -299,8 +300,9 @@ export function geminiHeaders(config: ImageTaskConfig, cookie: string, pointsIde
     return headers;
 }
 
-export function imagePointsIdempotencyKey(task: Pick<ImageTask, "id" | "attemptNo">) {
-    return `image-task:${task.id}:attempt:${task.attemptNo || 1}`;
+export function imagePointsIdempotencyKey(task: Pick<ImageTask, "id" | "attemptNo">, variant = "primary") {
+    const suffix = variant.trim();
+    return `image-task:${task.id}:attempt:${task.attemptNo || 1}${suffix && suffix !== "primary" ? `:${suffix}` : ""}`;
 }
 
 export function geminiApiUrl(config: ImageTaskConfig, action: "generateContent", origin: string) {
@@ -794,9 +796,16 @@ export async function parseChargedImageResponse(task: ImageTask, response: Respo
     try {
         return { ...(await parse()), ...readBilling(response.headers) };
     } catch (error) {
-        await refundChargedImageResponse(task, response.headers);
+        if (error instanceof GenerationSubmissionUncertainError) await persistChargedImageResponse(task, response.headers);
+        else await refundChargedImageResponse(task, response.headers);
         throw error;
     }
+}
+
+export async function persistChargedImageResponse(task: ImageTask, headers: Headers) {
+    const { pointsCost, pointsRecordId } = readBilling(headers);
+    if (pointsCost === undefined || !pointsRecordId) return;
+    await updateImageTask(task.id, { billing: { pointsCost, pointsRecordId, refunded: false } });
 }
 
 export async function refundChargedImageResponse(task: ImageTask, headers: Headers) {

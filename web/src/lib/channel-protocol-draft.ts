@@ -231,9 +231,19 @@ type ExampleRequestLine = { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 function exampleRequestLine(source: string): ExampleRequestLine | null {
     const match = source.match(/(?:^|\n)\s*(GET|POST|PUT|PATCH|DELETE)\s+["']?(https?:\/\/[^\s"'\\<>]+|\/(?!\/)[^\s"'\\<>]+)/i);
-    if (!match) return null;
-    const absolute = /^https?:\/\//i.test(match[2]);
-    let path = match[2].replace(/[),.;]+$/g, "");
+    if (match) return normalizeExampleRequest(match[1], match[2]);
+
+    const curl = source.match(/(?:^|\n)\s*curl\b([\s\S]*?)(?=\n\s*(?:curl\b|GET|POST|PUT|PATCH|DELETE)\s+|$)/i)?.[1] || "";
+    if (!curl) return null;
+    const urlValue = curl.match(/--url(?:=|\s+)(["']?)(https?:\/\/[^\s"'\\<>]+|\/(?!\/)[^\s"'\\<>]+)\1/i)?.[2] || curl.match(/(?:^|\s)(["']?)(https?:\/\/[^\s"'\\<>]+|\/(?!\/)[^\s"'\\<>]+)\1/i)?.[2];
+    if (!urlValue) return null;
+    const method = curl.match(/(?:--request(?:=|\s+)|-X\s+)(GET|POST|PUT|PATCH|DELETE)\b/i)?.[1] || (/(?:--data(?:-[a-z]+)?|--form(?:=|\s+)|(?:^|\s)-[dF]\s)/i.test(curl) ? "POST" : "GET");
+    return normalizeExampleRequest(method, urlValue);
+}
+
+function normalizeExampleRequest(methodValue: string, value: string): ExampleRequestLine | null {
+    const absolute = /^https?:\/\//i.test(value);
+    let path = value.replace(/[),.;]+$/g, "");
     if (absolute) {
         try {
             const url = new URL(path);
@@ -243,7 +253,7 @@ function exampleRequestLine(source: string): ExampleRequestLine | null {
         }
     }
     path = path.replace(/\{(?:task[_-]?id|id)\}|:(?:task[_-]?id|taskId|id)\b/gi, ":task_id");
-    return isApiPath(path) ? { method: match[1].toUpperCase() as ExampleRequestLine["method"], path, absolute } : null;
+    return isApiPath(path) ? { method: methodValue.toUpperCase() as ExampleRequestLine["method"], path, absolute } : null;
 }
 
 function requestRole(request: ExampleRequestLine | null) {
@@ -304,7 +314,14 @@ function mergeOperationConfig(current: SystemChannelModelConfig, incoming: Syste
 }
 
 function mergeFieldPaths(current?: string, incoming?: string) {
-    return Array.from(new Set([current, incoming].flatMap((value) => (value || "").split(/\s+\/\s+/)).map((value) => value.trim()).filter(Boolean))).join(" / ");
+    return Array.from(
+        new Set(
+            [current, incoming]
+                .flatMap((value) => (value || "").split(/\s+\/\s+/))
+                .map((value) => value.trim())
+                .filter(Boolean),
+        ),
+    ).join(" / ");
 }
 
 function extractModelCatalogPaths(source: string) {
