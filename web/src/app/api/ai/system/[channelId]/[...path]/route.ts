@@ -217,6 +217,22 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         pointsSettled = true;
         return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), { status: upstream.status, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
     }
+    if (isJsonResponse(upstream)) {
+        try {
+            const body = await upstream.arrayBuffer();
+            if (upstream.ok) pointsSettled = true;
+            return new Response(body, {
+                status: upstream.status,
+                statusText: upstream.statusText,
+                headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target),
+            });
+        } catch (error) {
+            await refundConsumedPoints();
+            pointsResult = null;
+            console.error("System API proxy response body failed", error instanceof Error ? error.message : error);
+            return NextResponse.json({ error: DEFAULT_CHANNEL_CONNECT_ERROR }, { status: 502, headers: responseHeaders(new Headers(), null, refundedPointsRemaining) });
+        }
+    }
     if (upstream.ok) pointsSettled = true;
 
     return new Response(upstream.body, {
@@ -224,6 +240,10 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         statusText: upstream.statusText,
         headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target),
     });
+}
+
+function isJsonResponse(response: Response) {
+    return /^\s*(?:application|text)\/(?:[a-z0-9.+-]+\+)?json\b/i.test(response.headers.get("content-type") || "");
 }
 
 function channelHasModel(models: string[], requested: string) {

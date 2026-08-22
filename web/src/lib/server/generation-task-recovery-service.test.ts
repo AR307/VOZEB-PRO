@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
     queryCancelledImageTaskUpstreamStep: vi.fn(),
     createImageTaskUpstreamStep: vi.fn(),
     queryImageTaskUpstreamStep: vi.fn(),
+    prepareImageTaskAutomaticRetry: vi.fn(),
+    markImageTaskFailed: vi.fn(),
     persistImageTaskResult: vi.fn(),
     queryCancelledTextTaskUpstreamStep: vi.fn(),
     getTextTask: vi.fn(),
@@ -49,8 +51,9 @@ vi.mock("@/lib/server/audio-task-runtime", () => ({ createAudioTaskUpstreamStep:
 vi.mock("@/lib/server/audio-task-store", () => ({ getAudioTask: mocks.getAudioTask, updateAudioTask: mocks.updateAudioTask }));
 vi.mock("@/lib/server/image-task-runtime", () => ({
     createImageTaskUpstreamStep: mocks.createImageTaskUpstreamStep,
-    markImageTaskFailed: vi.fn(),
+    markImageTaskFailed: mocks.markImageTaskFailed,
     persistImageTaskResult: mocks.persistImageTaskResult,
+    prepareImageTaskAutomaticRetry: mocks.prepareImageTaskAutomaticRetry,
     queryCancelledImageTaskUpstreamStep: mocks.queryCancelledImageTaskUpstreamStep,
     queryImageTaskUpstreamStep: mocks.queryImageTaskUpstreamStep,
 }));
@@ -315,6 +318,49 @@ describe("generation task recovery service", () => {
         );
         expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
         expect(mocks.refundImageTask).not.toHaveBeenCalled();
+    });
+
+    it("releases one explicit upstream image failure as a clean second submission", async () => {
+        const task = {
+            id: "image-retry",
+            userId: "user-one",
+            status: "running",
+            attemptNo: 1,
+            upstream: { id: "upstream-failed" },
+            config: { channelId: "channel-one", apiFormat: "openai", advancedConfig: { protocol: "openai" } },
+        };
+        const retry = { ...task, upstream: undefined, config: { channelId: "channel-two", apiFormat: "gemini", advancedConfig: { protocol: "gemini" } } };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "running", executionPhase: "polling", upstreamTaskId: task.upstream.id }]);
+        mocks.getImageTask.mockResolvedValue(task);
+        mocks.queryImageTaskUpstreamStep.mockResolvedValue({ state: "failed", status: "failed", error: "上游生成失败", retryReason: "upstream_failed" });
+        mocks.prepareImageTaskAutomaticRetry.mockResolvedValue(retry);
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.prepareImageTaskAutomaticRetry).toHaveBeenCalledWith(task, "上游生成失败");
+        expect(mocks.release).toHaveBeenCalledWith(
+            "image",
+            task.id,
+            "worker-one",
+            expect.objectContaining({ executionPhase: "created", channelId: "channel-two", nextPollAt: expect.any(Number), lastUpstreamStatus: "automatic_retry_after_upstream_failure" }),
+            { resetUpstreamIdentity: true },
+        );
+        expect(mocks.markImageTaskFailed).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ claimed: 1, pending: 1, failed: 0 });
+    });
+
+    it("stops after the second explicit upstream image failure", async () => {
+        const task = { id: "image-retry-exhausted", userId: "user-one", status: "running", attemptNo: 2, upstream: { id: "upstream-failed-again" }, config: { channelId: "channel-one", apiFormat: "openai", advancedConfig: { protocol: "openai" } } };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "running", executionPhase: "polling", upstreamTaskId: task.upstream.id }]);
+        mocks.getImageTask.mockResolvedValue(task);
+        mocks.queryImageTaskUpstreamStep.mockResolvedValue({ state: "failed", status: "failed", error: "再次失败", retryReason: "upstream_failed" });
+        mocks.prepareImageTaskAutomaticRetry.mockResolvedValue(null);
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.markImageTaskFailed).toHaveBeenCalledWith(task, "再次失败");
+        expect(mocks.release).toHaveBeenCalledWith("image", task.id, "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined }));
+        expect(result).toMatchObject({ claimed: 1, pending: 0, failed: 1 });
     });
 
     it("recovers an image upstream identity already saved in the task payload", async () => {

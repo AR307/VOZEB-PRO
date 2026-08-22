@@ -14,13 +14,14 @@ import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { getImageTask, transitionImageTask, updateImageTask, type ImageTask, type StoredImageTaskMediaResult } from "@/lib/server/image-task-store";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
+import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 export type ImageUpstreamStep =
     | { state: "pending"; upstream: NonNullable<ImageTask["upstream"]>; status: string }
     | { state: "needs_review"; reason: string; status: string }
     | { state: "result_ready"; resultUrl: string; status: string }
     | { state: "completed" }
-    | { state: "failed"; error: string; status: string };
+    | { state: "failed"; error: string; status: string; retryReason?: "upstream_failed" };
 
 export async function createImageTaskUpstreamStep(task: ImageTask, origin: string, publicOrigin: string, cookie = "", workerUserId = ""): Promise<ImageUpstreamStep> {
     const current = await getImageTask(task.id);
@@ -32,37 +33,36 @@ export async function createImageTaskUpstreamStep(task: ImageTask, origin: strin
     if (running.upstream?.id) return queryImageTaskUpstreamStep(running, origin, cookie, workerUserId);
 
     const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
-    const candidates = [running.config, ...(running.candidateConfigs || [])];
+    const config = running.config;
     let attempts = running.attempts || [];
-    let latestError = "没有可用的图片渠道";
-    for (const [index, config] of candidates.entries()) {
-        const started = startGenerationAttempt(attempts, { channelId: config.channelId, model: generationModelId(config), capability: "image" });
-        attempts = started.attempts;
-        const candidate = { ...running, config, candidateConfigs: candidates.slice(index + 1), attempts, attemptNo: started.attempt.attemptNo, upstream: undefined, billing: undefined };
-        await updateImageTask(task.id, { config, candidateConfigs: candidate.candidateConfigs, attempts, attemptNo: candidate.attemptNo, upstream: undefined, billing: undefined });
-        await scheduleGenerationTask("image", task.id, {
-            executionPhase: "submitting",
-            nextPollAt: Date.now(),
-            channelId: config.channelId,
-            provider: config.advancedConfig?.protocol || config.apiFormat,
-            lastUpstreamStatus: "submitting",
-        });
-        try {
-            const result = usesDeclarativeImageProtocol(config.advancedConfig?.protocol)
-                ? await runCustomImageTask(candidate, origin, publicOrigin, authContext, true)
-                : config.apiFormat === "gemini"
-                  ? await runGeminiImageTask(candidate, origin, authContext)
-                  : await runOpenAiImageTask(candidate, origin, publicOrigin, authContext, true);
-            return await handleImageProviderResult(candidate, result, origin, authContext);
-        } catch (error) {
-            if (!(error instanceof GenerationSubmissionSafeFailure)) throw generationSubmissionUncertainError(error, "图片任务创建结果未知");
-            latestError = error.message;
-            attempts = finishGenerationAttempt(attempts, candidate.attemptNo, { status: "failed", error: latestError });
-            await refundImageCandidate(candidate);
-            await updateImageTask(task.id, { attempts, attemptNo: candidate.attemptNo, upstream: undefined, billing: undefined });
-        }
+    const started = startGenerationAttempt(attempts, { channelId: config.channelId, model: generationModelId(config), capability: "image" });
+    attempts = started.attempts;
+    const candidate = { ...running, config, attempts, attemptNo: started.attempt.attemptNo, upstream: undefined, billing: undefined };
+    await updateImageTask(task.id, { config, attempts, attemptNo: candidate.attemptNo, upstream: undefined, billing: undefined });
+    const submissionStartedAt = Date.now();
+    await scheduleGenerationTask("image", task.id, {
+        executionPhase: "submitting",
+        submittedAt: submissionStartedAt,
+        nextPollAt: submissionStartedAt + resolveModelRequestTimeoutMs(config, "image"),
+        channelId: config.channelId,
+        provider: config.advancedConfig?.protocol || config.apiFormat,
+        lastUpstreamStatus: "submitting",
+    });
+    try {
+        const result = usesDeclarativeImageProtocol(config.advancedConfig?.protocol)
+            ? await runCustomImageTask(candidate, origin, publicOrigin, authContext, true)
+            : config.apiFormat === "gemini"
+              ? await runGeminiImageTask(candidate, origin, authContext)
+              : await runOpenAiImageTask(candidate, origin, publicOrigin, authContext, true);
+        return await handleImageProviderResult(candidate, result, origin, authContext);
+    } catch (error) {
+        if (error instanceof ImageUpstreamTerminalError) return { state: "failed", error: error.message || "图片生成失败", status: "failed", retryReason: "upstream_failed" };
+        if (!(error instanceof GenerationSubmissionSafeFailure)) throw generationSubmissionUncertainError(error, "图片任务创建结果未知");
+        attempts = finishGenerationAttempt(attempts, candidate.attemptNo, { status: "failed", error: error.message });
+        await refundImageCandidate(candidate);
+        await updateImageTask(task.id, { attempts, attemptNo: candidate.attemptNo, upstream: undefined, billing: undefined });
+        return { state: "failed", error: error.message, status: "failed" };
     }
-    return { state: "failed", error: latestError, status: "failed" };
 }
 
 export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string, cookie = "", workerUserId = ""): Promise<ImageUpstreamStep> {
@@ -78,10 +78,34 @@ export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string
         return await handleImageProviderResult(task, { ...result, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
     } catch (error) {
         if (error instanceof ImageQueryContractError) return { state: "needs_review", reason: error.message, status: "query_contract_invalid" };
-        if (error instanceof ImageUpstreamTerminalError) return { state: "failed", error: error.message, status: "failed" };
+        if (error instanceof ImageUpstreamTerminalError) return { state: "failed", error: error.message, status: "failed", retryReason: "upstream_failed" };
         if (error instanceof GenerationSubmissionSafeFailure) return { state: "failed", error: error.message, status: "failed" };
         throw error;
     }
+}
+
+export async function prepareImageTaskAutomaticRetry(task: ImageTask, error: string) {
+    const current = (await getImageTask(task.id)) || task;
+    if (current.status !== "pending" && current.status !== "running") return null;
+    const attemptNo = current.attemptNo || current.attempts?.at(-1)?.attemptNo || 1;
+    if (attemptNo >= 2) return null;
+    const attempts = finishGenerationAttempt(current.attempts || [], attemptNo, {
+        status: "failed",
+        error,
+        pointsCost: current.billing?.pointsCost,
+        pointsRecordId: current.billing?.pointsRecordId,
+    });
+    await refundImageCandidate(current);
+    const nextConfig = current.candidateConfigs?.[0] || current.config;
+    return updateImageTask(current.id, {
+        config: nextConfig,
+        candidateConfigs: [],
+        attempts,
+        attemptNo,
+        upstream: undefined,
+        billing: undefined,
+        retryable: false,
+    });
 }
 
 export async function queryCancelledImageTaskUpstreamStep(task: ImageTask, origin: string, cookie = "", workerUserId = "") {

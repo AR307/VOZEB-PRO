@@ -325,7 +325,7 @@ export function withImageOutputInstructions(config: ImageTaskConfig, prompt: str
 
 export async function parseImagePayloadOrPoll(config: ImageTaskConfig, payload: ImageApiResponse, mediaBaseUrl: string, cookie: string, pollBaseUrl = mediaBaseUrl, singleStep = false): Promise<ImageTaskResult> {
     const payloadError = readImagePayloadError(payload);
-    if (payloadError) throw new GenerationSubmissionSafeFailure(payloadError);
+    if (payloadError) throw new ImageUpstreamTerminalError(payloadError);
     const images = findImageResults(payload, mediaBaseUrl, config);
     if (images.length) return imageTaskResultFromMedia(images);
 
@@ -383,7 +383,7 @@ export async function parseImageQueryJson(response: Response): Promise<ImageApiR
 
 export function parseImagePayloadCompat(payload: ImageApiResponse, baseUrl: string, config: ImageTaskConfig): ImageTaskResult | null {
     const error = readImagePayloadError(payload);
-    if (error) throw new Error(error);
+    if (error) throw new ImageUpstreamTerminalError(error);
     const images = findImageResults(payload, baseUrl, config);
     return images.length ? imageTaskResultFromMedia(images) : null;
 }

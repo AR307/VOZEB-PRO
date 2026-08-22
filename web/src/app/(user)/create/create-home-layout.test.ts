@@ -23,7 +23,9 @@ describe("create Agent home layout", () => {
         expect(page).toContain("updateConversationScrollState");
         expect(page).toContain("onWheelCapture");
         expect(page).toContain("scrollingAwayFromLatestRef");
-        expect(page).toContain("distanceFromLatest < 4");
+        expect(page).toContain("creativeConversationScrollTransition");
+        expect(page).toContain('transition === "collapse"');
+        expect(page).toContain('transition === "expand"');
         expect(page).toContain("awayFromLatestRef.current = false");
         expect(page).toContain("setAwayFromLatestState(true)");
         expect(page).toContain("回到底部");

@@ -531,6 +531,57 @@ describe("Stable Diffusion proxy", () => {
         expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
     });
 
+    it("fully receives a non-streaming image JSON response before returning it internally", async () => {
+        const upstream = Response.json({ images: ["image-base64"] });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(upstream);
+
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/sdapi/v1/txt2img", {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "x-vozeb-pro-logical-model": "image-local",
+                    "x-vozeb-pro-upstream-model": "sdxl",
+                },
+                body: JSON.stringify({ prompt: "slow image" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["sdapi", "v1", "txt2img"] }) },
+        );
+
+        expect(upstream.bodyUsed).toBe(true);
+        await expect(response.json()).resolves.toEqual({ images: ["image-base64"] });
+    });
+
+    it("turns a broken image JSON body into an uncertain proxy failure and refunds local points", async () => {
+        mocks.consumeUserPoints.mockResolvedValue({ model: "image-local", cost: 1, units: 1, usageKind: "image", recordId: "points-broken-body", remaining: 4, permanentRemaining: 4, dailyRemaining: 0, dailyExpiresAt: "" });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.error(new Error("socket closed"));
+                    },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+            ),
+        );
+
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/sdapi/v1/txt2img", {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "x-vozeb-pro-logical-model": "image-local",
+                    "x-vozeb-pro-upstream-model": "sdxl",
+                },
+                body: JSON.stringify({ prompt: "slow image" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["sdapi", "v1", "txt2img"] }) },
+        );
+
+        expect(response.status).toBe(502);
+        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user-one", "image-local", 1, "image", 1, undefined, "points-broken-body");
+    });
+
     it("forwards a visual JSON body larger than the former four-megabyte ceiling", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ images: ["image-base64"] }));
         const body = JSON.stringify({ prompt: "layer this image", init_images: ["A".repeat(5 * 1024 * 1024)] });

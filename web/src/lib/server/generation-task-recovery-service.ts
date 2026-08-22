@@ -5,7 +5,7 @@ import { failVideoTaskFromWorker, persistVideoTaskResult, queryVideoTaskUpstream
 import { getVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { createAudioTaskUpstreamStep, markAudioTaskFailed, persistAudioTaskResult, queryAudioTaskUpstreamStep } from "@/lib/server/audio-task-runtime";
 import { getAudioTask, updateAudioTask, type AudioTask } from "@/lib/server/audio-task-store";
-import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResult, queryCancelledImageTaskUpstreamStep, queryImageTaskUpstreamStep } from "@/lib/server/image-task-runtime";
+import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResult, prepareImageTaskAutomaticRetry, queryCancelledImageTaskUpstreamStep, queryImageTaskUpstreamStep } from "@/lib/server/image-task-runtime";
 import { getImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
 import { getTextTask, updateTextTask } from "@/lib/server/text-task-store";
 import { queryCancelledTextTaskUpstreamStep, runTextTaskStep } from "@/lib/server/text-task-runtime";
@@ -468,6 +468,26 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
         const step = task.upstream?.id ? await queryImageTaskUpstreamStep(task, origin, cookie, cookie ? "" : task.userId) : await createImageTaskUpstreamStep(task, origin, publicOrigin, cookie, cookie ? "" : task.userId);
         const now = Date.now();
         if (step.state === "failed") {
+            if (step.retryReason === "upstream_failed") {
+                const retry = await prepareImageTaskAutomaticRetry(task, step.error);
+                if (retry) {
+                    await releaseGenerationTaskLease(
+                        "image",
+                        task.id,
+                        workerId,
+                        {
+                            executionPhase: "created",
+                            channelId: retry.config.channelId,
+                            provider: retry.config.advancedConfig?.protocol || retry.config.apiFormat,
+                            nextPollAt: now,
+                            lastPollAt: now,
+                            lastUpstreamStatus: "automatic_retry_after_upstream_failure",
+                        },
+                        { resetUpstreamIdentity: true },
+                    );
+                    return "pending";
+                }
+            }
             await markImageTaskFailed(task, step.error);
             await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
             return "failed";

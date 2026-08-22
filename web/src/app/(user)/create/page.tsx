@@ -30,6 +30,7 @@ import { CreativeMessages } from "./components/creative-messages";
 import { CreateWorkbenchOverview } from "./components/create-workbench-overview";
 import { publicCreativeAssetPrompt, remapCreativeAssetReferences } from "./components/creative-asset-mention";
 import { createConversationHref, createConversationIdFromSearch } from "./create-conversation-navigation";
+import { creativeConversationScrollTransition } from "./create-conversation-scroll";
 import { useCreateAgent } from "./use-create-agent";
 
 const SKILL_VISUALS = [
@@ -56,6 +57,7 @@ export default function CreatePage() {
     const previousScrollTopRef = useRef(0);
     const awayFromLatestRef = useRef(false);
     const scrollingAwayFromLatestRef = useRef(false);
+    const touchScrollYRef = useRef<number | undefined>(undefined);
     const promptValueRef = useRef("");
     const promptRevisionRef = useRef(0);
     const optimizingRef = useRef(false);
@@ -139,6 +141,8 @@ export default function CreatePage() {
     useEffect(() => {
         previousScrollTopRef.current = 0;
         awayFromLatestRef.current = false;
+        scrollingAwayFromLatestRef.current = false;
+        touchScrollYRef.current = undefined;
         setAwayFromLatest(false);
         setComposerExpanded(true);
     }, [agent.conversationId]);
@@ -443,15 +447,19 @@ export default function CreatePage() {
     const updateConversationScrollState = (element: HTMLElement) => {
         const scrollTop = element.scrollTop;
         const distanceFromLatest = Math.max(0, element.scrollHeight - element.clientHeight - scrollTop);
-        const scrollingUp = scrollTop < previousScrollTopRef.current - 3;
-        const scrollingDown = scrollTop > previousScrollTopRef.current + 3;
-        if (scrollingUp) scrollingAwayFromLatestRef.current = true;
-        else if (scrollingDown) scrollingAwayFromLatestRef.current = false;
+        const transition = creativeConversationScrollTransition({
+            scrollTop,
+            previousScrollTop: previousScrollTopRef.current,
+            distanceFromLatest,
+            userScrollingAway: scrollingAwayFromLatestRef.current,
+        });
+        if (Math.abs(scrollTop - previousScrollTopRef.current) > 3) scrollingAwayFromLatestRef.current = false;
         previousScrollTopRef.current = scrollTop;
-        if (scrollingUp) {
+        if (transition === "collapse") {
             setAwayFromLatestState(true);
             setComposerExpanded(false);
-        } else if (distanceFromLatest < 4) {
+        } else if (transition === "expand") {
+            scrollingAwayFromLatestRef.current = false;
             setAwayFromLatestState(false);
             setComposerExpanded(true);
         }
@@ -653,6 +661,24 @@ export default function CreatePage() {
                         onWheelCapture={(event) => {
                             if (event.deltaY < 0) scrollingAwayFromLatestRef.current = true;
                             else if (event.deltaY > 0) scrollingAwayFromLatestRef.current = false;
+                        }}
+                        onTouchStart={(event) => {
+                            touchScrollYRef.current = event.touches[0]?.clientY;
+                        }}
+                        onTouchMove={(event) => {
+                            const nextY = event.touches[0]?.clientY;
+                            const previousY = touchScrollYRef.current;
+                            if (nextY === undefined || previousY === undefined) return;
+                            if (nextY > previousY) scrollingAwayFromLatestRef.current = true;
+                            else if (nextY < previousY) scrollingAwayFromLatestRef.current = false;
+                            touchScrollYRef.current = nextY;
+                        }}
+                        onTouchEnd={() => {
+                            touchScrollYRef.current = undefined;
+                        }}
+                        onKeyDownCapture={(event) => {
+                            if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) scrollingAwayFromLatestRef.current = true;
+                            else if (["ArrowDown", "PageDown", "End"].includes(event.key) || event.key === " ") scrollingAwayFromLatestRef.current = false;
                         }}
                     >
                         {showConversation ? (

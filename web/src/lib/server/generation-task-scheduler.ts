@@ -26,7 +26,7 @@ export type GenerationTaskLease = Pick<
 >;
 
 export type GenerationTaskSchedulePatch = Partial<Pick<GenerationTaskLease, "executionPhase" | "upstreamTaskId" | "channelId" | "provider" | "queryPath" | "submittedAt" | "nextPollAt" | "lastPollAt" | "lastUpstreamStatus" | "resultPayload">>;
-type GenerationTaskScheduleOptions = { cancellation?: boolean };
+type GenerationTaskScheduleOptions = { cancellation?: boolean; resetUpstreamIdentity?: boolean };
 
 const SCHEDULABLE_TYPES = new Set<GenerationTaskType>(["image", "video", "audio", "text", "agent"]);
 const ACTIVE_PHASES = new Set<GenerationTaskExecutionPhase>(["created", "submitting", "submitted", "polling", "result_ready", "persisting"]);
@@ -166,15 +166,16 @@ export async function releaseGenerationTaskLease(type: GenerationTaskType, id: s
         await ensurePostgresSchema();
         const result = await postgresQuery<Record<string, unknown>>(
             `UPDATE generation_tasks
-             SET execution_phase = COALESCE($4, execution_phase), upstream_task_id = COALESCE($5, upstream_task_id),
-                 channel_id = COALESCE($6, channel_id), provider = COALESCE($7, provider), query_path = COALESCE($8, query_path),
-                 submitted_at = COALESCE($9, submitted_at), next_poll_at = $10, last_poll_at = COALESCE($11, last_poll_at),
-                 last_upstream_status = COALESCE($12, last_upstream_status), result_payload = COALESCE($13::jsonb, result_payload),
+             SET execution_phase = COALESCE($4, execution_phase), upstream_task_id = CASE WHEN $15::boolean THEN NULL ELSE COALESCE($5, upstream_task_id) END,
+                 channel_id = COALESCE($6, channel_id), provider = COALESCE($7, provider), query_path = CASE WHEN $15::boolean THEN NULL ELSE COALESCE($8, query_path) END,
+                 submitted_at = CASE WHEN $15::boolean THEN NULL ELSE COALESCE($9, submitted_at) END, next_poll_at = $10,
+                 last_poll_at = CASE WHEN $15::boolean THEN NULL ELSE COALESCE($11, last_poll_at) END,
+                 last_upstream_status = COALESCE($12, last_upstream_status), result_payload = CASE WHEN $15::boolean THEN $13::jsonb ELSE COALESCE($13::jsonb, result_payload) END,
                  worker_id = NULL, lease_until = NULL
              WHERE id = $1 AND task_type = $2 AND worker_id = $3
                AND ($14::boolean OR status <> 'cancelled' OR execution_phase NOT IN ('cancel_requested', 'cancel_polling'))
              RETURNING *`,
-            [id, type, owner, ...scheduleValues("", type, normalized).slice(2), options.cancellation === true],
+            [id, type, owner, ...scheduleValues("", type, normalized).slice(2), options.cancellation === true, options.resetUpstreamIdentity === true],
         );
         return result.rows[0] ? mapLease(result.rows[0]) : null;
     }
@@ -183,7 +184,13 @@ export async function releaseGenerationTaskLease(type: GenerationTaskType, id: s
         const next = tasks.map((task) => {
             if (task.id !== id || task.type !== type || task.workerId !== owner) return task;
             if (!canApplySchedulePatch(task, options)) return task;
-            const updated = { ...applyPatch(task, normalized), workerId: undefined, leaseUntil: undefined };
+            const patched = applyPatch(task, normalized);
+            const updated = {
+                ...patched,
+                ...(options.resetUpstreamIdentity ? { upstreamTaskId: undefined, queryPath: undefined, submittedAt: undefined, lastPollAt: undefined, resultPayload: normalized.resultPayload } : {}),
+                workerId: undefined,
+                leaseUntil: undefined,
+            };
             result = toLease(updated);
             return updated;
         });

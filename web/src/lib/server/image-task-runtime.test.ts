@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     register: vi.fn(),
     refund: vi.fn(),
     QueryContractError: class extends Error {},
+    UpstreamTerminalError: class extends Error {},
 }));
 
 vi.mock("@/app/api/image-tasks/image-task-custom", () => ({ runCustomImageTask: mocks.runCustom, pollCustomImageTask: mocks.pollCustom }));
@@ -33,7 +34,7 @@ vi.mock("@/app/api/image-tasks/image-task-support", () => ({
     imageReferenceToDataUrl: mocks.referenceDataUrl,
     imageUnits: vi.fn(() => 1),
     ImageQueryContractError: mocks.QueryContractError,
-    ImageUpstreamTerminalError: class extends Error {},
+    ImageUpstreamTerminalError: mocks.UpstreamTerminalError,
     inlineRemoteImageResult: mocks.inlineResult,
     pollOpenAiImageTask: mocks.pollOpenAi,
     resolveProxiedMediaSource: mocks.resolveMedia,
@@ -53,7 +54,7 @@ vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaP
 
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "./generation-submission-error";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
-import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResult, queryImageTaskUpstreamStep } from "./image-task-runtime";
+import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResult, prepareImageTaskAutomaticRetry, queryImageTaskUpstreamStep } from "./image-task-runtime";
 import type { ImageTask } from "./image-task-store";
 
 describe("image task runtime submission safety", () => {
@@ -85,20 +86,46 @@ describe("image task runtime submission safety", () => {
         mocks.register.mockResolvedValue(undefined);
     });
 
-    it("switches candidates only after an explicit safe rejection", async () => {
+    it("does not resubmit after a safe request rejection", async () => {
         mocks.runCustom.mockRejectedValueOnce(new GenerationSubmissionSafeFailure("参数不受支持", 422));
-        mocks.runGemini.mockResolvedValueOnce({ dataUrl: "", pending: { id: "upstream-two", mediaBaseUrl: "https://two.example", pollBaseUrl: "https://two.example" } });
 
-        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({
-            state: "pending",
-            upstream: { id: "upstream-two" },
-        });
+        const step = await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
+        expect(step).toMatchObject({ state: "failed", error: "参数不受支持" });
+        expect(step).not.toHaveProperty("retryReason");
         expect(mocks.runCustom).toHaveBeenCalledTimes(1);
-        expect(mocks.runGemini).toHaveBeenCalledTimes(1);
-        expect(state.config.channelId).toBe("channel-two");
-        expect(state.candidateConfigs).toEqual([]);
-        expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
-        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-two", channelId: "channel-two", provider: "gemini", lastUpstreamStatus: "submitted" }));
+        expect(mocks.runGemini).not.toHaveBeenCalled();
+        expect(state.config.channelId).toBe("channel-one");
+        expect(state.candidateConfigs).toHaveLength(1);
+        expect(state.attempts?.map(({ status }) => status)).toEqual(["failed"]);
+    });
+
+    it("prepares exactly one new attempt after an explicit upstream generation failure", async () => {
+        mocks.runCustom.mockRejectedValueOnce(new mocks.UpstreamTerminalError("上游生成失败"));
+
+        const step = await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
+        expect(step).toMatchObject({ state: "failed", error: "上游生成失败", retryReason: "upstream_failed" });
+
+        await expect(prepareImageTaskAutomaticRetry(state, "上游生成失败")).resolves.toMatchObject({ config: { channelId: "channel-two" }, candidateConfigs: [], attemptNo: 1 });
+        expect(state.attempts).toEqual([expect.objectContaining({ attemptNo: 1, status: "failed", error: "上游生成失败" })]);
+        expect(state.upstream).toBeUndefined();
+
+        mocks.runGemini.mockResolvedValueOnce({ dataUrl: "", pending: { id: "upstream-two", mediaBaseUrl: "https://two.example", pollBaseUrl: "https://two.example" } });
+        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "pending", upstream: { id: "upstream-two" } });
+        expect(mocks.runGemini.mock.calls[0]?.[0]).toMatchObject({ attemptNo: 2, config: { channelId: "channel-two" } });
+        expect(state.attempts).toEqual([expect.objectContaining({ attemptNo: 1, status: "failed" }), expect.objectContaining({ attemptNo: 2, status: "running" })]);
+
+        await expect(prepareImageTaskAutomaticRetry(state, "再次失败")).resolves.toBeNull();
+    });
+
+    it("keeps the submitting phase unavailable until the configured image deadline", async () => {
+        vi.spyOn(Date, "now").mockReturnValue(10_000);
+        state.config = { ...state.config, capabilityProfile: { timeoutMs: 150_000 } };
+        state.candidateConfigs = [];
+        mocks.runCustom.mockResolvedValueOnce({ dataUrl: "", pending: { id: "upstream-one", mediaBaseUrl: "https://one.example", pollBaseUrl: "https://one.example" } });
+
+        await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
+
+        expect(mocks.schedule).toHaveBeenNthCalledWith(1, "image", "image-one", expect.objectContaining({ executionPhase: "submitting", submittedAt: 10_000, nextPollAt: 160_000 }));
     });
 
     it("routes Yumeng image tasks through the declarative async runtime", async () => {
