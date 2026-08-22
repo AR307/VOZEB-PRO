@@ -293,7 +293,7 @@ function VozebProCanvasPage() {
     const hiddenCanvasNodeIds = useMemo(() => new Set(nodes.filter((node) => isHiddenBatchChild(node, nodes, collapsingBatchIds)).map((node) => node.id)), [collapsingBatchIds, nodes]);
     if (!projectLoaded) return <CanvasRefreshShell />;
     return (
-        <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.backdrop, color: theme.node.text }}>
+        <main className="flex h-full min-h-0 w-full min-w-0 max-w-full overflow-hidden" style={{ background: theme.canvas.backdrop, color: theme.node.text }}>
             <CanvasAssetsPanel
                 open={assetPickerOpen}
                 projectId={projectId}
@@ -310,7 +310,7 @@ function VozebProCanvasPage() {
                 onLocateNode={locateCanvasNode}
                 onClose={() => setAssetPickerOpen(false)}
             />
-            <section className="relative min-w-0 flex-1 overflow-hidden">
+            <section className="relative min-w-0 max-w-full flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || "未命名画布"}
                     titleDraft={titleDraft}

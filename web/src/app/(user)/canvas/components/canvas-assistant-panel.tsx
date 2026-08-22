@@ -747,7 +747,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
     return (
         <motion.div
             className="canvas-agent-panel-frame flex shrink-0"
-            initial={{ width: 0, opacity: 0 }}
+            initial={false}
             animate={{ width: closing ? 0 : width + 1, opacity: closing ? 0 : 1 }}
             transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
             style={{ overflow: "clip", pointerEvents: closing ? "none" : undefined }}
@@ -755,7 +755,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
             <motion.aside
                 className="canvas-agent-panel relative flex shrink-0 flex-col border-l"
                 aria-label="Canvas Agent 对话面板"
-                initial={{ x: 48 }}
+                initial={false}
                 animate={{ x: closing ? 28 : 0 }}
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
                 style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
