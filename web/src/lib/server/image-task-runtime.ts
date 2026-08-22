@@ -1,21 +1,18 @@
 import { runCustomImageTask, pollCustomImageTask } from "@/app/api/image-tasks/image-task-custom";
 import { runGeminiImageTask } from "@/app/api/image-tasks/image-task-gemini";
 import { runOpenAiImageTask } from "@/app/api/image-tasks/image-task-openai";
-import { directRemoteImageResult, imageReferenceToDataUrl, imageUnits, ImageQueryContractError, ImageUpstreamTerminalError, inlineRemoteImageResult, pollOpenAiImageTask, resolveProxiedMediaSource } from "@/app/api/image-tasks/image-task-support";
-import type { ImageTaskMediaResult, ImageTaskResult, ImageTaskRunResult } from "@/app/api/image-tasks/image-task-types";
+import { imageUnits, ImageQueryContractError, ImageUpstreamTerminalError, pollOpenAiImageTask } from "@/app/api/image-tasks/image-task-support";
+import type { ImageTaskRunResult } from "@/app/api/image-tasks/image-task-types";
 import { stableMediaUrl, writeImageGenerationLog } from "@/app/api/image-tasks/image-task-runner";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
-import { dedupeImageResults } from "@/lib/image-result-dedupe";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
-import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
-import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
-import { validateImageLayerOutputs } from "@/lib/server/image-layer-output";
+import { generationModelId } from "@/lib/server/generation-channel";
 import { refundImageTask } from "@/lib/server/image-task-refund";
+import { deletePreparedImageTaskResults, persistedImageTaskResults, prepareImageTaskResults } from "@/lib/server/image-task-result-service";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
-import { getImageTask, transitionImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
-import { assertTransparentImageOutput } from "@/lib/server/image-transparent-output";
+import { getImageTask, transitionImageTask, updateImageTask, type ImageTask, type StoredImageTaskMediaResult } from "@/lib/server/image-task-store";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 
 export type ImageUpstreamStep =
@@ -25,13 +22,13 @@ export type ImageUpstreamStep =
     | { state: "completed" }
     | { state: "failed"; error: string; status: string };
 
-const INLINE_IMAGE_RESULT_REFERENCE = "inline://image-task-result";
-
 export async function createImageTaskUpstreamStep(task: ImageTask, origin: string, publicOrigin: string, cookie = "", workerUserId = ""): Promise<ImageUpstreamStep> {
     const current = await getImageTask(task.id);
     if (!current || current.status === "cancelled") return { state: "failed", error: "任务已取消", status: "cancelled" };
     const running = current.status === "pending" ? await transitionImageTask(current, ["pending"], { status: "running" }) : current;
     if (!running) return { state: "failed", error: "图片任务状态已变化", status: "conflict" };
+    const prepared = persistedImageTaskResults(running);
+    if (prepared.length) return readyImageStep(running, prepared[0].serverUrl || prepared[0].dataUrl);
     if (running.upstream?.id) return queryImageTaskUpstreamStep(running, origin, cookie, workerUserId);
 
     const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
@@ -69,6 +66,8 @@ export async function createImageTaskUpstreamStep(task: ImageTask, origin: strin
 }
 
 export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string, cookie = "", workerUserId = ""): Promise<ImageUpstreamStep> {
+    const prepared = persistedImageTaskResults(task);
+    if (prepared.length) return readyImageStep(task, prepared[0].serverUrl || prepared[0].dataUrl);
     const upstream = task.upstream;
     if (!upstream?.id) return { state: "failed", error: "图片任务缺少上游任务 ID", status: "missing_upstream_id" };
     const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
@@ -102,12 +101,27 @@ export async function queryCancelledImageTaskUpstreamStep(task: ImageTask, origi
 
 export async function persistImageTaskResult(task: ImageTask, origin: string, resultUrl: string, cookie = "", workerUserId = "") {
     const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
-    const inlineDataUrl = resultUrl === INLINE_IMAGE_RESULT_REFERENCE ? task.result?.dataUrl || "" : resultUrl;
-    const remoteUrl = resultUrl === INLINE_IMAGE_RESULT_REFERENCE ? task.result?.remoteUrl : /^https?:\/\//i.test(resultUrl) ? resultUrl : undefined;
+    const current = (await getImageTask(task.id)) || task;
+    let results = persistedImageTaskResults(current);
+    if (results.length) return completeImageResult(current, results);
+
+    const inlineDataUrl = resultUrl === "inline://image-task-result" ? current.result?.dataUrl || "" : resultUrl;
+    const remoteUrl = resultUrl === "inline://image-task-result" ? current.result?.remoteUrl : /^https?:\/\//i.test(resultUrl) ? resultUrl : undefined;
     if (!inlineDataUrl && !remoteUrl) throw new GenerationSubmissionSafeFailure("图片任务缺少可持久化结果");
-    const results = task.result?.results?.length ? task.result.results : [{ dataUrl: inlineDataUrl, remoteUrl }];
-    const normalizedResults = results.map((item, index) => (index === 0 ? { ...item, dataUrl: inlineDataUrl || item.dataUrl, remoteUrl: remoteUrl || item.remoteUrl } : item));
-    return completeImageResult(task, { ...normalizedResults[0], results: normalizedResults, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
+    const legacyResults = current.result?.results?.length ? current.result.results : [{ dataUrl: inlineDataUrl, remoteUrl }];
+    const normalizedResults = legacyResults.map((item, index) => (index === 0 ? { ...item, dataUrl: inlineDataUrl || item.dataUrl, remoteUrl: remoteUrl || item.remoteUrl } : item));
+    try {
+        results = await prepareImageTaskResults(current, { ...normalizedResults[0], results: normalizedResults }, origin, authContext);
+    } catch (error) {
+        return markImageTaskFailed(current, error instanceof Error ? error.message : "上游返回的图片文件无效或保存失败");
+    }
+    try {
+        await updateImageTask(current.id, { result: { ...results[0], results } });
+    } catch (error) {
+        await deletePreparedImageTaskResults(results);
+        throw error;
+    }
+    return completeImageResult(current, results);
 }
 
 export async function markImageTaskFailed(task: ImageTask, error: string) {
@@ -165,21 +179,32 @@ async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunRe
         });
         return { state: "pending", upstream: result.pending, status: "submitted" };
     }
-    const results = imageTaskMediaResults(result, task.config.outputMode === "layers");
+    let results: StoredImageTaskMediaResult[];
+    try {
+        results = await prepareImageTaskResults(task, result, origin, authContext);
+    } catch (error) {
+        return { state: "failed", error: error instanceof Error ? error.message : "上游返回的图片文件无效或保存失败", status: "failed" };
+    }
     const first = results[0];
     if (!first) return { state: "failed", error: "上游返回的图片文件无效或保存失败", status: "failed" };
-    await updateImageTask(task.id, { result: { ...first, results } });
-    if (first.dataUrl?.startsWith("data:") || first.dataUrl?.startsWith("/api/")) {
-        const resultUrl = INLINE_IMAGE_RESULT_REFERENCE;
-        await persistReadyImageSchedule(task, resultUrl);
-        return { state: "result_ready", resultUrl, status: "completed" };
+    const current = await getImageTask(task.id);
+    if (!current || current.status === "cancelled") {
+        await deletePreparedImageTaskResults(results);
+        return { state: "failed", error: "任务已取消", status: "cancelled" };
     }
-    const resultUrl = stableMediaUrl(first.remoteUrl || first.dataUrl);
-    if (resultUrl) {
-        await persistReadyImageSchedule(task, resultUrl);
-        return { state: "result_ready", resultUrl, status: "completed" };
+    try {
+        await updateImageTask(task.id, { result: { ...first, results } });
+    } catch (error) {
+        await deletePreparedImageTaskResults(results);
+        return { state: "failed", error: error instanceof Error ? error.message : "上游返回的图片文件无效或保存失败", status: "failed" };
     }
-    return { state: "failed", error: "上游返回的图片文件无效或保存失败", status: "failed" };
+    return readyImageStep(task, first.serverUrl || first.dataUrl);
+}
+
+async function readyImageStep(task: ImageTask, resultUrl: string): Promise<ImageUpstreamStep> {
+    if (!stableMediaUrl(resultUrl)) return { state: "failed", error: "上游返回的图片文件无效或保存失败", status: "failed" };
+    await persistReadyImageSchedule(task, resultUrl);
+    return { state: "result_ready", resultUrl, status: "completed" };
 }
 
 function persistReadyImageSchedule(task: ImageTask, resultUrl: string) {
@@ -211,58 +236,13 @@ async function refundImageCandidate(task: ImageTask) {
     );
 }
 
-async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, origin: string, authContext: string) {
+async function completeImageResult(task: ImageTask, safeResults: StoredImageTaskMediaResult[]) {
     const beforePersistence = await getImageTask(task.id);
     if (!beforePersistence || beforePersistence.status === "cancelled") {
         if (beforePersistence?.status === "cancelled") await refundImageTask(beforePersistence);
         return beforePersistence;
     }
     task = beforePersistence;
-    const preserveLayerResults = task.config.outputMode === "layers";
-    const settledResults = await Promise.allSettled(imageTaskMediaResults(result, preserveLayerResults).map((item) => normalizeSafeImageResult(task, item, origin, authContext)));
-    const normalizedResults = settledResults.flatMap((item) => (item.status === "fulfilled" && item.value?.dataUrl ? [item.value] : []));
-    let safeResults = preserveLayerResults ? normalizedResults : dedupeImageResults(normalizedResults);
-    if (preserveLayerResults) {
-        const rejected = settledResults.find((item): item is PromiseRejectedResult => item.status === "rejected");
-        if (rejected) {
-            const details = rejected.reason instanceof Error ? rejected.reason.message : "上游分层图片无法读取";
-            return markImageTaskFailed(task, `上游分层验收失败：${details}，请为该模型配置真实分层接口`);
-        }
-    }
-    if (!safeResults.length) {
-        const rejected = settledResults.find((item): item is PromiseRejectedResult => item.status === "rejected");
-        throw rejected?.reason instanceof Error ? rejected.reason : new GenerationSubmissionSafeFailure("上游返回的图片文件无效或保存失败");
-    }
-    if (task.config.outputBackground === "transparent") {
-        const validated = await Promise.allSettled(safeResults.map(async (item) => (await assertTransparentImageOutput(item.dataUrl), item)));
-        safeResults = validated.flatMap((item) => (item.status === "fulfilled" ? [item.value] : []));
-        if (!safeResults.length) {
-            const rejected = validated.find((item): item is PromiseRejectedResult => item.status === "rejected");
-            return markImageTaskFailed(task, rejected?.reason instanceof Error ? rejected.reason.message : "上游没有生成有效透明图层");
-        }
-    }
-    if (task.config.outputMode === "layers") {
-        try {
-            if (task.kind !== "edit" || task.references.length !== 1) throw new Error("电商分层需要且只能使用一张源图");
-            const source = await imageReferenceToDataUrl(task.references[0], task.references[0].name || "source.png", origin, authContext);
-            const validated = await validateImageLayerOutputs(
-                source,
-                safeResults.map((item) => item.dataUrl),
-            );
-            safeResults = validated.map((output, index) => ({
-                ...safeResults[index],
-                dataUrl: output.dataUrl,
-                remoteUrl: undefined,
-                width: output.width,
-                height: output.height,
-                bytes: output.bytes,
-                mimeType: output.mimeType,
-            }));
-        } catch (error) {
-            const details = error instanceof Error ? error.message : "上游分层结果无法验证";
-            return markImageTaskFailed(task, `上游分层验收失败：${details}，请为该模型配置真实分层接口`);
-        }
-    }
     const current = await getImageTask(task.id);
     if (!current || current.status === "cancelled") {
         if (current?.status === "cancelled") await refundImageTask(current);
@@ -271,7 +251,7 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
     const completed = await transitionImageTask(current, ["pending", "running"], {
         status: "success",
         result: { ...safeResults[0], results: safeResults },
-        pointsRemaining: result.pointsRemaining,
+        pointsRemaining: task.pointsRemaining,
         retryable: false,
     });
     if (!completed) {
@@ -290,8 +270,8 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
     const finalResult = finalResults[0];
     const attempts = finishGenerationAttempt(completed.attempts || [], completed.attemptNo || completed.attempts?.at(-1)?.attemptNo || 1, {
         status: "succeeded",
-        pointsCost: result.pointsCost ?? completed.billing?.pointsCost,
-        pointsRecordId: result.pointsRecordId || completed.billing?.pointsRecordId,
+        pointsCost: completed.billing?.pointsCost,
+        pointsRecordId: completed.billing?.pointsRecordId,
     });
     const finalized = (await updateImageTask(task.id, { result: { ...finalResult, results: finalResults }, config: { ...completed.config, apiKey: "system" }, candidateConfigs: [], attempts, attemptNo: attempts.at(-1)?.attemptNo })) || completed;
     const assets = (finalized.result?.results?.length ? finalized.result.results : finalized.result ? [finalized.result] : []).flatMap((item) => {
@@ -308,27 +288,6 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
     return finalized;
 }
 
-function imageTaskMediaResults(result: ImageTaskResult, preserveDuplicates = false): ImageTaskMediaResult[] {
-    const values = result.results?.length ? result.results : result.dataUrl || result.remoteUrl ? [{ dataUrl: result.dataUrl, remoteUrl: result.remoteUrl }] : [];
-    return preserveDuplicates ? values : dedupeImageResults(values);
-}
-
 function usesDeclarativeImageProtocol(protocol: NonNullable<ImageTask["config"]["advancedConfig"]>["protocol"] | undefined) {
     return protocol === "custom" || protocol === "stable-diffusion" || protocol === "yumeng";
-}
-
-async function normalizeSafeImageResult(task: ImageTask, result: ImageTaskMediaResult, origin: string, authContext: string): Promise<ImageTaskMediaResult> {
-    const remoteUrl = typeof result.remoteUrl === "string" ? result.remoteUrl : undefined;
-    const proxiedMedia = resolveProxiedMediaSource(result.dataUrl || "", origin);
-    const proxiedRemoteUrl = proxiedMedia.remoteUrl;
-    const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
-    const mediaHeaders = proxiedRemoteUrl && channelId ? generationMediaProxyHeaders({ userId: task.userId, taskType: "image", taskId: task.id, channelId, upstreamModel: task.config.model, url: proxiedRemoteUrl }) : undefined;
-    const inlineResult = proxiedMedia.proxyUrl ? await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl, mediaHeaders) : null;
-    if (proxiedMedia.proxyUrl && !inlineResult?.dataUrl?.startsWith("data:image/")) throw new GenerationSubmissionSafeFailure("上游图片无法通过授权媒体路径读取");
-    if (task.config.outputMode === "layers") {
-        const readable = inlineResult || (await inlineRemoteImageResult(result.dataUrl || remoteUrl || "", origin, authContext, remoteUrl, mediaHeaders));
-        if (!readable?.dataUrl?.startsWith("data:image/")) throw new GenerationSubmissionSafeFailure("上游分层图片无法读取并验收");
-        return readable;
-    }
-    return inlineResult || directRemoteImageResult(remoteUrl) || (await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl, mediaHeaders));
 }

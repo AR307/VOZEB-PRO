@@ -17,8 +17,8 @@ import type { ReferenceImage } from "@/types/image";
 import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask, recoverVideoGenerationTask } from "./video";
 import { createUpstreamVideoGenerationTask } from "./video-core";
 import { buildCompatibleVideoPayloadVariants, compatibleVideoCreatePaths, compatibleVideoPollPaths, isGlobalAiOpcVideoConfig } from "./video-providers";
-import { normalizeCompatibleVideoDuration, normalizeGlobalAiOpcVideoDuration } from "./video-payloads";
-import { normalizeVideoSeconds } from "./video-support";
+import { normalizeCompatibleVideoDimensions, normalizeCompatibleVideoDuration, normalizeCompatibleVideoQuality, normalizeCompatibleVideoRatio, normalizeGlobalAiOpcVideoDuration } from "./video-payloads";
+import { normalizeVideoResolution, normalizeVideoSeconds, normalizeVideoSize } from "./video-support";
 import { GLOBAL_AIOPC_VIDEO_CREATE_PATH } from "./video-types";
 
 const config = {
@@ -266,6 +266,25 @@ describe("video API service", () => {
         expect(normalizeCompatibleVideoDuration("60")).toBe(60);
         expect(normalizeGlobalAiOpcVideoDuration("60")).toBe(60);
         expect(normalizeCompatibleVideoDuration("-1")).toBe(-1);
+    });
+
+    it("keeps intelligent video dimensions unresolved for compatible providers", async () => {
+        expect(normalizeCompatibleVideoRatio("auto")).toBeUndefined();
+        expect(normalizeCompatibleVideoQuality("auto")).toBeUndefined();
+        expect(normalizeCompatibleVideoDimensions("auto")).toEqual({});
+        expect(normalizeVideoSize("auto")).toBeNull();
+        expect(normalizeVideoResolution("auto")).toBeUndefined();
+
+        const payloads = await buildCompatibleVideoPayloadVariants({ ...config, size: "auto", vquality: "auto" } as AiConfig, config.model, "生成视频", [], "/video/generations");
+        for (const payload of payloads) {
+            expect(payload).not.toHaveProperty("size");
+            expect(payload).not.toHaveProperty("width");
+            expect(payload).not.toHaveProperty("height");
+            expect(payload).not.toHaveProperty("ratio");
+            expect(payload).not.toHaveProperty("aspect_ratio");
+            expect(payload).not.toHaveProperty("resolution");
+            expect(payload).not.toHaveProperty("quality");
+        }
     });
 
     it("keeps every explicit reference in compatible video payloads", async () => {

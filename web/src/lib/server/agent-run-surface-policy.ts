@@ -6,6 +6,7 @@ import type { AgentRun, AgentRunPlannerContextSummary, AgentRunTask } from "@/li
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 import { resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
 import { canvasSnapshotPlannerView, selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
+import { resolveDramaPlannerSnapshot } from "./agent-context-resolver";
 
 export function availableAgentSkills(settings: AuthSettings, surface: CreativeSurface) {
     const workspaces = surface === "canvas" ? new Set(["canvas"]) : surface === "drama" ? new Set(["drama"]) : new Set(["image", "video", "drama"]);
@@ -125,7 +126,7 @@ export function compactCanvasSnapshot(snapshot: unknown) {
 }
 
 function compactProjectSnapshot(snapshot: unknown) {
-    return { ...record(snapshot) };
+    return resolveDramaPlannerSnapshot(snapshot);
 }
 
 function defaultPlannerModelIds(settings: AuthSettings, capabilities: Set<string>) {

@@ -232,6 +232,7 @@ export function normalizeTasks(
             ),
             ratio: resolveAgentTaskRatio({
                 type: item.type,
+                requestPrompt,
                 requestedImageSize,
                 configuredImageSize: preferredSize !== undefined ? preferredSize : configuredImageSize,
                 configuredSizeExplicit: preferredSize !== undefined ? true : configuredSizeExplicit,
@@ -555,6 +556,8 @@ export async function requestFunctionCall(
     billingModel: string,
     allowNaturalLanguage = false,
     pointsIdempotencyKey?: string,
+    stream = false,
+    onStreamStart?: () => Promise<void> | void,
 ) {
     const requestHeaders = runtimeRequestHeaders(cookie, {
         "Content-Type": "application/json",
@@ -570,9 +573,11 @@ export async function requestFunctionCall(
         headers: requestHeaders,
         signal,
         allowNaturalLanguage,
+        stream,
+        onStreamStart,
         onInvalidResponse: (headers) => refundTextResponse(userId, billingModel, headers),
     });
-    return readFunctionCallResult(call.arguments, call.headers, call.protocol, call.elapsedMs);
+    return readFunctionCallResult(call.arguments, call.headers, call.protocol, call.elapsedMs, call.transport, call.fallbackReason);
 }
 
 export function responseOutputText(payload: { output_text?: string; output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }) {
@@ -586,12 +591,14 @@ export function responseOutputText(payload: { output_text?: string; output?: Arr
     );
 }
 
-export function readFunctionCallResult(argumentsText: string, headers: Headers, protocol?: AgentFunctionCallResult["protocol"], elapsedMs?: number): AgentFunctionCallResult {
+export function readFunctionCallResult(argumentsText: string, headers: Headers, protocol?: AgentFunctionCallResult["protocol"], elapsedMs?: number, transport?: AgentFunctionCallResult["transport"], fallbackReason?: string): AgentFunctionCallResult {
     const pointsRemaining = Number(headers.get("x-vozeb-pro-points-remaining"));
     return {
         arguments: argumentsText,
         protocol,
         elapsedMs,
+        transport,
+        fallbackReason,
         pointsRemaining: Number.isFinite(pointsRemaining) ? pointsRemaining : undefined,
         ...readSystemAiBilling(headers),
     };

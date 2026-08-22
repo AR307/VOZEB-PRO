@@ -14,6 +14,7 @@ import { GenerationSubmissionUncertainError } from "@/lib/server/generation-subm
 import { rankTextPlanningCandidates } from "@/lib/server/text-planning-runtime";
 import { filterAgentPlannerModels } from "@/lib/server/agent-run-planning-profile";
 import { buildAgentRunPlannerAudit } from "@/lib/server/agent-run-audit";
+import { agentRequestDigest, buildAgentRequest, serializeAgentRequest } from "@/lib/server/agent-prompt-json";
 import { orderCreativeAssetsByIds } from "@/lib/creative-asset-references";
 import { withDirectAgentExecutionContext } from "./agent-run-direct-context";
 
@@ -97,6 +98,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const fallbackExample = agentPlanFallbackExample(availableModels);
         const plannerContext = buildAgentPlannerInput(claimed, conversationContext, referencedAssets, referenceSource, skillOptions, availableModels, settings);
         if (!(await updateAgentRunById(run.id, { plannerContext: plannerContext.summary }, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId))) return;
+        const plannerRequest = buildAgentRequest(claimed, plannerContext.input);
         const planningInput = [
             {
                 role: "system",
@@ -104,9 +106,25 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             },
             {
                 role: "user",
-                content: JSON.stringify(plannerContext.input),
+                content: serializeAgentRequest(plannerRequest),
             },
         ];
+        if (
+            !(await updateAgentRunById(
+                run.id,
+                {
+                    promptSchemaVersion: plannerRequest.schema,
+                    promptTransport: "json",
+                    contextDigest: agentRequestDigest(plannerRequest),
+                    plannerStreamMode: undefined,
+                    plannerStreamFallbackReason: undefined,
+                },
+                { type: "run.planning.context_ready" },
+                ["running"],
+                executionId,
+            ))
+        )
+            return;
         let plan: Awaited<ReturnType<typeof parseAgentPlanCall>> | undefined;
         let latestPlanningError: unknown;
         for (const candidate of rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })))) {
@@ -123,6 +141,21 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     model,
                     false,
                     systemAiIdempotencyKey("agent-plan", run.userId, run.id, candidate.channel.id, candidate.upstreamModel),
+                    true,
+                    () =>
+                        updateAgentRunById(run.id, { timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), plannerFirstByteAt: Date.now() } }, { type: "run.planning.model_connected" }, ["running"], executionId).then(
+                            () => undefined,
+                        ),
+                );
+                await updateAgentRunById(
+                    run.id,
+                    {
+                        plannerStreamMode: planCall.transport || "complete",
+                        ...(planCall.fallbackReason ? { plannerStreamFallbackReason: planCall.fallbackReason } : {}),
+                    },
+                    { type: "run.planning.validating" },
+                    ["running"],
+                    executionId,
                 );
                 plan = await parseAgentPlanCall(planCall, () => refundFunctionCall(claimed.userId, model, planCall), undefined, {
                     allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),

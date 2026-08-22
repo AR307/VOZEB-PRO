@@ -184,6 +184,15 @@ describe("text planning runtime protocol matrix", () => {
         expect(requestBody()).not.toHaveProperty("reasoning");
     });
 
+    it("保留显式 /v1/responses 配置并交给系统代理处理版本前缀", async () => {
+        mockedFetch.mockResolvedValue(Response.json({ output_text: "{}" }));
+
+        const result = await requestStructuredText(requestInput(candidate("compatible", { createPath: "/v1/responses" })));
+
+        expect(result).toMatchObject({ protocol: "responses", arguments: "{}" });
+        expect(String(mockedFetch.mock.calls[0]?.[0])).toContain("/v1/responses");
+    });
+
     it("模型级 Responses 预设覆盖 New API 渠道的默认 Chat", async () => {
         const configured = candidate("newapi", {
             modelConfigs: {
@@ -264,6 +273,22 @@ describe("text planning runtime protocol matrix", () => {
         expect(result).toMatchObject({ protocol: "custom", arguments: "{}" });
         expect(String(mockedFetch.mock.calls[0]?.[0])).toContain("/planner/run");
         expect(requestBody()).toMatchObject({ deployment: "model-one", conversation: expect.arrayContaining([{ role: "user", content: "test" }]) });
+    });
+
+    it("自定义模板可以接收结构化 prompt_json 占位符", async () => {
+        mockedFetch.mockResolvedValue(Response.json({ data: { plan: "{}" } }));
+
+        await requestStructuredText(
+            requestInput(
+                candidate("custom", {
+                    createPath: "/planner/run",
+                    requestTemplate: '{"prompt_json":"{{prompt_json}}"}',
+                    resultField: "data.plan",
+                }),
+            ),
+        );
+
+        expect(requestBody()).toMatchObject({ prompt_json: "test" });
     });
 
     it("只为上游协议作用域追加后缀，不改写服务端计费身份", async () => {
@@ -360,6 +385,102 @@ describe("text planning runtime protocol matrix", () => {
 
         expect(timeoutSpy).toHaveBeenNthCalledWith(1, 3 * 60_000);
         expect(timeoutSpy).toHaveBeenNthCalledWith(2, 3 * 60_000);
+    });
+
+    it("增量解析 Chat SSE 中的结构化 JSON", async () => {
+        mockedFetch.mockResolvedValue(new Response('data: {"choices":[{"delta":{"content":"{\\"result\\":\\"ok\\"}"}}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } }));
+
+        await expect(requestStructuredText({ ...requestInput(candidate("newapi")), stream: true })).resolves.toMatchObject({ arguments: '{"result":"ok"}' });
+        expect(requestBody()).toMatchObject({ stream: true });
+    });
+
+    it("在 SSE 行跨网络分片时仍按事件边界解析", async () => {
+        const encoder = new TextEncoder();
+        const chunks = ['data: {"choices":[{"delta":{"content":"{\\"result', '\\":\\"chunked\\"}"}}]}\n\n', "data: [DONE]\n\n"];
+        mockedFetch.mockResolvedValue(
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)));
+                        controller.close();
+                    },
+                }),
+                { headers: { "content-type": "text/event-stream" } },
+            ),
+        );
+
+        await expect(requestStructuredText({ ...requestInput(candidate("newapi")), stream: true })).resolves.toMatchObject({ arguments: '{"result":"chunked"}' });
+    });
+
+    it("增量解析 Responses 事件流和 Gemini NDJSON", async () => {
+        mockedFetch
+            .mockResolvedValueOnce(new Response('data: {"type":"response.output_text.delta","delta":"{\\"result\\":\\"responses\\"}"}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } }))
+            .mockResolvedValueOnce(new Response('{"candidates":[{"content":{"parts":[{"text":"{\\"result\\":\\"gemini\\"}"}]}}]}\n', { headers: { "content-type": "application/x-ndjson" } }));
+
+        await expect(requestStructuredText({ ...requestInput(candidate("compatible", { createPath: "/responses" })), stream: true })).resolves.toMatchObject({ arguments: '{"result":"responses"}' });
+        await expect(
+            requestStructuredText({
+                ...requestInput(candidate("compatible", { apiFormat: "gemini", createPath: "/models/:model:generateContent", streaming: { enabled: true, path: "/models/:model:streamGenerateContent", format: "ndjson" } })),
+                stream: true,
+            }),
+        ).resolves.toMatchObject({ arguments: '{"result":"gemini"}' });
+        expect(String(mockedFetch.mock.calls[1]?.[0])).toContain("/models/model-one:streamGenerateContent");
+    });
+
+    it("Gemini 未配置已验证流式路径时保持完整响应", async () => {
+        mockedFetch.mockResolvedValue(Response.json({ candidates: [{ content: { parts: [{ text: "{}" }] } }] }));
+
+        await expect(requestStructuredText({ ...requestInput(candidate("compatible", { apiFormat: "gemini", createPath: "/models/:model:generateContent" })), stream: true })).resolves.toMatchObject({ transport: "complete" });
+        expect(requestBody()).not.toHaveProperty("stream");
+        expect(String(mockedFetch.mock.calls[0]?.[0])).toContain(":generateContent");
+    });
+
+    it("渠道关闭流式时强制使用完整响应", async () => {
+        mockedFetch.mockResolvedValue(chatJsonResponse());
+
+        await expect(requestStructuredText({ ...requestInput(candidate("newapi", { streaming: { enabled: false } })), stream: true })).resolves.toMatchObject({ transport: "complete" });
+        expect(requestBody()).not.toHaveProperty("stream");
+        expect(mockedFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("模型级流式配置覆盖渠道级设置", async () => {
+        mockedFetch.mockResolvedValue(new Response('data: {"choices":[{"delta":{"content":"{}"}}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } }));
+
+        await expect(
+            requestStructuredText({
+                ...requestInput(
+                    candidate("newapi", {
+                        streaming: { enabled: false },
+                        modelConfigs: { "model-one": { capability: "text", streaming: { enabled: true, path: "/chat/stream", format: "sse" } } },
+                    }),
+                ),
+                stream: true,
+            }),
+        ).resolves.toMatchObject({ transport: "stream" });
+        expect(String(mockedFetch.mock.calls[0]?.[0])).toContain("/chat/stream");
+    });
+
+    it("自定义协议只使用管理员声明的流式路径", async () => {
+        mockedFetch.mockResolvedValue(new Response('data: {"data":{"plan":"{}"}}\n\n', { headers: { "content-type": "text/event-stream" } }));
+
+        await expect(
+            requestStructuredText({
+                ...requestInput(candidate("custom", { createPath: "/planner/run", requestTemplate: '{"prompt":"{{prompt}}"}', resultField: "data.plan", streaming: { enabled: true, path: "/planner/stream", format: "sse" } })),
+                stream: true,
+            }),
+        ).resolves.toMatchObject({ transport: "stream", arguments: "{}" });
+        expect(String(mockedFetch.mock.calls[0]?.[0])).toContain("/planner/stream");
+    });
+
+    it("流式请求被渠道拒绝时回退一次完整 JSON 请求", async () => {
+        mockedFetch.mockResolvedValueOnce(new Response("stream unsupported", { status: 422 })).mockResolvedValueOnce(chatJsonResponse());
+
+        await expect(requestStructuredText({ ...requestInput(candidate("newapi")), headers: { "idempotency-key": "stream-fallback" }, stream: true })).resolves.toMatchObject({ arguments: "{}" });
+        expect(mockedFetch).toHaveBeenCalledTimes(2);
+        expect(JSON.parse(String(mockedFetch.mock.calls[0]?.[1]?.body))).toMatchObject({ stream: true });
+        expect(JSON.parse(String(mockedFetch.mock.calls[1]?.[1]?.body))).not.toHaveProperty("stream");
+        expect(new Headers(mockedFetch.mock.calls[0]?.[1]?.headers).get("idempotency-key")).toContain(":chat-json-stream");
+        expect(new Headers(mockedFetch.mock.calls[1]?.[1]?.headers).get("idempotency-key")).toContain(":chat-json");
     });
 });
 

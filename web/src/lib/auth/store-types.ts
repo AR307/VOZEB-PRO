@@ -29,6 +29,13 @@ export type SystemChannelModelConfig = {
     supportsReferenceImage?: boolean;
     supportsReferenceVideo?: boolean;
     supportsReferenceAudio?: boolean;
+    streaming?: SystemChannelStreamingConfig;
+};
+
+export type SystemChannelStreamingConfig = {
+    enabled?: boolean;
+    path?: string;
+    format?: "sse" | "ndjson";
 };
 
 export type SystemChannelAdvancedConfig = {
@@ -60,6 +67,8 @@ export type SystemChannelAdvancedConfig = {
     modelCapabilities?: Record<string, LogicalModelCapability>;
     modelConfigs?: Record<string, SystemChannelModelConfig>;
     operationConfigs?: Partial<Record<LogicalModelCapability, SystemChannelModelConfig>>;
+    streaming?: SystemChannelStreamingConfig;
+    contextWindowTokens?: number;
 };
 
 export type LegacyUserQuota = {

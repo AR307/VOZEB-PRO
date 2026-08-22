@@ -30,6 +30,12 @@ export async function GET(request: Request, context: RouteContext) {
     if (!task || (task.userId !== currentUser.id && currentUser.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
     const schedule = await getStoredGenerationTaskRecord("image", task.id);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
+    if ((task.status === "pending" || task.status === "running") && Number(schedule?.nextPollAt || 0) <= Date.now() && Number(schedule?.nextPollAt || 0) > 0) {
+        const origin = resolveInternalOrigin(new URL(request.url).origin);
+        const publicOrigin = requestPublicOrigin(request);
+        const cookie = request.headers.get("cookie") || "";
+        after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin, cookie, limit: 1, taskIds: [task.id] }));
+    }
     const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundImageTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : currentUser;

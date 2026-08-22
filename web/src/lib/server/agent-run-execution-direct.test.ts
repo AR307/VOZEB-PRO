@@ -93,6 +93,7 @@ describe("directAgentPlan", () => {
             }),
         );
         expect(ops).toContainEqual({ type: "connect_nodes", fromNodeId: "task-run-0", toNodeId: "output-run-0-0" });
+        expect(ops).toContainEqual({ type: "connect_nodes", fromNodeId: "current-person", toNodeId: "output-run-0-0" });
     });
 
     it("选中图片并要求替换主体时不会被错误规划成视频", () => {
@@ -129,6 +130,8 @@ describe("directAgentPlan", () => {
         expect(resolveAgentTaskRatio({ ...base, configuredImageSize: undefined, reference: undefined, plannedRatio: undefined })).toBe("4:3");
         expect(resolveAgentTaskRatio({ ...base, configuredImageSize: "auto", reference: undefined })).toBe("1:1");
         expect(resolveAgentTaskRatio({ ...base, configuredImageSize: "auto", reference: undefined, plannedRatio: undefined })).toBe("auto");
+        expect(resolveAgentTaskRatio({ ...base, requestPrompt: "换成横屏尺寸", configuredImageSize: "auto", plannedRatio: "16:9" })).toBe("16:9");
+        expect(resolveAgentTaskRatio({ ...base, requestPrompt: "换成横屏尺寸", configuredImageSize: "auto", plannedRatio: "1:1" })).toBe("auto");
         expect(resolveAgentTaskRatio({ ...base, type: "video" })).toBe("1824x1024");
         expect(agentSurfaceImageSize("canvas", { imageSize: "1824x1024" })).toBe("1824x1024");
         expect(agentSurfaceImageSize("canvas", { imageSize: "1:1" })).toBeUndefined();
@@ -337,6 +340,28 @@ describe("directAgentPlan", () => {
         const [task] = normalizeTasks(plan as never, [], generationSettings() as never, snapshot, "中国辣妹", "canvas", []);
 
         expect(task).toMatchObject({ ratio: "1824x1024", targetNodeId: "reference", referenceUrl: "/api/reference-assets/reference.webp" });
+    });
+
+    it("画布明确改成横屏时使用 Agent 横版规划并直连源图与结果", () => {
+        const plan = {
+            intent: "generation",
+            objective: "换成横屏尺寸",
+            reply: "开始调整",
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: "换成横屏尺寸" }, direction: { summary: "横版构图" } },
+            deliverables: [{ id: "landscape", title: "横版图片", type: "image", model: "image-pro", prompt: "保持主体并扩展为横版画面", count: 1, ratio: "16:9", dependencies: [] }],
+        };
+        const snapshot = {
+            imageSize: "1:1",
+            selectedNodeIds: ["portrait-source"],
+            nodes: [{ id: "portrait-source", type: "image", title: "竖版源图", metadata: { url: "/api/reference-assets/portrait.webp", naturalWidth: 1024, naturalHeight: 1536 } }],
+        };
+
+        const [task] = normalizeTasks(plan as never, [], generationSettings() as never, snapshot, "换成横屏尺寸", "canvas", []);
+        const ops = planToOps(plan as never, [task], "landscape-run", snapshot);
+
+        expect(task).toMatchObject({ ratio: "16:9", targetNodeId: "portrait-source" });
+        expect(ops).toContainEqual({ type: "connect_nodes", fromNodeId: "portrait-source", toNodeId: "output-landscape-run-0-0" });
     });
 
     it("选中提示词节点时原位改写且不创建图片或计划节点", () => {

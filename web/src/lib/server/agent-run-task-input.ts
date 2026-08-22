@@ -1,7 +1,7 @@
 import type { AuthSettings } from "@/lib/auth/store";
 import { typedReferenceAliases } from "@/lib/creative-asset-references";
 import { isCreativeAutoValue } from "@/lib/creative-runtime-contract";
-import { closestImageAspectRatio, normalizeImageSizeValue, parseImageDimensions } from "@/lib/image-size";
+import { closestImageAspectRatio, extractImageOrientationFromPrompt, imageSizeMatchesOrientation, normalizeImageSizeValue, parseImageDimensions } from "@/lib/image-size";
 import type { AgentRun, AgentRunReference, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 
@@ -87,6 +87,7 @@ export function resolveCanvasTaskTargetNodeId(plannedTargetNodeId: string | unde
 
 export function resolveAgentTaskRatio(input: {
     type: AgentRunTask["type"];
+    requestPrompt?: string;
     requestedImageSize?: string;
     configuredImageSize?: string;
     configuredSizeExplicit?: boolean;
@@ -105,6 +106,11 @@ export function resolveAgentTaskRatio(input: {
     const configuredFixed = configured && !isCreativeAutoValue(configured) && !custom ? configured : "";
     const reference = input.reference?.type === "image" ? normalizeImageSizeValue(input.reference.size) || closestImageAspectRatio(input.reference.width, input.reference.height) : "";
     const planned = normalizeImageSizeValue(input.plannedRatio);
+    const requestedOrientation = extractImageOrientationFromPrompt(input.requestPrompt || "");
+    if (requestedOrientation) {
+        const directed = [planned, configured, reference].find((value) => value && !isCreativeAutoValue(value) && imageSizeMatchesOrientation(value, requestedOrientation));
+        return explicit || directed || "auto";
+    }
     const fallback = smart ? "auto" : normalizeImageSizeValue(input.defaultSize) || normalizeImageSizeValue(input.globalSize) || "auto";
     return explicit || custom || (input.configuredSizeExplicit === true ? configuredFixed : "") || reference || (input.configuredSizeExplicit !== true ? configuredFixed : "") || (isCreativeAutoValue(planned) ? "" : planned) || fallback;
 }
@@ -212,6 +218,7 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
             ...task,
             ratio: resolveAgentTaskRatio({
                 type: task.type,
+                requestPrompt: run.prompt,
                 requestedImageSize: run.requestedImageSize,
                 configuredImageSize: agentSurfaceImageSize(run.surface, run.snapshot),
                 configuredSizeExplicit: false,
@@ -239,6 +246,7 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
         references,
         ratio: resolveAgentTaskRatio({
             type: task.type,
+            requestPrompt: run.prompt,
             requestedImageSize: run.requestedImageSize,
             configuredImageSize: agentSurfaceImageSize(run.surface, run.snapshot),
             configuredSizeExplicit: true,
@@ -256,6 +264,7 @@ export function failedAgentTaskRetryOps(run: AgentRun, task: AgentRunTask) {
     if (taskIndex < 0) return [];
     const taskNodeId = agentCanvasTaskNodeId(run.id, taskIndex);
     const outputNodeIds = task.type === "text" ? [] : agentCanvasOutputNodeIds(run.id, taskIndex, task);
+    const sourceNodeIds = canvasTaskSourceNodeIds(task);
     return [
         { type: "update_node", id: taskNodeId, metadata: { targetNodeId: task.targetNodeId, agentTaskStatus: "ready", agentTaskError: "", agentTaskAttempts: task.attempts, agentTaskOutputNodeIds: outputNodeIds, agentGenerationTaskIds: [] } },
         ...outputNodeIds.map((id) => ({
@@ -275,8 +284,14 @@ export function failedAgentTaskRetryOps(run: AgentRun, task: AgentRunTask) {
                 agentGenerationTaskIds: [],
             },
         })),
-        ...(task.targetNodeId ? [{ type: "connect_nodes", fromNodeId: task.targetNodeId, toNodeId: taskNodeId }] : []),
+        ...sourceNodeIds.flatMap((sourceNodeId) => [{ type: "connect_nodes", fromNodeId: sourceNodeId, toNodeId: taskNodeId }, ...outputNodeIds.map((outputNodeId) => ({ type: "connect_nodes", fromNodeId: sourceNodeId, toNodeId: outputNodeId }))]),
     ];
+}
+
+export function canvasTaskSourceNodeIds(task: Pick<AgentRunTask, "targetNodeId" | "references">, existingNodeIds?: ReadonlySet<string>) {
+    return Array.from(
+        new Set([task.targetNodeId, ...(task.references || []).map((reference) => reference.nodeId)].filter((nodeId): nodeId is string => typeof nodeId === "string" && nodeId.length > 0 && (!existingNodeIds || existingNodeIds.has(nodeId)))),
+    );
 }
 
 function nodeSupportsTaskReference(nodeType: CanvasTaskReferenceNode["type"], taskType: AgentRunTask["type"]) {

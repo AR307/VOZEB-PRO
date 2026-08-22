@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractImageSizeFromPrompt, normalizeImageSizeValue, parseImageDimensions, resolveImageRequestSize } from "./image-size";
+import { extractImageOrientationFromPrompt, extractImageSizeFromPrompt, imageSizeMatchesOrientation, normalizeImageSizeValue, parseImageDimensions, resolveImageRequestSize } from "./image-size";
 
 describe("image size input", () => {
     it("normalizes supported dimension separators", () => {
@@ -14,6 +14,14 @@ describe("image size input", () => {
         expect(extractImageSizeFromPrompt("生成9：16的小狗图")).toBe("9:16");
         expect(extractImageSizeFromPrompt("生成16；9横图")).toBe("16:9");
         expect(extractImageSizeFromPrompt("生成一张自然风格图片")).toBe("");
+    });
+
+    it("recognizes orientation wording without forcing it to a fixed ratio", () => {
+        expect(extractImageOrientationFromPrompt("把当前图片换成横屏尺寸")).toBe("landscape");
+        expect(extractImageOrientationFromPrompt("不要横版，改成竖屏")).toBe("portrait");
+        expect(extractImageOrientationFromPrompt("输出一张方形主图")).toBe("square");
+        expect(imageSizeMatchesOrientation("1824x1024", "landscape")).toBe(true);
+        expect(imageSizeMatchesOrientation("2:3", "landscape")).toBe(false);
     });
 
     it("resolves prompt, custom dimensions, reference ratio, planner, and defaults in order", () => {

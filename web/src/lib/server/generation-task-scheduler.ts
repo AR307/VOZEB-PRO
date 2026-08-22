@@ -1,5 +1,5 @@
 import { getDatabaseProvider, ensurePostgresSchema, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
-import { withGenerationTaskFileMutation, type GenerationTaskType, type StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import { listStoredGenerationTaskRecords, withGenerationTaskFileMutation, type GenerationTaskType, type StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 
 export type GenerationTaskExecutionPhase = "created" | "submitting" | "submitted" | "polling" | "result_ready" | "persisting" | "cancel_requested" | "cancel_polling" | "needs_review" | "review_pending" | "reviewing" | "review_unavailable" | "completed";
 
@@ -81,6 +81,8 @@ export async function claimDueGenerationTasks(input: { workerId: string; now?: n
                       AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting'))
                       OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'))
                       OR (status = 'cancelled' AND execution_phase IN ('cancel_requested', 'cancel_polling')))
+                      AND task_type = ANY($6::text[])
+                      AND expires_at > $1
                       AND next_poll_at IS NOT NULL AND next_poll_at <= $1
                       AND (lease_until IS NULL OR lease_until <= $1)
                       AND (cardinality($4::text[]) = 0 OR id = ANY($4::text[]))
@@ -93,7 +95,7 @@ export async function claimDueGenerationTasks(input: { workerId: string; now?: n
                  FROM due
                  WHERE task.id = due.id
                  RETURNING task.*`,
-                [new Date(now), limit, workerId, taskIds, new Date(leaseUntil)],
+                [new Date(now), limit, workerId, taskIds, new Date(leaseUntil), [...SCHEDULABLE_TYPES]],
             );
             return result.rows.map(mapLease);
         });
@@ -107,6 +109,32 @@ export async function claimDueGenerationTasks(input: { workerId: string; now?: n
         const next = tasks.map((task) => (claimedIds.has(task.id) ? { ...task, workerId, leaseUntil, lastHeartbeatAt: now } : task));
         return { tasks: next, result: next.filter((task) => claimedIds.has(task.id)).map(toLease) };
     });
+}
+
+export async function getNextGenerationTaskDueAt(now = Date.now()) {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ next_due_at: Date | string | null }>(
+            `SELECT min(GREATEST(next_poll_at, COALESCE(lease_until, next_poll_at))) AS next_due_at
+             FROM generation_tasks
+             WHERE ((status IN ('pending', 'running')
+                      AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting'))
+                    OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'))
+                    OR (status = 'cancelled' AND execution_phase IN ('cancel_requested', 'cancel_polling')))
+               AND task_type = ANY($1::text[])
+               AND expires_at > $2
+               AND next_poll_at IS NOT NULL`,
+            [[...SCHEDULABLE_TYPES], new Date(now)],
+        );
+        return databaseTime(result.rows[0]?.next_due_at);
+    }
+    const { all: tasks } = await listStoredGenerationTaskRecords({ includeAll: true, page: 1, pageSize: 1 });
+    const nextDueAt = tasks.reduce((earliest, task) => {
+        if (!isSchedulable(task, now)) return earliest;
+        const dueAt = Math.max(Number(task.nextPollAt), Number(task.leaseUntil || 0));
+        return dueAt > 0 ? Math.min(earliest, dueAt) : earliest;
+    }, Number.POSITIVE_INFINITY);
+    return Number.isFinite(nextDueAt) ? nextDueAt : undefined;
 }
 
 export async function renewGenerationTaskLeases(workerId: string, taskIds: string[], leaseMs = 90_000, now = Date.now()) {
@@ -222,10 +250,14 @@ function applyPatch(task: StoredGenerationTaskRecord, patch: GenerationTaskSched
 }
 
 function isDue(task: StoredGenerationTaskRecord, now: number, taskIds: string[]) {
+    return isSchedulable(task, now) && Number(task.nextPollAt) <= now && Number(task.leaseUntil || 0) <= now && (!taskIds.length || taskIds.includes(task.id));
+}
+
+function isSchedulable(task: StoredGenerationTaskRecord, now: number) {
     const active = (task.status === "pending" || task.status === "running") && ACTIVE_PHASES.has(task.executionPhase || "created");
     const review = task.type === "agent" && task.status === "success" && REVIEW_PHASES.has(task.executionPhase || "created");
     const cancellation = task.status === "cancelled" && CANCELLATION_PHASES.has(task.executionPhase || "created");
-    return SCHEDULABLE_TYPES.has(task.type) && (active || review || cancellation) && Number(task.nextPollAt || 0) > 0 && Number(task.nextPollAt) <= now && Number(task.leaseUntil || 0) <= now && (!taskIds.length || taskIds.includes(task.id));
+    return SCHEDULABLE_TYPES.has(task.type) && (active || review || cancellation) && task.expiresAt > now && Number(task.nextPollAt || 0) > 0;
 }
 
 function canApplySchedulePatch(task: StoredGenerationTaskRecord, options: GenerationTaskScheduleOptions) {

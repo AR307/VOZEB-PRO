@@ -44,6 +44,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
     const config = object(payload.config);
     const upstream = object(payload.upstream);
     const plannerAudit = agentPlannerAudit(payload.plannerAudit);
+    const plannerRuntime = record.type === "agent" ? agentPlannerRuntime(payload) : undefined;
     const agentFailure = record.type === "agent" ? agentFailureSummary(payload) : undefined;
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(object) : [];
     const failedTask = tasks.find((task) => task.status === "failed" && text(task.id));
@@ -93,12 +94,34 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         pointsCost,
         pointsBreakdown,
         plannerAudit,
+        plannerRuntime,
         agentFailure,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         canCancel: record.status === "pending" || record.status === "running" || record.status === "paused",
         retryTaskId: record.type === "agent" ? text(failedTask?.id) || undefined : undefined,
         canReview: record.executionPhase === "needs_review" && (record.type === "text" || record.type === "image" || record.type === "video" || record.type === "audio"),
+    };
+}
+
+function agentPlannerRuntime(payload: Record<string, unknown>): AdminGenerationTask["plannerRuntime"] {
+    const timings = object(payload.timings);
+    const context = object(payload.plannerContext);
+    const planningStartedAt = finiteNumber(timings.planningStartedAt);
+    const plannerFirstByteAt = finiteNumber(timings.plannerFirstByteAt);
+    const planningCompletedAt = finiteNumber(timings.planningCompletedAt);
+    const firstByteMs = stageDuration(planningStartedAt, plannerFirstByteAt);
+    const planningMs = stageDuration(planningStartedAt, planningCompletedAt);
+    const serializedChars = nonNegativeInteger(context.serializedChars);
+    const transport = payload.plannerStreamMode === "stream" || payload.plannerStreamMode === "complete" ? payload.plannerStreamMode : undefined;
+    const fallbackReason = text(payload.plannerStreamFallbackReason).slice(0, 500) || undefined;
+    if (!transport && firstByteMs === undefined && planningMs === undefined && serializedChars === undefined && !fallbackReason) return undefined;
+    return {
+        ...(transport ? { transport } : {}),
+        ...(firstByteMs !== undefined ? { firstByteMs } : {}),
+        ...(planningMs !== undefined ? { planningMs } : {}),
+        ...(serializedChars !== undefined ? { serializedChars } : {}),
+        ...(fallbackReason ? { fallbackReason } : {}),
     };
 }
 
@@ -223,6 +246,18 @@ function agentPlannerAudit(value: unknown): AdminGenerationTask["plannerAudit"] 
 
 function roundedPoints(value: number) {
     return Number(value.toFixed(2));
+}
+
+function stageDuration(start?: number, end?: number) {
+    return start !== undefined && end !== undefined && end >= start ? end - start : undefined;
+}
+
+function finiteNumber(value: unknown) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function nonNegativeInteger(value: unknown) {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function object(value: unknown) {

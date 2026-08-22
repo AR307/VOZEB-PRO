@@ -106,10 +106,14 @@ describe("POST /api/drama/analyze", () => {
             tool?: { name?: string };
             validateArguments?: (argumentsText: string) => boolean;
             messages?: Array<{ role: string; content: string }>;
+            stream?: boolean;
+            streamFallback?: boolean;
+            signal?: AbortSignal;
         };
         const toolBillingKey = new Headers(input.headers).get("x-vozeb-pro-points-idempotency-key");
         const fallbackBillingKey = new Headers(input.fallbackHeaders).get("x-vozeb-pro-points-idempotency-key");
-        expect(input).toMatchObject({ preferNativeTools: false, tool: { name: "analyze_drama_content" } });
+        expect(input).toMatchObject({ preferNativeTools: false, stream: true, streamFallback: true, tool: { name: "analyze_drama_content" } });
+        expect(input.signal).toBeInstanceOf(AbortSignal);
         expect(input.validateArguments?.('{"script":"输入回显"}')).toBe(false);
         expect(input.validateArguments?.('{"episode":{"outline":"大纲"},"shots":[{"title":"镜头"}]}')).toBe(true);
         expect(
@@ -126,6 +130,49 @@ describe("POST /api/drama/analyze", () => {
         expect(fallbackBillingKey).not.toBe(toolBillingKey);
         expect(input.messages?.[0]?.content).toContain("5、8、10、15 秒");
         expect(input.messages?.[0]?.content).toContain("不能删句");
+    });
+
+    it("unwraps a Responses-compatible data wrapper before validating drama fields", async () => {
+        mocks.requestStructuredText.mockResolvedValueOnce({
+            arguments: JSON.stringify({
+                data: {
+                    episode: { outline: "大纲", hook: "", nextPreview: "", sourceRange: "第一场" },
+                    characters: [],
+                    scenes: [],
+                    props: [],
+                    clues: [],
+                    shots: [
+                        {
+                            title: "荒原",
+                            description: "灰黑色风暴扫过废墟",
+                            sourceText: "灰黑色风暴扫过废墟。",
+                            shotBoundary: "环境建立",
+                            dialogue: "",
+                            narration: "",
+                            utterances: [],
+                            duration: 5,
+                            characterNames: [],
+                            sceneName: "废墟",
+                            propNames: [],
+                            clueNames: [],
+                        },
+                    ],
+                },
+            }),
+            headers: new Headers(),
+            protocol: "responses",
+            elapsedMs: 10,
+        });
+        const response = await POST(
+            new Request("http://localhost/api/drama/analyze", {
+                method: "POST",
+                headers: { "content-type": "application/json", cookie: "session=test" },
+                body: JSON.stringify({ requestId: "drama-content-request-wrapper", phase: "content", script: "灰黑色风暴扫过废墟。" }),
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({ code: 0, data: { shots: [expect.objectContaining({ title: "荒原" })] } });
     });
 
     it("normalizes missing model utterances from the original novel instead of rejecting the request", async () => {
@@ -386,6 +433,7 @@ describe("POST /api/drama/analyze", () => {
         });
         const billingKeys = mocks.requestStructuredText.mock.calls.map(([input]) => new Headers((input as { headers?: HeadersInit }).headers).get("x-vozeb-pro-points-idempotency-key"));
         expect((mocks.requestStructuredText.mock.calls[0]?.[0] as { allowRepair?: boolean }).allowRepair).toBe(false);
+        expect(mocks.requestStructuredText.mock.calls.every(([input]) => (input as { stream?: boolean }).stream === true)).toBe(true);
 
         expect(response.status).toBe(200);
         expect(requestedShotIds).toEqual([

@@ -5,18 +5,21 @@ import { generationOperationThemeClasses } from "./generation-operations-theme";
 
 export function AgentPlannerAuditSummary({ task }: { task: AdminGenerationTask }) {
     const audit = task.plannerAudit;
-    if (!audit) return null;
+    if (!audit && !task.plannerRuntime) return null;
     return (
         <div className="mt-1.5 space-y-1 text-[11px] leading-4 text-zinc-500 dark:text-zinc-400">
-            <div className="truncate">
-                计划 Schema v{audit.schemaVersion} · {audit.mode === "direct" ? "用户直选模型" : planningProtocolLabel(audit.protocol)}
-            </div>
-            {audit.channelId || audit.upstreamModel ? (
+            {audit ? (
+                <div className="truncate">
+                    计划 Schema v{audit.schemaVersion} · {audit.mode === "direct" ? "用户直选模型" : planningProtocolLabel(audit.protocol)}
+                </div>
+            ) : null}
+            {audit?.channelId || audit?.upstreamModel ? (
                 <Tooltip title={[audit.channelId, audit.upstreamModel].filter(Boolean).join(" → ")}>
                     <div className="truncate">{[audit.channelId, audit.upstreamModel].filter(Boolean).join(" → ")}</div>
                 </Tooltip>
             ) : null}
-            {audit.skills.length ? (
+            <AgentPlannerRuntimeSummary task={task} />
+            {audit?.skills.length ? (
                 <div className="flex min-w-0 flex-wrap gap-1">
                     {audit.skills.map((skill) => (
                         <Tooltip key={skill.id} title={skillSourceLabel(skill)}>
@@ -24,6 +27,27 @@ export function AgentPlannerAuditSummary({ task }: { task: AdminGenerationTask }
                         </Tooltip>
                     ))}
                 </div>
+            ) : null}
+        </div>
+    );
+}
+
+function AgentPlannerRuntimeSummary({ task }: { task: AdminGenerationTask }) {
+    const runtime = task.plannerRuntime;
+    if (!runtime) return null;
+    const facts = [
+        runtime.transport === "stream" ? "流式" : runtime.transport === "complete" ? "完整响应" : "",
+        runtime.firstByteMs !== undefined ? `首字节 ${durationLabel(runtime.firstByteMs)}` : "",
+        runtime.planningMs !== undefined ? `规划 ${durationLabel(runtime.planningMs)}` : "",
+        runtime.serializedChars !== undefined ? `输入 ${runtime.serializedChars.toLocaleString("zh-CN")} 字符` : "",
+    ].filter(Boolean);
+    return (
+        <div className="min-w-0">
+            {facts.length ? <div className="truncate">{facts.join(" · ")}</div> : null}
+            {runtime.fallbackReason ? (
+                <Tooltip title={runtime.fallbackReason}>
+                    <div className="truncate text-amber-600 dark:text-amber-300">流式已回退：{runtime.fallbackReason}</div>
+                </Tooltip>
             ) : null}
         </div>
     );
@@ -105,6 +129,10 @@ function RuntimeFact({ label, value }: { label: string; value: string }) {
 function operationTimeLabel(value?: number) {
     if (!value || !Number.isFinite(value)) return "未记录";
     return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function durationLabel(value: number) {
+    return value < 1000 ? `${Math.round(value)}ms` : `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}s`;
 }
 
 function skillSourceLabel(skill: NonNullable<AdminGenerationTask["plannerAudit"]>["skills"][number]) {

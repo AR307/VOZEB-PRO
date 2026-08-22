@@ -267,6 +267,46 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                             />
                         </LabeledControl>
                         {detectedCapabilities.has("text") ? (
+                            <>
+                                <LabeledControl label="规划流式模式">
+                                    <Select
+                                        className="w-full"
+                                        value={streamingMode(advanced.streaming)}
+                                        options={[
+                                            { label: "自动（Chat / Responses）", value: "auto" },
+                                            { label: "启用已验证路径", value: "enabled" },
+                                            { label: "关闭流式", value: "disabled" },
+                                        ]}
+                                        onChange={(value: "auto" | "enabled" | "disabled") =>
+                                            updateAdvanced({
+                                                streaming: value === "auto" ? undefined : { ...(advanced.streaming || {}), enabled: value === "enabled" },
+                                            })
+                                        }
+                                    />
+                                </LabeledControl>
+                                <LabeledControl label="规划流式路径">
+                                    <Input
+                                        disabled={streamingMode(advanced.streaming) !== "enabled"}
+                                        value={advanced.streaming?.path || ""}
+                                        placeholder="例如 /models/:model:streamGenerateContent"
+                                        onChange={(event) => updateAdvanced({ streaming: { ...(advanced.streaming || {}), enabled: true, path: event.target.value } })}
+                                    />
+                                </LabeledControl>
+                                <LabeledControl label="流式格式">
+                                    <Select
+                                        className="w-full"
+                                        disabled={streamingMode(advanced.streaming) !== "enabled"}
+                                        value={advanced.streaming?.format || "sse"}
+                                        options={[
+                                            { label: "SSE", value: "sse" },
+                                            { label: "NDJSON", value: "ndjson" },
+                                        ]}
+                                        onChange={(format: "sse" | "ndjson") => updateAdvanced({ streaming: { ...(advanced.streaming || {}), enabled: true, format } })}
+                                    />
+                                </LabeledControl>
+                            </>
+                        ) : null}
+                        {detectedCapabilities.has("text") ? (
                             <LabeledControl label="文本模型">
                                 <Input value={advanced.textModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ textModel: event.target.value })} />
                             </LabeledControl>
@@ -554,4 +594,10 @@ function channelCapabilitySummary(channel: SystemModelChannel) {
         .filter(({ value }) => counts[value])
         .map(({ value }) => `${capabilityLabel(value)} ${counts[value]}`)
         .join(" · ");
+}
+
+function streamingMode(streaming: SystemChannelAdvancedConfig["streaming"]): "auto" | "enabled" | "disabled" {
+    if (streaming?.enabled === false) return "disabled";
+    if (streaming?.enabled === true) return "enabled";
+    return "auto";
 }

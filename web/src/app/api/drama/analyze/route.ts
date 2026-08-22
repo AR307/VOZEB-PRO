@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBody } from "@/lib/auth/request";
 import { getAuthSettings, isAuthInputError, refundUserPoints } from "@/lib/auth/store";
-import { describeDramaAnalysisCandidate, dramaContentTool, dramaVisualTool, hasCompleteDramaContentAnalysis, hasUsableDramaToolArguments, normalizeDramaContentAnalysis } from "@/lib/server/drama-analysis";
+import { describeDramaAnalysisCandidate, dramaContentTool, dramaVisualTool, hasCompleteDramaContentAnalysis, hasUsableDramaToolArguments, normalizeDramaContentAnalysis, normalizeDramaToolArguments } from "@/lib/server/drama-analysis";
 import { mergeDramaContentAnalyses } from "@/lib/server/drama-analysis-merge";
 import { splitDramaScriptAtBoundary } from "@/lib/server/drama-analysis-segmentation";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
@@ -81,6 +81,7 @@ export async function POST(request: Request) {
                                 visualBatchIdempotencyKey(user.id, requestId, candidate, batch),
                                 undefined,
                                 false,
+                                request.signal,
                             );
                             return { value: JSON.parse(call.args), call };
                         },
@@ -110,6 +111,7 @@ export async function POST(request: Request) {
                     userId: user.id,
                     durationPolicy,
                     messagesFor,
+                    signal: request.signal,
                     onRefund: (pointsBalance) => {
                         if (typeof pointsBalance === "number") refundedPointsRemaining = pointsBalance;
                     },
@@ -161,9 +163,11 @@ async function requestFunctionCall(
     idempotencyKey: string,
     validateArguments = (argumentsText: string) => hasUsableDramaToolArguments(argumentsText, tool.name),
     allowRepair = true,
+    signal?: AbortSignal,
 ) {
     const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, `${idempotencyKey}:tool`, candidate.upstreamModel) };
     const fallbackHeaders = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, `${idempotencyKey}:json`, candidate.upstreamModel) };
+    const normalizeArguments = (argumentsText: string) => normalizeDramaToolArguments(argumentsText, tool.name);
     const call = await requestStructuredText({
         origin,
         cookie,
@@ -174,15 +178,19 @@ async function requestFunctionCall(
         fallbackHeaders,
         preferNativeTools: false,
         allowRepair,
-        validateArguments,
+        stream: true,
+        streamFallback: true,
+        signal,
+        validateArguments: (argumentsText) => validateArguments(normalizeArguments(argumentsText)),
         onInvalidResponse: (responseHeaders) => refund(userId, billingModel, responseHeaders),
     });
-    if (!validateArguments(call.arguments)) {
+    const normalizedArguments = normalizeArguments(call.arguments);
+    if (!validateArguments(normalizedArguments)) {
         console.error("[drama-analyze] structured output invalid", JSON.stringify({ endpoint: call.protocol, channelId: candidate.channel.id, model: candidate.upstreamModel, argumentShape: describeArgumentsText(call.arguments) }));
         await refund(userId, billingModel, call.headers);
         throw new Error("模型没有返回结构化剧本结果");
     }
-    return readCallResult(call.arguments, call.headers);
+    return readCallResult(normalizedArguments, call.headers);
 }
 
 type DramaContentCall = Awaited<ReturnType<typeof requestFunctionCall>>;
@@ -200,6 +208,7 @@ async function analyzeDramaContentCandidate(input: {
     userId: string;
     durationPolicy: ReturnType<typeof resolveDramaVideoDurationPolicy>;
     messagesFor: (batchInput: unknown) => Array<{ role: string; content: string }>;
+    signal: AbortSignal;
     onRefund: (pointsBalance: unknown) => void;
 }) {
     const calls: DramaContentCall[] = [];
@@ -230,6 +239,7 @@ async function analyzeDramaScriptSegment(input: Parameters<typeof analyzeDramaCo
             systemAiIdempotencyKey("drama-analyze", input.userId, "content", input.requestId, segmentKey, script, input.candidate.channel.id, input.candidate.upstreamModel),
             (argumentsText) => hasUsableDramaToolArguments(argumentsText, input.tool.name),
             false,
+            input.signal,
         );
         try {
             const parsed = JSON.parse(call.args);

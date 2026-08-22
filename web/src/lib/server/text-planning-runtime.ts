@@ -5,7 +5,8 @@ import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy"
 import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString, readProviderValue } from "@/lib/server/provider-task-config";
 import { extractJsonObjectText } from "@/lib/server/structured-model-output";
 import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
-import { resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
+import { interpolateModelPath, resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
+import { resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 
 export type TextPlanningProtocol = "responses" | "chat" | "gemini" | "custom";
 export type TextPlanningCandidate = {
@@ -15,7 +16,7 @@ export type TextPlanningCandidate = {
     capabilityProfile?: { timeoutMs?: number };
 };
 export type TextPlanningTool = { name: string; description: string; parameters: Record<string, unknown> };
-export type TextPlanningCall = { arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number };
+export type TextPlanningCall = { arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number; transport?: "stream" | "complete"; fallbackReason?: string };
 type TextPlanningRequestErrorReason = "http" | "transport" | "invalid-structure";
 export type StructuredTextFailureCode = "invalid-response-json" | "missing-structured-result" | "invalid-structured-result";
 
@@ -44,6 +45,9 @@ export type StructuredTextRequest = {
     allowRepair?: boolean;
     validateArguments?: (argumentsText: string) => boolean;
     onInvalidResponse?: (headers: Headers) => Promise<unknown>;
+    stream?: boolean;
+    streamFallback?: boolean;
+    onStreamStart?: () => Promise<void> | void;
 };
 
 type ProtocolRequest = {
@@ -52,6 +56,8 @@ type ProtocolRequest = {
     path: string;
     body: Record<string, unknown>;
     resultField?: string;
+    stream?: boolean;
+    streamFormat?: "sse" | "ndjson";
 };
 
 const FAILURE_COOLDOWN_MS = 30_000;
@@ -94,8 +100,13 @@ export async function requestStructuredText(input: StructuredTextRequest): Promi
         for (const [index, request] of requests.entries()) {
             try {
                 const response = await requestTextProtocol(input, request);
+                if (request.stream) await input.onStreamStart?.();
                 return await readStructuredResponse(input, request, response, startedAt);
             } catch (error) {
+                if (input.stream && input.streamFallback !== false && index === 0 && shouldFallbackFromStream(error)) {
+                    const fallback = await requestStructuredText({ ...input, stream: false, streamFallback: false });
+                    return { ...fallback, fallbackReason: error instanceof Error ? error.message : "上游不支持流式规划" };
+                }
                 if (index === requests.length - 1 || (!shouldFallbackFromNativeTool(error, request) && !shouldRepairStructuredResponse(error, request))) throw error;
             }
         }
@@ -116,7 +127,7 @@ export function resetTextPlanningRuntime() {
 }
 
 function planningProtocolRequests(input: StructuredTextRequest, messages: Array<{ role: string; content: string }>) {
-    const promptRequest = planningProtocolRequest(input.candidate, messages, "json");
+    const promptRequest = planningProtocolRequest(input.candidate, messages, "json", undefined, input.stream === true);
     if (input.allowRepair === false) {
         return input.preferNativeTools && promptRequest.protocol !== "custom" ? [planningProtocolRequest(input.candidate, messages, "tool", input.tool), promptRequest] : [promptRequest];
     }
@@ -125,20 +136,35 @@ function planningProtocolRequests(input: StructuredTextRequest, messages: Array<
     return [planningProtocolRequest(input.candidate, messages, "tool", input.tool), promptRequest, recoveryRequest];
 }
 
-function planningProtocolRequest(candidate: TextPlanningCandidate, messages: Array<{ role: string; content: string }>, variant: ProtocolRequest["variant"], tool?: TextPlanningTool): ProtocolRequest {
+function planningProtocolRequest(candidate: TextPlanningCandidate, messages: Array<{ role: string; content: string }>, variant: ProtocolRequest["variant"], tool?: TextPlanningTool, requestedStream = false): ProtocolRequest {
     const resolved = resolveTextProtocol({
         model: candidate.upstreamModel,
         apiFormat: candidate.channel.apiFormat,
         advancedConfig: candidate.channel.advancedConfig,
         throughSystemProxy: true,
     });
-    if (resolved.kind === "responses") return responsesRequest(candidate.upstreamModel, messages, resolved.path, variant === "tool" ? tool : undefined, variant);
-    if (resolved.kind === "gemini") return geminiRequest(candidate.upstreamModel, resolved.path, messages, variant === "tool" ? tool : undefined, variant);
-    if (resolved.kind === "custom") return customRequest(candidate.upstreamModel, resolved.path, resolved.requestTemplate!, resolved.resultField!, messages, variant);
-    return chatRequest(candidate.upstreamModel, messages, resolved.path, variant === "tool" ? tool : undefined, variant);
+    const modelStreaming = resolveChannelModelConfig(candidate.channel.advancedConfig, candidate.upstreamModel)?.streaming;
+    const streaming = modelStreaming || candidate.channel.advancedConfig?.streaming;
+    const hasExplicitStreamPath = Boolean(streaming?.path?.trim());
+    const streamEnabled = streaming?.enabled === true || (streaming?.enabled !== false && resolved.kind !== "custom" && resolved.kind !== "gemini");
+    const stream = requestedStream && variant === "json" && streamEnabled && (resolved.kind === "chat" || resolved.kind === "responses" || hasExplicitStreamPath);
+    const streamPath = resolved.kind === "gemini" ? interpolateModelPath(streaming?.path || resolved.path, candidate.upstreamModel) : streaming?.path || resolved.path;
+    const streamFormat = streaming?.format || (resolved.kind === "gemini" ? "ndjson" : "sse");
+    if (resolved.kind === "responses") return responsesRequest(candidate.upstreamModel, messages, stream ? streamPath : resolved.path, variant === "tool" ? tool : undefined, variant, stream);
+    if (resolved.kind === "gemini") return geminiRequest(candidate.upstreamModel, messages, stream ? streamPath : resolved.path, variant === "tool" ? tool : undefined, variant, stream, streamFormat);
+    if (resolved.kind === "custom") return customRequest(candidate.upstreamModel, stream ? streamPath : resolved.path, resolved.requestTemplate!, resolved.resultField!, messages, variant, stream, streamFormat);
+    return chatRequest(candidate.upstreamModel, messages, stream ? streamPath : resolved.path, variant === "tool" ? tool : undefined, variant, stream, streamFormat);
 }
 
-function chatRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/chat/completions", tool?: TextPlanningTool, variant: ProtocolRequest["variant"] = "json"): ProtocolRequest {
+function chatRequest(
+    model: string,
+    messages: Array<{ role: string; content: string }>,
+    path = "/chat/completions",
+    tool?: TextPlanningTool,
+    variant: ProtocolRequest["variant"] = "json",
+    stream = false,
+    streamFormat: ProtocolRequest["streamFormat"] = "sse",
+): ProtocolRequest {
     return {
         protocol: "chat",
         variant,
@@ -147,11 +173,13 @@ function chatRequest(model: string, messages: Array<{ role: string; content: str
             model,
             messages,
             ...(tool ? { tools: [{ type: "function", function: tool }], tool_choice: { type: "function", function: { name: tool.name } } } : variant === "json" || variant === "repair" ? { response_format: { type: "json_object" } } : {}),
+            ...(stream ? { stream: true } : {}),
         },
+        ...(stream ? { stream: true, streamFormat } : {}),
     };
 }
 
-function responsesRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/responses", tool?: TextPlanningTool, variant: ProtocolRequest["variant"] = "json"): ProtocolRequest {
+function responsesRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/responses", tool?: TextPlanningTool, variant: ProtocolRequest["variant"] = "json", stream = false): ProtocolRequest {
     return {
         protocol: "responses",
         variant,
@@ -160,11 +188,21 @@ function responsesRequest(model: string, messages: Array<{ role: string; content
             model,
             input: messages,
             ...(tool ? { tools: [{ type: "function", ...tool }], tool_choice: { type: "function", name: tool.name } } : variant === "json" || variant === "repair" ? { text: { format: { type: "json_object" } } } : {}),
+            ...(stream ? { stream: true } : {}),
         },
+        ...(stream ? { stream: true, streamFormat: "sse" } : {}),
     };
 }
 
-function geminiRequest(model: string, configuredPath: string, messages: Array<{ role: string; content: string }>, tool?: TextPlanningTool, variant: ProtocolRequest["variant"] = "json"): ProtocolRequest {
+function geminiRequest(
+    model: string,
+    messages: Array<{ role: string; content: string }>,
+    configuredPath: string,
+    tool?: TextPlanningTool,
+    variant: ProtocolRequest["variant"] = "json",
+    stream = false,
+    streamFormat: ProtocolRequest["streamFormat"] = "ndjson",
+): ProtocolRequest {
     const systemText = messages
         .filter((message) => message.role === "system")
         .map((message) => message.content)
@@ -182,14 +220,34 @@ function geminiRequest(model: string, configuredPath: string, messages: Array<{ 
                 : variant === "json" || variant === "repair"
                   ? { generationConfig: { responseMimeType: "application/json" } }
                   : {}),
+            ...(stream ? { stream: true } : {}),
         },
+        ...(stream ? { stream: true, streamFormat } : {}),
     };
 }
 
-function customRequest(model: string, configuredPath: string, requestTemplate: string, resultField: string, messages: Array<{ role: string; content: string }>, variant: ProtocolRequest["variant"]): ProtocolRequest {
+function customRequest(
+    model: string,
+    configuredPath: string,
+    requestTemplate: string,
+    resultField: string,
+    messages: Array<{ role: string; content: string }>,
+    variant: ProtocolRequest["variant"],
+    stream = false,
+    streamFormat: ProtocolRequest["streamFormat"] = "sse",
+): ProtocolRequest {
     const prompt = messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
-    const values = { model, messages, prompt, input: prompt, text: prompt };
-    return { protocol: "custom", variant, path: configuredPath, body: buildProviderRequest(requestTemplate, values, values), resultField };
+    const promptJson = messages.find((message) => message.role === "user")?.content || "";
+    const values = { model, messages, prompt, input: prompt, text: prompt, prompt_json: parsePromptJsonValue(promptJson), stream };
+    return { protocol: "custom", variant, path: configuredPath, body: buildProviderRequest(requestTemplate, values, values), resultField, ...(stream ? { stream: true, streamFormat } : {}) };
+}
+
+function parsePromptJsonValue(value: string) {
+    try {
+        return JSON.parse(value);
+    } catch {
+        return value;
+    }
 }
 
 async function requestTextProtocol(input: StructuredTextRequest, request: ProtocolRequest) {
@@ -197,7 +255,7 @@ async function requestTextProtocol(input: StructuredTextRequest, request: Protoc
     const headers = request.variant === "repair" ? repairRequestHeaders(input) : new Headers(request.variant !== "tool" && input.fallbackHeaders ? input.fallbackHeaders : input.headers);
     headers.set("content-type", "application/json");
     if (input.cookie) headers.set("cookie", input.cookie);
-    scopeProtocolIdempotency(headers, request.protocol, request.variant);
+    scopeProtocolIdempotency(headers, request.protocol, request.variant, request.stream);
     const timeoutSignal = AbortSignal.timeout(resolveModelRequestTimeoutMs(input.candidate, "text"));
     const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
     try {
@@ -218,10 +276,10 @@ function repairRequestHeaders(input: StructuredTextRequest) {
     return headers;
 }
 
-function scopeProtocolIdempotency(headers: Headers, protocol: TextPlanningProtocol, variant: ProtocolRequest["variant"]) {
+function scopeProtocolIdempotency(headers: Headers, protocol: TextPlanningProtocol, variant: ProtocolRequest["variant"], stream = false) {
     for (const name of ["idempotency-key", "x-client-request-id"]) {
         const value = headers.get(name)?.trim();
-        if (value) headers.set(name, `${value}:${protocol}-${variant}`);
+        if (value) headers.set(name, `${value}:${protocol}-${variant}${stream ? "-stream" : ""}`);
     }
 }
 
@@ -230,12 +288,18 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
         const raw = await response.text();
         throw new TextPlanningRequestError(safeUpstreamError(raw, response.status), response.status, retryableStatus(response.status));
     }
-    const raw = await response.text();
+    const streamed = request.stream ? createStreamAccumulator(request.protocol, input.tool.name, request.resultField, input.allowNaturalLanguage) : undefined;
+    const body = request.stream ? await readResponseBody(response, streamed) : await response.text();
+    const raw = typeof body === "string" ? body : body.raw;
     let payload: Record<string, unknown> | null = null;
     try {
         const parsed = JSON.parse(raw.replace(/^\uFEFF/u, "").trim());
         payload = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
     } catch {
+        if (request.stream) {
+            const streamedArguments = (typeof body === "string" ? undefined : body.arguments) || extractStreamedArguments(raw, request.protocol, input.tool.name, request.resultField, input.allowNaturalLanguage);
+            if (streamedArguments) return finalizeStructuredArguments(input, request, response, startedAt, streamedArguments);
+        }
         await input.onInvalidResponse?.(response.headers);
         console.error("[text-planning] structured response is not JSON", JSON.stringify({ protocol: request.protocol, status: response.status, responseBytes: Buffer.byteLength(raw, "utf8") }));
         throw new TextPlanningRequestError(`文本模型返回了无效 JSON（协议：${request.protocol}）`, 502, false, "invalid-structure", "invalid-response-json");
@@ -250,6 +314,10 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
         throw new TextPlanningRequestError(readProviderError(payload) || "自定义文本协议返回失败");
     }
     const argumentsText = readProtocolArguments(payload, input.tool.name, request, input.allowNaturalLanguage);
+    return finalizeStructuredArguments(input, request, response, startedAt, argumentsText, payload);
+}
+
+async function finalizeStructuredArguments(input: StructuredTextRequest, request: ProtocolRequest, response: Response, startedAt: number, argumentsText: string, payload: Record<string, unknown> = {}) {
     if (!argumentsText) {
         await input.onInvalidResponse?.(response.headers);
         console.error("[text-planning] structured response has no readable result", JSON.stringify({ protocol: request.protocol, tool: input.tool.name, ...describeStructuredPayload(payload) }));
@@ -262,7 +330,92 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
     }
     const elapsedMs = Date.now() - startedAt;
     recordTextSuccess(input.candidate, request.protocol, elapsedMs);
-    return { arguments: argumentsText, headers: response.headers, protocol: request.protocol, elapsedMs };
+    return { arguments: argumentsText, headers: response.headers, protocol: request.protocol, elapsedMs, transport: request.stream ? ("stream" as const) : ("complete" as const) };
+}
+
+async function readResponseBody(response: Response, accumulator?: StreamAccumulator): Promise<string | { raw: string; arguments: string }> {
+    if (!response.body) return response.text();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    let output = "";
+    const consume = (value: string, flush = false) => {
+        pending += value;
+        const lines = pending.split(/\r?\n/);
+        pending = flush ? "" : lines.pop() || "";
+        for (const line of lines) {
+            output += `${line}\n`;
+            accumulator?.append(line);
+        }
+        if (flush && pending) {
+            output += pending;
+            accumulator?.append(pending);
+            pending = "";
+        }
+    };
+    while (true) {
+        const next = await reader.read();
+        if (next.done) {
+            consume(decoder.decode(), true);
+            return accumulator ? { raw: output, arguments: accumulator.result() } : output;
+        }
+        consume(decoder.decode(next.value, { stream: true }));
+    }
+}
+
+function extractStreamedArguments(raw: string, protocol: TextPlanningProtocol, toolName: string, resultField?: string, allowNaturalLanguage = false) {
+    const accumulator = createStreamAccumulator(protocol, toolName, resultField, allowNaturalLanguage);
+    raw.split(/\r?\n/).forEach((line) => accumulator.append(line));
+    return accumulator.result();
+}
+
+type StreamAccumulator = { append: (line: string) => void; result: () => string };
+
+function createStreamAccumulator(protocol: TextPlanningProtocol, toolName: string, resultField?: string, allowNaturalLanguage = false): StreamAccumulator {
+    let content = "";
+    let argumentsText = "";
+    return {
+        append(line) {
+            const value = line.trim().startsWith("data:") ? line.trim().slice(5).trim() : line.trim();
+            if (!value || value === "[DONE]") return;
+            let payload: Record<string, unknown>;
+            try {
+                const parsed = JSON.parse(value) as unknown;
+                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+                payload = parsed as Record<string, unknown>;
+            } catch {
+                return;
+            }
+            if (protocol === "chat") {
+                const delta = record(firstRecord(payload.choices)?.delta) || record(firstRecord(payload.choices)?.message);
+                const call = records(delta?.tool_calls).find((item) => !toolName || record(item.function)?.name === toolName || !record(item.function)?.name);
+                argumentsText += typeof record(call?.function)?.arguments === "string" ? String(record(call?.function)?.arguments) : "";
+                content += textContent(delta?.content);
+            } else if (protocol === "responses") {
+                const eventType = typeof payload.type === "string" ? payload.type : "";
+                if (eventType.endsWith(".delta") && typeof payload.delta === "string") {
+                    if (eventType.includes("function_call") && eventType.includes("arguments")) argumentsText += payload.delta;
+                    else content += payload.delta;
+                }
+                const output = records(payload.output);
+                const call = output.find((item) => item.type === "function_call" && (!item.name || item.name === toolName));
+                argumentsText += typeof call?.arguments === "string" ? call.arguments : "";
+                content += textContent(payload.output_text);
+            } else if (protocol === "gemini") {
+                const parts = records(record(firstRecord(payload.candidates)?.content)?.parts);
+                const call = parts.map((part) => record(part.functionCall)).find((item) => item?.name === toolName);
+                if (call?.args) argumentsText += JSON.stringify(call.args);
+                content += parts.map((part) => (typeof part.text === "string" ? part.text : "")).join("");
+            } else {
+                const configured = readProviderValue(payload, resultField);
+                argumentsText += jsonObjectArguments(configured) || "";
+                content += readProviderString(payload, resultField, TEXT_RESULT_KEYS);
+            }
+        },
+        result() {
+            return extractJsonObjectText(argumentsText) || extractJsonObjectText(content) || (allowNaturalLanguage ? content.trim() : "");
+        },
+    };
 }
 
 function readProtocolArguments(payload: Record<string, unknown>, toolName: string, request: ProtocolRequest, allowNaturalLanguage = false) {
@@ -471,6 +624,10 @@ function shouldFallbackFromNativeTool(error: unknown, request: ProtocolRequest) 
 
 function shouldRepairStructuredResponse(error: unknown, request: ProtocolRequest) {
     return request.variant === "json" && error instanceof TextPlanningRequestError && error.reason === "invalid-structure";
+}
+
+function shouldFallbackFromStream(error: unknown) {
+    return error instanceof TextPlanningRequestError && [400, 404, 405, 415, 422, 501].includes(error.status);
 }
 
 function isTimeoutError(error: unknown) {

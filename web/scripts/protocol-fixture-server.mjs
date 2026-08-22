@@ -111,6 +111,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         if (shouldFailRequest(request, model)) return sendJson(response, model.includes("-fail") ? 400 : 503, { error: { message: "fixture text failure" } });
         const toolName = selectedToolName(payload);
         const argumentsText = toolName ? JSON.stringify(toolArguments(toolName, payload)) : "协议测试文本返回成功";
+        if (payload.stream === true) return sendStructuredTextStream(response, path, toolName, argumentsText);
         if (path === "/responses") {
             return sendJson(response, 200, toolName ? { output: [{ type: "function_call", name: toolName, arguments: argumentsText }] } : { output_text: argumentsText });
         }
@@ -127,16 +128,20 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         });
     }
 
-    if (request.method === "POST" && /\/models\/[^/]+:generateContent$/.test(path)) {
+    if (request.method === "POST" && /\/models\/[^/]+:(?:generateContent|streamGenerateContent)$/.test(path)) {
         const payload = jsonBody(body);
         if (payload.generationConfig?.responseModalities?.includes("IMAGE")) {
             return sendJson(response, 200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: (await fixtureImage(options)).toString("base64") } }] } }] });
         }
         const toolName = selectedToolName(payload);
         const text = toolName ? JSON.stringify(toolArguments(toolName, payload)) : "协议测试文本返回成功";
+        if (path.endsWith(":streamGenerateContent")) return sendStructuredTextStream(response, path, toolName, text, "ndjson");
         return sendJson(response, 200, { candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 8, totalTokenCount: 16 } });
     }
-    if (request.method === "POST" && path === "/planner/run") return sendJson(response, 200, { data: { plan: JSON.stringify({}) } });
+    if (request.method === "POST" && ["/planner/run", "/planner/stream"].includes(path)) {
+        if (path === "/planner/stream") return sendStructuredTextStream(response, path, "make_plan", "{}");
+        return sendJson(response, 200, { data: { plan: JSON.stringify({}) } });
+    }
 
     const geminiCreate = path.match(/^\/models\/([^/]+):predictLongRunning$/);
     if (request.method === "POST" && geminiCreate) {
@@ -653,6 +658,28 @@ function sendJson(response, status, value) {
 function sendBytes(response, status, contentType, bytes) {
     response.writeHead(status, { "content-type": contentType, "content-length": bytes.length, "cache-control": "no-store" });
     response.end(bytes);
+}
+
+async function sendStructuredTextStream(response, path, toolName, argumentsText, format = "sse") {
+    const isResponses = path === "/responses";
+    const isChat = path === "/chat/completions" || path === "/messages";
+    response.writeHead(200, { "content-type": format === "ndjson" ? "application/x-ndjson" : "text/event-stream", "cache-control": "no-store" });
+    if (format === "ndjson") {
+        const payload = JSON.stringify({ candidates: [{ content: { parts: [{ text: argumentsText }] } }] });
+        const splitAt = Math.max(1, Math.floor(payload.length / 2));
+        response.write(payload.slice(0, splitAt));
+        await new Promise((resolve) => setImmediate(resolve));
+        response.write(`${payload.slice(splitAt)}\n`);
+        response.end();
+        return;
+    }
+    const payload = isResponses ? { type: "response.output_text.delta", delta: argumentsText } : isChat ? { choices: [{ delta: { content: argumentsText } }] } : { data: { plan: argumentsText } };
+    const event = `data: ${JSON.stringify(payload)}\n\n`;
+    response.write(event.slice(0, Math.max(1, Math.floor(event.length / 2))));
+    await new Promise((resolve) => setImmediate(resolve));
+    response.write(event.slice(Math.max(1, Math.floor(event.length / 2))));
+    response.write("data: [DONE]\n\n");
+    response.end();
 }
 
 function delay(ms) {

@@ -6,6 +6,7 @@ import {
     hasUsableDramaToolArguments,
     normalizeDramaContentAnalysis,
     normalizeDramaVisualAnalysis,
+    normalizeDramaToolArguments,
     readDramaChatArguments,
     readDramaResponsesArguments,
     readDramaUpstreamError,
@@ -383,6 +384,16 @@ describe("drama analysis contracts", () => {
         expect(hasUsableDramaToolArguments('{"script":"原始剧本","summary":"简介"}', "analyze_drama_content")).toBe(false);
         expect(hasUsableDramaToolArguments('{"episode":{"outline":"大纲"},"shots":[{"title":"镜头一"}]}', "analyze_drama_content")).toBe(true);
         expect(hasUsableDramaToolArguments('{"shots":[{"shotId":"shot-one"}]}', "design_drama_visuals")).toBe(true);
+    });
+
+    it("unwraps common Responses-compatible result containers without weakening the content validator", () => {
+        const result = { episode: { outline: "大纲" }, shots: [{ title: "镜头一" }] };
+
+        expect(normalizeDramaToolArguments(JSON.stringify({ data: result }), "analyze_drama_content")).toBe(JSON.stringify(result));
+        expect(normalizeDramaToolArguments(JSON.stringify({ arguments: JSON.stringify(result) }), "analyze_drama_content")).toBe(JSON.stringify(result));
+        const invalid = JSON.stringify({ wrong: { shots: result.shots } });
+        expect(normalizeDramaToolArguments(invalid, "analyze_drama_content")).toBe(invalid);
+        expect(hasUsableDramaToolArguments(normalizeDramaToolArguments(JSON.stringify({ result }), "analyze_drama_content"), "analyze_drama_content")).toBe(true);
     });
 
     it("describes response shape without including model content", () => {

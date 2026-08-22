@@ -286,6 +286,30 @@ export function hasUsableDramaToolArguments(value: string, toolName: string) {
     }
 }
 
+/**
+ * Some Responses-compatible gateways wrap the JSON object one more time even
+ * when the model returned the requested structured payload. Unwrap only the
+ * documented result containers and keep the domain validator as the final gate.
+ */
+export function normalizeDramaToolArguments(value: string, toolName: string) {
+    let current: unknown = value;
+    for (let depth = 0; depth < 4; depth += 1) {
+        if (typeof current === "string") {
+            try {
+                current = JSON.parse(current);
+            } catch {
+                return value;
+            }
+        }
+        const source = object(current);
+        if (Array.isArray(source.shots)) return JSON.stringify(source);
+        const wrapped = [source[toolName], source.arguments, source.result, source.data, source.response].find((item) => item !== undefined);
+        if (wrapped === undefined) return value;
+        current = wrapped;
+    }
+    return value;
+}
+
 export function hasCompleteDramaDialogueAttribution(value: string, sourceScript: string) {
     try {
         const source = object(JSON.parse(value));

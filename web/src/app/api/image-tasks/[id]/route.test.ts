@@ -47,6 +47,35 @@ describe("GET /api/image-tasks/[id]", () => {
         expect(mocks.recover).not.toHaveBeenCalled();
     });
 
+    it("wakes a due active image task after returning its current state", async () => {
+        mocks.getImageTask.mockResolvedValue(imageTask());
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "polling", nextPollAt: Date.now() - 1 });
+        const request = new Request("http://localhost/api/image-tasks/image-one", { headers: { cookie: "session=test" } });
+
+        const response = await GET(request, context);
+
+        expect(response.status).toBe(200);
+        expect(after).toHaveBeenCalledTimes(1);
+        const wake = vi.mocked(after).mock.calls[0]?.[0] as () => Promise<unknown>;
+        await wake();
+        expect(mocks.recover).toHaveBeenCalledWith({
+            origin: "http://localhost",
+            publicOrigin: "https://public.example.com",
+            cookie: "session=test",
+            limit: 1,
+            taskIds: ["image-one"],
+        });
+    });
+
+    it("does not wake an image task before its persisted poll time", async () => {
+        mocks.getImageTask.mockResolvedValue(imageTask());
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "polling", nextPollAt: Date.now() + 60_000 });
+
+        await GET(new Request("http://localhost/api/image-tasks/image-one"), context);
+
+        expect(after).not.toHaveBeenCalled();
+    });
+
     it.each(["success", "error", "cancelled"])("does not wake a %s task", async (status) => {
         mocks.getImageTask.mockResolvedValue(imageTask({ status }));
         mocks.getSchedule.mockResolvedValue({ executionPhase: "completed" });

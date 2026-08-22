@@ -122,4 +122,8 @@ describe("publicAgentRun", () => {
 
         expect(event.data).toEqual({ reply: "开始生成", ops: [{ type: "add_node", id: "task-run-0", nodeType: "task", metadata: { model: "image-pro" } }] });
     });
+
+    it("removes internal planning payloads from public SSE events", () => {
+        expect(publicAgentRunEvent({ id: "event-one", runId: "run-one", type: "run.planning.context_ready", data: { promptJson: "secret" }, createdAt: 1 })).toMatchObject({ type: "run.planning.context_ready", data: undefined });
+    });
 });

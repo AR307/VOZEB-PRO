@@ -170,6 +170,37 @@ describe("system media proxy", () => {
     });
 });
 
+describe("OpenAI Responses proxy", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("writer", "text", "gpt-5")],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.openai.com/v1", apiKey: "secret", apiFormat: "openai", models: ["gpt-5"], advancedConfig: { protocol: "compatible", createPath: "/v1/responses" } }],
+        });
+    });
+
+    it("forwards /v1/responses without duplicating the /v1 base path", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "resp_1", output: [{ type: "message", content: [{ type: "output_text", text: "OK" }] }] }), { headers: { "content-type": "application/json" } }));
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/v1/responses", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ model: "gpt-5", input: [{ role: "user", content: "hello" }], stream: false }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "responses"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/responses");
+        const upstreamBody = fetchMock.mock.calls[0]?.[1]?.body;
+        expect(JSON.parse(new TextDecoder().decode(upstreamBody as ArrayBuffer))).toMatchObject({ model: "gpt-5", input: [{ role: "user", content: "hello" }] });
+    });
+});
+
 describe("GlobalAiOpc native text proxy", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
