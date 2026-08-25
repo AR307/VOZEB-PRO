@@ -22,8 +22,6 @@
   <a href="CHANGELOG.md">更新记录</a>
 </p>
 
-**许可证：** VOZEB-PRO 采用 Business Source License 1.1（`BUSL-1.1`）。个人学习、非商业研究、开发测试和评估可以直接使用；企业生产部署、商业运营和 SaaS 服务需要购买[商业授权](COMMERCIAL_LICENSE.md)。
-
 ![VOZEB PRO 首页](docs/public/screenshots/pages/01-home.webp)
 
 VOZEB PRO 把统一创作 Agent、画布、短剧生产、素材库和商业运营后台放在同一套 Next.js 全栈应用中。PostgreSQL 保存账号与业务数据；媒体可写入服务器本地目录或 S3 兼容对象存储；模型、支付和存储密钥只在服务端使用。
