@@ -17,22 +17,12 @@
 <p align="center">
   <a href="https://www.vozeb.com">演示站</a> ·
   <a href="docs/index.md">文档索引</a> ·
-  <a href="docs/content/docs/overview/configuration.mdx">0.0.7 发布说明</a> ·
-  <a href="#目录与文件用途">目录与文件用途</a> ·
-  <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
-  <a href="https://linux.do">LINUX DO</a> ·
   <a href="COMMERCIAL_LICENSE.md">商业授权</a> ·
-  <a href="LICENSE_NOTICE.md">许可证说明</a> ·
-  <a href="DISCLAIMER.md">免责声明</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a> ·
   <a href="CHANGELOG.md">更新记录</a>
 </p>
 
-**License:** VOZEB-PRO is licensed under Business Source License 1.1
-(`BUSL-1.1`). Personal use, research, development, testing, and evaluation
-are permitted under [LICENSE](LICENSE); enterprise production deployment,
-commercial operation, and SaaS require a [VOZEB PRO Commercial
-License](COMMERCIAL_LICENSE.md).
+**许可证：** VOZEB-PRO 采用 Business Source License 1.1（`BUSL-1.1`）。个人学习、非商业研究、开发测试和评估可以直接使用；企业生产部署、商业运营和 SaaS 服务需要购买[商业授权](COMMERCIAL_LICENSE.md)。
 
 ![VOZEB PRO 首页](docs/public/screenshots/pages/01-home.webp)
 
@@ -49,27 +39,19 @@ VOZEB PRO 把统一创作 Agent、画布、短剧生产、素材库和商业运�
 - **商业后台**：用户、套餐、促销、优惠券、邀请奖励、积分、CDK、订单、支付、退款、对账、财务流水、作品治理、公告、提示词和审计日志。
 - **存储与备份**：本地媒体、S3 兼容对象存储、引用保护、对象迁移和脱敏业务数据导入导出。
 
-## License and Commercial Use
+## 许可证与商业使用
 
-VOZEB-PRO is licensed under Business Source License 1.1 (`BUSL-1.1`). The
-license permits personal use, non-commercial research, development, testing,
-evaluation, code review, and community contributions.
+VOZEB-PRO 采用 Business Source License 1.1（`BUSL-1.1`）。许可证允许个人学习、非商业研究、开发测试、评估、代码审查和社区贡献。
 
-Enterprise production deployment, commercial operation, SaaS services,
-private deployment, third-party service delivery, resale, and integration into
-a paid platform require a VOZEB PRO Commercial License. See
-[COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for the software-use boundary.
+企业生产部署、商业运营、SaaS 服务、私有化部署、向第三方提供服务、转售，或集成到收费平台，都必须先取得 VOZEB PRO 商业授权。完整使用边界见[商业授权说明](COMMERCIAL_LICENSE.md)。
 
-| Commercial license plan | Public price | Scope |
+| 商业授权方案 | 公开价格 | 授权范围 |
 | --- | ---: | --- |
-| Enterprise self-hosted annual license | RMB 3,299/year | One entity, one self-operated product, and controlled development/test/production environments for one year |
-| Enterprise self-hosted perpetual license | RMB 7,999 | Perpetual use of the versions listed in the license for one entity and one self-operated product |
-| OEM / white-label / third-party delivery | Not included in the standard plans | Requires separate written terms |
+| 企业自营闭源年度授权 | 人民币 3,299 元/年 | 一个主体、一个自营产品，以及该主体控制的开发/测试/生产环境，授权期一年 |
+| 企业自营闭源永久授权 | 人民币 7,999 元 | 一个主体、一个自营产品，可永久使用授权书列明的版本 |
+| OEM / 贴牌 / 第三方交付 | 不在标准方案内 | 必须另行签署书面授权 |
 
-The commercial license is software licensing only and does not include
-technical support, deployment, custom development, operations, maintenance,
-or SLA services. See [LICENSE_NOTICE.md](LICENSE_NOTICE.md) for a concise
-notice and [LICENSE](LICENSE) for the complete BSL-1.1 parameters.
+商业授权只包含软件使用权，不包含技术支持、部署、定制开发、运维、维护或 SLA 服务。完整协议参数见 [LICENSE](LICENSE)。
 
 ## 项目功能流程
 

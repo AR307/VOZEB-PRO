@@ -1,98 +1,70 @@
-# VOZEB PRO Commercial License
+# VOZEB PRO 商业授权
 
-VOZEB-PRO is publicly available under the Business Source License 1.1
-(`BUSL-1.1`). The BSL grant covers personal learning, non-commercial research,
-local development and testing, code review, and community contributions.
+VOZEB-PRO 以 Business Source License 1.1（`BUSL-1.1`）公开源码。个人学习、非商业研究、本地开发测试、代码审查和社区贡献，可以按照 [LICENSE](LICENSE) 免费进行。
 
-An enterprise or other commercial user must obtain a VOZEB PRO Commercial
-License before production deployment, commercial operation, private
-deployment, SaaS operation, third-party service delivery, resale, or
-integration into a paid platform.
+企业或其他商业用户在生产部署、商业运营、私有化部署、SaaS 服务、向第三方提供服务、转售或集成到收费平台之前，必须取得 VOZEB PRO 商业授权。
 
-This document describes the software license only. It is not a services
-agreement and does not automatically grant any technical or operational
-services.
+本文件只说明软件许可证，不是技术服务协议，也不代表 VOZEB 提供任何技术或运营服务。
 
-## Commercial License Plans and Prices
+## 商业授权方案与价格
 
-| License plan | Public price | Term and version scope | Standard scope |
+| 授权方案 | 公开价格 | 授权期限与版本范围 | 标准授权范围 |
 | --- | ---: | --- | --- |
-| Enterprise self-hosted annual license | RMB 3,299/year | One year from the effective date; versions confirmed in writing during the term | One licensed entity, one self-operated product, and its controlled development, test, and production environments |
-| Enterprise self-hosted perpetual license | RMB 7,999 | Perpetual use of the versions listed in the license; later versions are not included automatically | One licensed entity, one self-operated product, and its controlled development, test, and production environments |
-| OEM / white-label / third-party commercial delivery | Not included in the standard plans | Requires separate written terms | Resale, source-code sale, private deployment for a customer, and third-party delivery are not authorized without separate written terms |
+| 企业自营闭源年度授权 | 人民币 3,299 元/年 | 自生效日起一年；授权期内由项目方书面确认纳入的版本 | 一个授权主体、一个自营产品，以及该主体控制的开发、测试和生产环境 |
+| 企业自营闭源永久授权 | 人民币 7,999 元 | 授权书列明的版本永久有效；不自动包含后续版本 | 一个授权主体、一个自营产品，以及该主体控制的开发、测试和生产环境 |
+| OEM / 贴牌 / 第三方商业交付 | 不在标准方案内 | 需要另行签署书面授权 | 转售、源码销售、客户私有化部署和第三方交付，未经单独书面授权均不允许 |
 
-The prices above cover software license rights only. They do not include
-deployment, custom development, data migration, technical support, operations,
-maintenance, SLA, hosting, model APIs, storage, or other third-party costs.
+以上价格只包含软件许可证，不包含部署、定制开发、数据迁移、技术支持、运维、维护、SLA、托管、模型 API、存储或其他第三方费用。
 
-The annual plan permits continued commercial use only during its term. After
-expiry, the licensee must renew, stop the covered commercial use, or use the
-software only in a manner permitted by the then-applicable BSL-1.1 terms. The
-perpetual plan is perpetual only for the versions listed in the license and
-does not include later versions, updates, support, or SLA.
+年度授权只允许在授权期内继续进行受授权的商业使用。到期后应续费、停止受授权的商业使用，或改为符合当时 BSL-1.1 条款的使用方式。永久授权只对授权书列明的版本永久有效，不包含后续版本、更新、支持或 SLA。
 
-## Included Software Rights
+## 商业授权包含
 
-Subject to the applicable order or agreement, a commercial license includes:
+- 商业生产环境使用权。
+- 企业内部部署和运行权。
+- 商业业务使用权。
+- 在授权书列明的主体、产品、版本和期限内，对代码进行闭源修改和运行。
 
-- Commercial use of the licensed VOZEB-PRO version.
-- Enterprise production deployment.
-- Internal enterprise deployment and operation.
-- Use of the software in the licensee's commercial business.
-- Private deployment for the licensee's own organization or product.
+商业授权是非独占、不可转让的许可，只适用于授权文件中明确的主体、产品、版本、期限和范围。
 
-The commercial license is non-exclusive, non-transferable, and limited to the
-licensed entity, product, version, term, and scope stated in the applicable
-commercial license document.
+## 商业授权不包含
 
-## Not Included
+商业授权不要求 VOZEB 提供以下服务：
 
-A commercial license does not include or require VOZEB to provide:
+- 技术支持。
+- 部署或安装服务。
+- 定制开发或功能开发。
+- 运维、维护或托管服务。
+- 服务级别协议（SLA）。
+- 服务器、基础设施、模型 API、存储或其他第三方服务费用。
 
-- Technical support.
-- Deployment or installation services.
-- Custom development or feature work.
-- Operations, maintenance, or managed services.
-- Service-level agreements (SLA).
-- Hosting, infrastructure, model API, storage, or third-party service fees.
+商业授权只是软件许可证，不代表 VOZEB 承诺提供技术、部署、运维或支持服务。
 
-The commercial license is a software license only. It does not represent a
-commitment by VOZEB to provide technical, deployment, operations, or support
-services.
+## 使用限制
 
-## Restrictions
+除非另行签署书面授权，商业授权不允许：
 
-Unless separately agreed in writing, a commercial license does not permit:
+- 转售、转授权、转让或共享授权。
+- OEM、贴牌或向第三方交付。
+- 将 VOZEB-PRO 作为服务提供给无关第三方。
+- 供授权文件未列明的其他主体、产品或品牌使用。
+- 删除或篡改版权、许可证和第三方声明。
 
-- Resale, sublicensing, or transfer of the license.
-- OEM, white-label, or third-party delivery.
-- Providing VOZEB-PRO as a service to an unrelated third party.
-- Use by additional legal entities, products, or brands not listed in the
-  license.
-- Removal or alteration of copyright, license, or third-party notices.
+第三方依赖、模型、字体、素材、接口和服务继续适用各自的许可证和服务条款。
 
-Third-party dependencies, models, fonts, media, interfaces, and services
-remain subject to their own licenses and terms.
+## 申请商业授权
 
-## Applying for a Commercial License
+请发送邮件至 [csyqlz@gmail.com](mailto:csyqlz@gmail.com)，说明授权主体、产品或业务名称、使用场景、部署范围、版本和预计生效日期。只有 VOZEB 出具书面授权条款或双方签署适用协议后，商业授权才会生效。
 
-Contact [csyqlz@gmail.com](mailto:csyqlz@gmail.com) with the licensee name,
-product or business name, intended use, deployment scope, version, and desired
-effective date. A commercial license becomes effective only when VOZEB issues
-written license terms or the parties sign an applicable agreement.
+仓库公开内容、本文档、未签署模板，或没有书面授权条款的付款记录，都不会自动授予商业权利。
 
-The public repository, this document, an unsigned template, or a payment made
-without written license terms does not by itself grant commercial rights.
+## BSL 转换参数
 
-## BSL Conversion
+当前 BSL-1.1 参数记录在 [LICENSE](LICENSE)：
 
-The current BSL-1.1 parameters are recorded in [LICENSE](LICENSE):
+- Licensor：`VOZEB`
+- Licensed Work：`VOZEB-PRO`
+- Change Date：`2036-01-01`
+- Change License：`AGPL-3.0`
 
-- Licensor: `VOZEB`
-- Licensed Work: `VOZEB-PRO`
-- Change Date: `2036-01-01`
-- Change License: `AGPL-3.0`
-
-Unless a separate commercial license applies, use before the Change Date is
-governed by BSL-1.1 and its Additional Use Grant. After the Change Date, the
-Change License applies as stated in LICENSE.
+在转换日期之前，使用适用 BSL-1.1 及其 Additional Use Grant；转换日期之后，按 LICENSE 中声明的 Change License 执行，除非另有有效商业授权。

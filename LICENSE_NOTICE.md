@@ -1,22 +1,13 @@
-# VOZEB-PRO License Notice
+# VOZEB-PRO 许可证说明
 
-Current version:
+当前版本：
 
-**VOZEB-PRO — Business Source License 1.1 (BUSL-1.1)**
+**VOZEB-PRO：Business Source License 1.1（BUSL-1.1）**
 
-Personal and non-commercial users may use VOZEB-PRO under the permissions and
-Additional Use Grant stated in [LICENSE](LICENSE), including personal learning,
-non-commercial research, local development and testing, code review, and
-community contributions.
+个人和非商业用户可以按照 [LICENSE](LICENSE) 使用 VOZEB-PRO，范围包括个人学习、非商业研究、本地开发测试、代码审查和社区贡献。
 
-Commercial users must obtain a VOZEB PRO Commercial License before enterprise
-production deployment, commercial operation, private deployment, SaaS
-operation, third-party service delivery, resale, or integration into a paid
-platform.
+商业用户在企业生产部署、商业运营、私有化部署、SaaS 服务、向第三方提供服务、转售或集成到收费平台之前，必须取得 [VOZEB PRO 商业授权](COMMERCIAL_LICENSE.md)。
 
-The commercial license grants software usage rights only. It does not include
-technical support, deployment, custom development, operations, maintenance,
-or SLA services.
+商业授权只授予软件使用权，不包含技术支持、部署、定制开发、运维、维护或 SLA 服务。
 
-The BSL-1.1 Change Date is **2036-01-01** and the Change License is
-**AGPL-3.0**, as specified in [LICENSE](LICENSE).
+BSL-1.1 的转换日期为 **2036-01-01**，转换许可证为 **AGPL-3.0**，具体以 [LICENSE](LICENSE) 为准。
